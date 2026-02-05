@@ -16,23 +16,22 @@ function formatHoursFromMinutes(minutes: number): string {
   return `${hours.toFixed(1)}h`;
 }
 
-function isoDay(d: Date): string {
-  // yyyy-mm-dd in local time for display consistency
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+function isoDayUTC(d: Date): string {
+  // yyyy-mm-dd in UTC (stable for grouping snapshots + shifts)
+  return d.toISOString().split('T')[0];
 }
 
 export default async function AdminDashboardPage() {
   const now = new Date();
-  const days14 = new Date(now);
-  days14.setDate(now.getDate() - 13);
-  days14.setHours(0, 0, 0, 0);
 
-  const days7 = new Date(now);
-  days7.setDate(now.getDate() - 6);
-  days7.setHours(0, 0, 0, 0);
+  // Use UTC cutoffs to avoid off-by-one day grouping across timezones.
+  const start14dUTC = new Date(now);
+  start14dUTC.setUTCDate(now.getUTCDate() - 13);
+  start14dUTC.setUTCHours(0, 0, 0, 0);
+
+  const start7dUTC = new Date(now);
+  start7dUTC.setUTCDate(now.getUTCDate() - 6);
+  start7dUTC.setUTCHours(0, 0, 0, 0);
 
   // Get global system stats + analytics input data
   const [
@@ -76,7 +75,7 @@ export default async function AdminDashboardPage() {
       },
     }),
     prisma.kpiSnapshot.findMany({
-      where: { snapshotDate: { gte: days14 } },
+      where: { snapshotDate: { gte: start14dUTC } },
       select: {
         snapshotDate: true,
         revenueCents: true,
@@ -86,7 +85,7 @@ export default async function AdminDashboardPage() {
     }),
     prisma.shift.findMany({
       where: {
-        clockIn: { gte: days14 },
+        clockIn: { gte: start14dUTC },
         clockOut: { not: null },
       },
       select: {
@@ -108,9 +107,9 @@ export default async function AdminDashboardPage() {
   // 14-day daily totals: revenue/tips + hours
   const dayKeys: string[] = [];
   for (let i = 0; i < 14; i++) {
-    const d = new Date(days14);
-    d.setDate(days14.getDate() + i);
-    dayKeys.push(isoDay(d));
+    const d = new Date(start14dUTC);
+    d.setUTCDate(start14dUTC.getUTCDate() + i);
+    dayKeys.push(isoDayUTC(d));
   }
 
   const revenueByDay = new Map<string, number>();
@@ -121,7 +120,7 @@ export default async function AdminDashboardPage() {
   }
 
   for (const s of kpiSnapshots14d) {
-    const k = isoDay(new Date(s.snapshotDate));
+    const k = isoDayUTC(new Date(s.snapshotDate));
     revenueByDay.set(k, (revenueByDay.get(k) ?? 0) + (s.revenueCents ?? 0));
     tipsByDay.set(k, (tipsByDay.get(k) ?? 0) + (s.tipsReceivedCents ?? 0));
   }
@@ -130,7 +129,7 @@ export default async function AdminDashboardPage() {
   for (const k of dayKeys) workedMinutesByDay.set(k, 0);
 
   for (const sh of shifts14d) {
-    const k = isoDay(new Date(sh.clockIn));
+    const k = isoDayUTC(new Date(sh.clockIn));
     const clockIn = new Date(sh.clockIn).getTime();
     const clockOut = new Date(sh.clockOut!).getTime();
     const minutes = Math.max(0, Math.floor((clockOut - clockIn) / 60000) - (sh.breakMinutes ?? 0));
@@ -143,7 +142,7 @@ export default async function AdminDashboardPage() {
   let tipsLast7 = 0;
   let tipsPrev7 = 0;
   for (const s of kpiSnapshots14d) {
-    const isLast7 = new Date(s.snapshotDate) >= days7;
+    const isLast7 = new Date(s.snapshotDate) >= start7dUTC;
     if (isLast7) {
       revenueLast7 += s.revenueCents ?? 0;
       tipsLast7 += s.tipsReceivedCents ?? 0;
@@ -156,7 +155,7 @@ export default async function AdminDashboardPage() {
   let workedMinutesLast7 = 0;
   let workedMinutesPrev7 = 0;
   for (const sh of shifts14d) {
-    const isLast7 = new Date(sh.clockIn) >= days7;
+    const isLast7 = new Date(sh.clockIn) >= start7dUTC;
     const clockIn = new Date(sh.clockIn).getTime();
     const clockOut = new Date(sh.clockOut!).getTime();
     const minutes = Math.max(0, Math.floor((clockOut - clockIn) / 60000) - (sh.breakMinutes ?? 0));
@@ -174,7 +173,7 @@ export default async function AdminDashboardPage() {
   // Top chatters (last 7 days): by worked hours, tie-breaker by revenue
   const workedMinutes7d = new Map<string, number>();
   for (const sh of shifts14d) {
-    if (new Date(sh.clockIn) < days7) continue;
+    if (new Date(sh.clockIn) < start7dUTC) continue;
     const clockIn = new Date(sh.clockIn).getTime();
     const clockOut = new Date(sh.clockOut!).getTime();
     const minutes = Math.max(0, Math.floor((clockOut - clockIn) / 60000) - (sh.breakMinutes ?? 0));
@@ -184,7 +183,7 @@ export default async function AdminDashboardPage() {
   const revenue7d = new Map<string, number>();
   const tips7d = new Map<string, number>();
   for (const s of kpiSnapshots14d) {
-    if (new Date(s.snapshotDate) < days7) continue;
+    if (new Date(s.snapshotDate) < start7dUTC) continue;
     revenue7d.set(s.chatterId, (revenue7d.get(s.chatterId) ?? 0) + (s.revenueCents ?? 0));
     tips7d.set(s.chatterId, (tips7d.get(s.chatterId) ?? 0) + (s.tipsReceivedCents ?? 0));
   }

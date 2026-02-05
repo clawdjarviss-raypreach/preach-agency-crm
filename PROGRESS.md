@@ -316,3 +316,8 @@
 - Verified: `npm run lint` + `npm run build` passing.
 - Next: either add simple sparklines/bars for the 14-day tables, or move to Supervisor dashboard pending counts.
 - Blockers: none.
+
+### 2026-02-05 18:25 (Europe/Madrid)
+- Shipped: admin analytics daily bucketing now uses UTC cutoffs (avoids off-by-one day issues across timezones).
+- Verified: `npx tsc -p tsconfig.json --noEmit` + `npm run lint` passing (run inside `app/crm`).
+- Next: Supervisor dashboard pending counts page (shifts + draft payrolls) (High).
