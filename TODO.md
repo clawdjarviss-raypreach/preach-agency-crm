@@ -3,7 +3,6 @@
 <!-- AUTO-GENERATED from Mission Control DB. Do not edit directly. -->
 
 ## 🚧 In Progress
-- [ ] End-of-shift report (sales report template) tied to Shift (priority: High)
 - [ ] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High)
 - [ ] CRM UX + branding: match preachagency.com colors and chatter stats views (priority: High)
 - [ ] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High) (priority: High)
@@ -24,6 +23,7 @@
 
 ## ✅ Done
 - [x] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High)
+- [x] End-of-shift report (sales report template) tied to Shift (priority: High)
 - [x] End-to-end workflow: clock-in → shift approval → payroll gen → apply bonuses → approve → mark paid → CSV export (priority: High)
 - [x] Role-gated routing for admin/supervisor/chatter areas (priority: High)
 - [x] Bonus rules CRUD + toggles + validation (priority: High)
