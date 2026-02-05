@@ -280,14 +280,14 @@ export default function CreateBonusRuleModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1 text-sm border rounded hover:bg-zinc-50"
+                className="btn-ghost px-3 py-1"
                 disabled={loading}
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-400"
+                className="btn-primary px-3 py-1"
                 disabled={loading}
               >
                 {loading ? 'Saving...' : 'Save'}

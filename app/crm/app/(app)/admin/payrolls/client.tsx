@@ -208,13 +208,13 @@ export default function PayrollsClient({
         <div className="flex gap-2">
           <button
             onClick={handleExport}
-            className="rounded bg-zinc-600 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-700"
+            className="btn-outline text-xs"
           >
             Export CSV
           </button>
           <button
             onClick={handleGenerateClick}
-            className="rounded bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800"
+            className="btn-primary text-xs"
           >
             Generate Payrolls
           </button>
@@ -222,7 +222,7 @@ export default function PayrollsClient({
       </div>
 
       {showGenerateForm && (
-        <div className="mb-6 rounded border bg-zinc-50 p-4">
+        <div className="card mb-6 bg-zinc-50 dark:bg-zinc-950">
           <div className="text-sm font-medium mb-3">Generate Payrolls from Approved Shifts</div>
           <div className="flex items-end gap-3">
             <label className="flex flex-col gap-1">
@@ -231,7 +231,7 @@ export default function PayrollsClient({
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className="rounded border px-2 py-1 text-sm"
+                className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-800 dark:bg-black"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -240,19 +240,19 @@ export default function PayrollsClient({
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className="rounded border px-2 py-1 text-sm"
+                className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-800 dark:bg-black"
               />
             </label>
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="rounded bg-blue-600 text-white px-3 py-1 text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary px-3 py-1"
             >
               {generating ? 'Generating…' : 'Generate'}
             </button>
             <button
               onClick={() => setShowGenerateForm(false)}
-              className="rounded bg-zinc-200 text-zinc-700 px-3 py-1 text-sm hover:bg-zinc-300"
+              className="btn-ghost px-3 py-1"
             >
               Cancel
             </button>
@@ -265,12 +265,12 @@ export default function PayrollsClient({
       )}
 
       {payrolls.length === 0 ? (
-        <div className="rounded border bg-white p-4 text-sm text-zinc-600">
+        <div className="card text-sm text-zinc-600 dark:text-zinc-400">
           No payrolls yet.
         </div>
       ) : (
-        <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
+        <div className="table-wrap">
+          <table className="table-ui">
             <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
               <tr>
                 <th className="px-3 py-2">Chatter</th>
@@ -286,7 +286,7 @@ export default function PayrollsClient({
             </thead>
             <tbody className="divide-y">
               {payrolls.map((p) => (
-                <tr key={p.id} className="hover:bg-zinc-50">
+                <tr key={p.id} >
                   <td className="px-3 py-2">
                     <div className="font-medium">{p.chatter.name}</div>
                     <div className="text-xs text-zinc-500">{p.chatter.email}</div>
@@ -340,14 +340,14 @@ export default function PayrollsClient({
                         <button
                           onClick={() => handleApplyBonuses(p.id)}
                           disabled={loading === p.id}
-                          className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+                          className="text-xs brand-link disabled:opacity-50"
                         >
                           {loading === p.id ? 'Applying…' : 'Apply Bonuses'}
                         </button>
                         <button
                           onClick={() => handleApprovePayroll(p.id)}
                           disabled={loading === p.id}
-                          className="text-xs text-emerald-600 hover:underline disabled:opacity-50"
+                          className="text-xs brand-link disabled:opacity-50"
                         >
                           {loading === p.id ? 'Approving…' : 'Approve'}
                         </button>

@@ -60,7 +60,7 @@ export default async function AdminKpiSnapshotsPage() {
   }));
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <KpiSnapshotsClient
         initialSnapshots={rows}

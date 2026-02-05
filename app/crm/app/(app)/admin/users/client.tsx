@@ -290,7 +290,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
             <button
               type="submit"
               disabled={loading}
-              className="rounded bg-blue-600 text-white px-3 py-1 text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary px-3 py-1"
             >
               {loading ? 'Creating…' : 'Create'}
             </button>
@@ -304,7 +304,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
         </div>
       ) : (
         <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
+          <table className="table-ui">
             <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
               <tr>
                 <th className="px-3 py-2">Name</th>
@@ -319,7 +319,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
             </thead>
             <tbody className="divide-y">
               {users.map((u) => (
-                <tr key={u.id} className="hover:bg-zinc-50">
+                <tr key={u.id} >
                   <td className="px-3 py-2 font-medium">{u.name}</td>
                   <td className="px-3 py-2 text-xs">{u.email}</td>
                   <td className="px-3 py-2">
@@ -368,7 +368,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
                           hourlyRateCents: u.hourlyRateCents || null,
                         })
                       }
-                      className="text-xs text-blue-600 hover:underline"
+                      className="text-xs brand-link"
                     >
                       Edit
                     </button>
@@ -436,14 +436,14 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
               <button
                 onClick={() => setEditModal(null)}
                 disabled={editLoading}
-                className="rounded px-3 py-1 text-sm bg-zinc-200 hover:bg-zinc-300 disabled:opacity-50"
+                className="btn-ghost"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveEdit}
                 disabled={editLoading}
-                className="rounded px-3 py-1 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary px-3 py-1"
               >
                 {editLoading ? 'Saving…' : 'Save'}
               </button>

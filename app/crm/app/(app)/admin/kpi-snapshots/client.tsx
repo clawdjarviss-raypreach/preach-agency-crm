@@ -347,7 +347,7 @@ export default function KpiSnapshotsClient({
             <button
               type="submit"
               disabled={loading}
-              className="rounded bg-blue-600 text-white px-3 py-1 text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary px-3 py-1"
             >
               {loading ? 'Creating…' : 'Create'}
             </button>
@@ -361,7 +361,7 @@ export default function KpiSnapshotsClient({
         </div>
       ) : (
         <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
+          <table className="table-ui">
             <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
               <tr>
                 <th className="px-3 py-2">Chatter</th>
@@ -376,7 +376,7 @@ export default function KpiSnapshotsClient({
             </thead>
             <tbody className="divide-y">
               {snapshots.map((s) => (
-                <tr key={s.id} className="hover:bg-zinc-50">
+                <tr key={s.id} >
                   <td className="px-3 py-2 font-medium">{s.chatterName}</td>
                   <td className="px-3 py-2 text-xs">{s.creatorLabel}</td>
                   <td className="px-3 py-2 text-xs">{s.snapshotDate}</td>

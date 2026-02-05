@@ -156,8 +156,8 @@ export default function ShiftsAdminClient({
   return (
     <main className="flex-1 p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Admin — Shifts</h1>
-        <p className="mt-1 text-sm text-zinc-600">
+        <h1 className="text-2xl font-semibold tracking-tight">Admin — Shifts</h1>
+        <p className="page-subtitle">
           Global shift view for all chatters. Pending: {pendingCount} | Approved: {approvedCount}
         </p>
 
@@ -167,15 +167,15 @@ export default function ShiftsAdminClient({
       </div>
 
       {/* Filter Tabs */}
-      <div className="mb-4 flex gap-2 border-b">
+      <div className="mb-4 flex gap-2 border-b border-zinc-200 dark:border-zinc-900">
         {(['all', 'pending', 'approved'] as const).map((status) => (
           <button
             key={status}
             onClick={() => setFilter(status)}
             className={`px-3 py-2 text-sm font-medium transition-colors ${
               filter === status
-                ? 'border-b-2 border-blue-600 text-blue-600'
-                : 'text-zinc-600 hover:text-zinc-900'
+                ? 'border-b-2 border-[color:var(--brand)] text-[color:var(--brand)]'
+                : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
             }`}
           >
             {status === 'all'
@@ -189,12 +189,12 @@ export default function ShiftsAdminClient({
 
       {/* Shifts Table */}
       {filtered.length === 0 ? (
-        <div className="rounded border bg-white p-4 text-sm text-zinc-600">
+        <div className="card text-sm text-zinc-600 dark:text-zinc-400">
           No {filter !== 'all' ? filter : ''} shifts.
         </div>
       ) : (
-        <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
+        <div className="table-wrap">
+          <table className="table-ui">
             <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
               <tr>
                 <th className="px-3 py-2">Chatter</th>
@@ -217,10 +217,10 @@ export default function ShiftsAdminClient({
 
                 return (
                   <Fragment key={s.id}>
-                    <tr className="hover:bg-zinc-50">
+                    <tr >
                       <td className="px-3 py-2">
                         <div className="font-medium">{s.chatterName}</div>
-                        <div className="text-xs text-zinc-500">{s.chatterEmail}</div>
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400">{s.chatterEmail}</div>
                       </td>
                       <td className="px-3 py-2 text-xs">
                         {new Date(s.clockIn).toLocaleString()}
@@ -260,11 +260,11 @@ export default function ShiftsAdminClient({
                         {canHaveReport && !hasReport && <span className="text-zinc-400">—</span>}
                         {canHaveReport && hasReport && (
                           <div className="flex items-center gap-2">
-                            <span className="font-medium text-emerald-700">✓</span>
+                            <span className="font-medium text-[color:var(--brand)]">✓</span>
                             <button
                               type="button"
                               onClick={() => setExpandedShiftId((prev) => (prev === s.id ? null : s.id))}
-                              className="text-xs text-blue-600 hover:underline"
+                              className="text-xs brand-link"
                             >
                               {isExpanded ? 'Hide' : 'View'}
                             </button>
@@ -283,7 +283,7 @@ export default function ShiftsAdminClient({
                                 notes: s.notes || '',
                               })
                             }
-                            className="text-xs text-blue-600 hover:underline text-left"
+                            className="text-xs brand-link text-left"
                           >
                             Edit
                           </button>
@@ -293,7 +293,7 @@ export default function ShiftsAdminClient({
                               type="button"
                               onClick={() => handleToggleApprove(s.id, true)}
                               disabled={approveLoadingId === s.id}
-                              className="text-xs text-emerald-700 hover:underline disabled:opacity-50 text-left"
+                              className="text-xs brand-link disabled:opacity-50 text-left"
                             >
                               {approveLoadingId === s.id ? 'Approving…' : 'Approve'}
                             </button>
@@ -304,7 +304,7 @@ export default function ShiftsAdminClient({
                               type="button"
                               onClick={() => handleToggleApprove(s.id, false)}
                               disabled={approveLoadingId === s.id}
-                              className="text-xs text-amber-700 hover:underline disabled:opacity-50 text-left"
+                              className="text-xs text-amber-600 hover:underline disabled:opacity-50 text-left"
                             >
                               {approveLoadingId === s.id ? 'Reverting…' : 'Unapprove'}
                             </button>
@@ -318,7 +318,7 @@ export default function ShiftsAdminClient({
                     </tr>
 
                     {isExpanded && s.report && (
-                      <tr className="bg-zinc-50/50">
+                      <tr className="bg-zinc-50/60 dark:bg-zinc-950/40">
                         <td className="px-3 py-3" colSpan={10}>
                           <ShiftReportView report={s.report} />
                         </td>
@@ -334,8 +334,8 @@ export default function ShiftsAdminClient({
 
       {/* Edit Modal */}
       {editModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
-          <div className="rounded bg-white p-6 shadow-lg max-w-sm w-full">
+        <div className="fixed inset-0 flex items-center justify-center bg-black/70 z-50">
+          <div className="card p-6 shadow-lg max-w-sm w-full">
             <h2 className="text-lg font-semibold mb-4">Edit Shift</h2>
             {editError && (
               <div className="mb-4 rounded bg-red-50 p-2 text-sm text-red-700">
@@ -344,7 +344,7 @@ export default function ShiftsAdminClient({
             )}
             <div className="space-y-3">
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-zinc-600">Break Minutes</span>
+                <span className="text-xs text-zinc-600 dark:text-zinc-400">Break Minutes</span>
                 <input
                   type="number"
                   min="0"
@@ -359,7 +359,7 @@ export default function ShiftsAdminClient({
                 />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-zinc-600">Notes</span>
+                <span className="text-xs text-zinc-600 dark:text-zinc-400">Notes</span>
                 <textarea
                   value={editModal.notes}
                   onChange={(e) =>
@@ -374,14 +374,14 @@ export default function ShiftsAdminClient({
               <button
                 onClick={() => setEditModal(null)}
                 disabled={editLoading}
-                className="rounded px-3 py-1 text-sm bg-zinc-200 hover:bg-zinc-300 disabled:opacity-50"
+                className="btn-ghost"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveEdit}
                 disabled={editLoading}
-                className="rounded px-3 py-1 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary"
               >
                 {editLoading ? 'Saving…' : 'Save'}
               </button>

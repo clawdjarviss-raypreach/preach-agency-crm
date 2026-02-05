@@ -14,7 +14,7 @@ export default async function AdminPayPeriodsPage() {
   });
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <PayPeriodsClient initialPeriods={periods} />
     </div>

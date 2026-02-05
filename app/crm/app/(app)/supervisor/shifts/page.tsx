@@ -47,7 +47,7 @@ export default async function SupervisorShiftsPage() {
   }));
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       {role !== 'supervisor' ? (
         <main className="flex-1 p-6">

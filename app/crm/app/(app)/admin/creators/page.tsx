@@ -17,7 +17,7 @@ export default async function AdminCreatorsPage() {
   const creators = await prisma.creator.findMany({ orderBy: { createdAt: 'desc' }, take: 100 });
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <CreatorsClient initialCreators={creators as CreatorRow[]} />
     </div>

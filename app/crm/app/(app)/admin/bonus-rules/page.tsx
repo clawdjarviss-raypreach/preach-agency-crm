@@ -9,7 +9,7 @@ export default async function AdminBonusRulesPage() {
   });
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <BonusRulesClient initialRules={rules} />
     </div>

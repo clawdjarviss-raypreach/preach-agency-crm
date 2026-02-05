@@ -134,7 +134,7 @@ export default function PayrollApprovalsClient({
           </div>
         ) : (
           <div className="mt-3 overflow-hidden rounded border bg-white">
-            <table className="w-full text-sm">
+            <table className="table-ui">
               <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                 <tr>
                   <th className="px-3 py-2">Chatter</th>
@@ -147,7 +147,7 @@ export default function PayrollApprovalsClient({
               </thead>
               <tbody className="divide-y">
                 {pending.map((p) => (
-                  <tr key={p.id} className="hover:bg-zinc-50">
+                  <tr key={p.id} >
                     <td className="px-3 py-2">
                       <div className="font-medium">{p.chatter.name}</div>
                       {p.chatter.email && (
@@ -174,7 +174,7 @@ export default function PayrollApprovalsClient({
                       <button
                         onClick={() => handleApprove(p.id)}
                         disabled={loading === p.id}
-                        className="text-xs text-emerald-600 hover:underline disabled:opacity-50"
+                        className="text-xs brand-link disabled:opacity-50"
                       >
                         {loading === p.id ? 'Approving…' : 'Approve'}
                       </button>
@@ -197,7 +197,7 @@ export default function PayrollApprovalsClient({
           </div>
         ) : (
           <div className="mt-3 overflow-hidden rounded border bg-white">
-            <table className="w-full text-sm">
+            <table className="table-ui">
               <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                 <tr>
                   <th className="px-3 py-2">Chatter</th>
@@ -210,7 +210,7 @@ export default function PayrollApprovalsClient({
               </thead>
               <tbody className="divide-y">
                 {approved.map((p) => (
-                  <tr key={p.id} className="hover:bg-zinc-50">
+                  <tr key={p.id} >
                     <td className="px-3 py-2 font-medium">{p.chatter.name}</td>
                     <td className="px-3 py-2 text-xs">
                       {new Date(p.payPeriod.startDate).toISOString().slice(0, 10)} to{' '}
@@ -232,7 +232,7 @@ export default function PayrollApprovalsClient({
                       <button
                         onClick={() => handleMarkPaid(p.id)}
                         disabled={loading === p.id}
-                        className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+                        className="text-xs brand-link disabled:opacity-50"
                       >
                         {loading === p.id ? 'Marking…' : 'Mark Paid'}
                       </button>
@@ -255,7 +255,7 @@ export default function PayrollApprovalsClient({
           </div>
         ) : (
           <div className="mt-3 overflow-hidden rounded border bg-white">
-            <table className="w-full text-sm">
+            <table className="table-ui">
               <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                 <tr>
                   <th className="px-3 py-2">Chatter</th>
@@ -267,7 +267,7 @@ export default function PayrollApprovalsClient({
               </thead>
               <tbody className="divide-y">
                 {paid.map((p) => (
-                  <tr key={p.id} className="hover:bg-zinc-50">
+                  <tr key={p.id} >
                     <td className="px-3 py-2 font-medium">{p.chatter.name}</td>
                     <td className="px-3 py-2 text-xs">
                       {new Date(p.payPeriod.startDate).toISOString().slice(0, 10)} to{' '}

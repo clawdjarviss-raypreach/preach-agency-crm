@@ -66,7 +66,7 @@ export default async function AdminShiftsPage() {
   }));
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <ShiftsAdminClient initialShifts={rows} />
     </div>

@@ -126,7 +126,7 @@ export default function PayPeriodsClient({
             <button
               type="submit"
               disabled={loading}
-              className="rounded bg-blue-600 text-white px-3 py-1 text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary px-3 py-1"
             >
               {loading ? 'Creating…' : 'Create'}
             </button>
@@ -140,7 +140,7 @@ export default function PayPeriodsClient({
         </div>
       ) : (
         <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
+          <table className="table-ui">
             <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
               <tr>
                 <th className="px-3 py-2">Start Date</th>
@@ -153,7 +153,7 @@ export default function PayPeriodsClient({
             </thead>
             <tbody className="divide-y">
               {periods.map((p) => (
-                <tr key={p.id} className="hover:bg-zinc-50">
+                <tr key={p.id} >
                   <td className="px-3 py-2 font-medium">
                     {formatDate(p.startDate)}
                   </td>

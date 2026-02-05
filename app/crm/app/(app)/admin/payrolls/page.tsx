@@ -16,7 +16,7 @@ export default async function AdminPayrollsPage() {
   });
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <PayrollsClient initialPayrolls={payrolls} />
     </div>

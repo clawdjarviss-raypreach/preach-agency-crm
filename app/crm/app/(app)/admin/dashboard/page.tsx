@@ -210,39 +210,39 @@ export default async function AdminDashboardPage() {
     .slice(0, 8);
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <main className="flex-1 p-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Admin Dashboard</h1>
-          <p className="mt-1 text-sm text-zinc-600">
+          <h1 className="text-2xl font-semibold tracking-tight">Admin Dashboard</h1>
+          <p className="page-subtitle">
             System-wide metrics and a lightweight analytics MVP (last 14 days).
           </p>
         </div>
 
         {/* System Overview */}
         <div className="grid grid-cols-2 gap-4 mb-8 md:grid-cols-4 lg:grid-cols-5">
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Users</div>
             <div className="mt-2 text-2xl font-semibold">{userCount}</div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Creators</div>
             <div className="mt-2 text-2xl font-semibold">{creatorCount}</div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Active Assignments</div>
             <div className="mt-2 text-2xl font-semibold">{activeAssignments}</div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Bonus Rules</div>
             <div className="mt-2 text-2xl font-semibold">{bonusRuleCount}</div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">KPI Snapshots</div>
             <div className="mt-2 text-2xl font-semibold">{totalKpiSnapshots}</div>
           </div>
@@ -252,34 +252,31 @@ export default async function AdminDashboardPage() {
         <div id="analytics" className="mb-10 scroll-mt-6">
           <div className="flex items-end justify-between mb-3">
             <div>
-              <h2 className="text-lg font-semibold">Analytics (MVP)</h2>
-              <p className="text-xs text-zinc-600">Aggregated from KPI snapshots + closed shifts.</p>
+              <h2 className="text-lg font-semibold tracking-tight">Analytics (MVP)</h2>
+              <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Aggregated from KPI snapshots + closed shifts.</p>
             </div>
 
-            <a
-              href="/api/admin/analytics/export"
-              className="text-xs font-medium text-blue-700 hover:underline"
-            >
+            <a href="/api/admin/analytics/export" className="text-xs font-medium brand-link">
               Download CSV
             </a>
           </div>
 
           <div className="grid grid-cols-1 gap-4 mb-4 md:grid-cols-4">
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Revenue (last 7d)</div>
               <div className="mt-2 flex items-end justify-between gap-2">
                 <div className="text-2xl font-semibold">{formatMoney(revenueLast7)}</div>
                 <div className="text-xs text-zinc-600">vs prev: {formatDeltaPct(revenueLast7, revenuePrev7)}</div>
               </div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Tips (last 7d)</div>
               <div className="mt-2 flex items-end justify-between gap-2">
                 <div className="text-2xl font-semibold">{formatMoney(tipsLast7)}</div>
                 <div className="text-xs text-zinc-600">vs prev: {formatDeltaPct(tipsLast7, tipsPrev7)}</div>
               </div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Hours worked (last 7d)</div>
               <div className="mt-2 flex items-end justify-between gap-2">
                 <div className="text-2xl font-semibold">
@@ -291,7 +288,7 @@ export default async function AdminDashboardPage() {
               </div>
             </div>
 
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Revenue / hour (last 7d)</div>
               <div className="mt-2 flex items-end justify-between gap-2">
                 <div className="text-2xl font-semibold">
@@ -306,11 +303,11 @@ export default async function AdminDashboardPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <div className="rounded border bg-white overflow-hidden lg:col-span-2">
+            <div className="table-wrap lg:col-span-2">
               <div className="px-4 py-3 border-b">
                 <div className="text-sm font-semibold">Revenue + Tips (last 14 days)</div>
               </div>
-              <table className="w-full text-sm">
+              <table className="table-ui">
                 <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                   <tr>
                     <th className="px-3 py-2">Day</th>
@@ -335,11 +332,11 @@ export default async function AdminDashboardPage() {
               </table>
             </div>
 
-            <div className="rounded border bg-white overflow-hidden">
+            <div className="table-wrap">
               <div className="px-4 py-3 border-b">
                 <div className="text-sm font-semibold">Hours Worked (last 14 days)</div>
               </div>
-              <table className="w-full text-sm">
+              <table className="table-ui">
                 <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                   <tr>
                     <th className="px-3 py-2">Day</th>
@@ -371,7 +368,7 @@ export default async function AdminDashboardPage() {
             {topChatters.length === 0 ? (
               <div className="p-4 text-sm text-zinc-600">No activity yet.</div>
             ) : (
-              <table className="w-full text-sm">
+              <table className="table-ui">
                 <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                   <tr>
                     <th className="px-3 py-2">Chatter</th>
@@ -401,23 +398,23 @@ export default async function AdminDashboardPage() {
         <div className="mb-8">
           <h2 className="text-lg font-semibold mb-3">Shifts</h2>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Total</div>
               <div className="mt-2 text-2xl font-semibold">{totalShifts}</div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Pending</div>
               <div className="mt-2 text-2xl font-semibold text-amber-600">
                 {pendingShifts}
               </div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Approved</div>
               <div className="mt-2 text-2xl font-semibold text-emerald-600">
                 {approvedShifts}
               </div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Denied</div>
               <div className="mt-2 text-2xl font-semibold text-red-600">
                 {deniedCount}
@@ -430,23 +427,23 @@ export default async function AdminDashboardPage() {
         <div className="mb-8">
           <h2 className="text-lg font-semibold mb-3">Payrolls</h2>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Total</div>
               <div className="mt-2 text-2xl font-semibold">{totalPayrolls}</div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Draft</div>
-              <div className="mt-2 text-2xl font-semibold text-blue-600">
+              <div className="mt-2 text-2xl font-semibold text-[color:var(--brand)]">
                 {draftPayrolls}
               </div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Approved</div>
               <div className="mt-2 text-2xl font-semibold text-purple-600">
                 {approvedPayrolls}
               </div>
             </div>
-            <div className="rounded border bg-white p-4">
+            <div className="card">
               <div className="text-xs text-zinc-600">Paid</div>
               <div className="mt-2 text-2xl font-semibold text-teal-600">
                 {paidPayrolls}
@@ -459,12 +456,12 @@ export default async function AdminDashboardPage() {
         <div>
           <h2 className="text-lg font-semibold mb-3">Recent Shifts</h2>
           {recentShifts.length === 0 ? (
-            <div className="rounded border bg-white p-4 text-sm text-zinc-600">
+            <div className="card text-sm text-zinc-600 dark:text-zinc-400">
               No shifts yet.
             </div>
           ) : (
-            <div className="rounded border bg-white overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="table-wrap">
+              <table className="table-ui">
                 <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                   <tr>
                     <th className="px-3 py-2">Chatter</th>

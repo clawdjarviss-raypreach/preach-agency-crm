@@ -218,7 +218,7 @@ export default function AssignmentsClient({
           </label>
 
           <button
-            className="rounded-md bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
+            className="btn-primary"
             disabled={loading}
           >
             {loading ? 'Adding…' : 'Add'}
@@ -253,7 +253,7 @@ export default function AssignmentsClient({
         </div>
       ) : (
         <div className="mt-3 overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
+          <table className="table-ui">
             <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
               <tr>
                 <th className="px-3 py-2">Chatter</th>
@@ -265,7 +265,7 @@ export default function AssignmentsClient({
             </thead>
             <tbody className="divide-y">
               {filteredRows.map((r) => (
-                <tr key={r.id} className="hover:bg-zinc-50">
+                <tr key={r.id} >
                   <td className="px-3 py-2">
                     <div className="font-medium">{r.chatterName}</div>
                     <div className="text-xs text-zinc-500">{r.chatterEmail}</div>
@@ -273,7 +273,7 @@ export default function AssignmentsClient({
                   <td className="px-3 py-2">{r.creatorLabel}</td>
                   <td className="px-3 py-2">
                     {r.isPrimary ? (
-                      <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                      <span className="rounded bg-[color:var(--brand-soft)]/70 px-2 py-0.5 text-xs font-medium text-[color:var(--brand)]">
                         Primary
                       </span>
                     ) : (
@@ -286,7 +286,7 @@ export default function AssignmentsClient({
                       <button
                         onClick={() => handleSetPrimary(r.id)}
                         disabled={loading}
-                        className="text-xs text-blue-600 hover:underline disabled:opacity-50"
+                        className="text-xs brand-link disabled:opacity-50"
                       >
                         Set Primary
                       </button>
@@ -316,7 +316,7 @@ export default function AssignmentsClient({
           </div>
         ) : (
           <div className="mt-3 overflow-hidden rounded border bg-white">
-            <table className="w-full text-sm">
+            <table className="table-ui">
               <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
                 <tr>
                   <th className="px-3 py-2">Chatter</th>
@@ -326,7 +326,7 @@ export default function AssignmentsClient({
               </thead>
               <tbody className="divide-y">
                 {unassignedRows.map((u) => (
-                  <tr key={u.id} className="hover:bg-zinc-50">
+                  <tr key={u.id} >
                     <td className="px-3 py-2 font-medium">{u.chatterName}</td>
                     <td className="px-3 py-2 text-zinc-600">{u.creatorLabel}</td>
                     <td className="px-3 py-2 text-xs text-zinc-500">

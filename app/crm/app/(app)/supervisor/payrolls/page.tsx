@@ -11,7 +11,7 @@ export default async function SupervisorPayrollsPage() {
 
   if (!supervisor || supervisor.role !== 'supervisor') {
     return (
-      <div className="min-h-screen flex">
+      <div className="app-shell flex">
         <Sidebar />
         <main className="flex-1 p-6">
           <div className="rounded border bg-red-50 p-4 text-red-700">
@@ -65,7 +65,7 @@ export default async function SupervisorPayrollsPage() {
   ]);
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <PayrollApprovalsClient
         pendingPayrolls={pending}

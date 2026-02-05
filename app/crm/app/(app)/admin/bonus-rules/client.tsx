@@ -117,7 +117,7 @@ export default function BonusRulesClient({ initialRules }: BonusRulesClientProps
         </div>
         <button
           onClick={openCreateModal}
-          className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+          className="btn-primary px-3 py-1"
         >
           + Create Rule
         </button>
@@ -155,8 +155,8 @@ export default function BonusRulesClient({ initialRules }: BonusRulesClientProps
                       disabled={toggleLoading === r.id}
                       className={`rounded px-2 py-0.5 text-xs font-medium disabled:opacity-50 ${
                         r.isActive
-                          ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                          : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+                          ? 'bg-[color:var(--brand-soft)]/60 text-[color:var(--brand)] hover:bg-[color:var(--brand-soft)]/80'
+                          : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900'
                       }`}
                       title="Toggle active"
                     >
@@ -170,7 +170,7 @@ export default function BonusRulesClient({ initialRules }: BonusRulesClientProps
                   <td className="p-2 flex items-center gap-3">
                     <button
                       onClick={() => openEditModal(r)}
-                      className="text-blue-600 hover:underline text-xs"
+                      className="text-xs brand-link"
                     >
                       Edit
                     </button>

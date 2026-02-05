@@ -10,7 +10,7 @@ export default async function AdminLayout({
 
   if (role !== 'admin') {
     return (
-      <div className="min-h-screen flex">
+      <div className="app-shell flex">
         <Sidebar />
         <main className="flex-1 p-6">
           <h1 className="text-2xl font-semibold">Admin</h1>

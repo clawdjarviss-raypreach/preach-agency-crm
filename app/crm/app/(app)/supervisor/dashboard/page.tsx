@@ -10,7 +10,7 @@ export default async function SupervisorDashboardPage() {
 
   if (!supervisor || supervisor.role !== 'supervisor') {
     return (
-      <div className="min-h-screen flex">
+      <div className="app-shell flex">
         <Sidebar />
         <main className="flex-1 p-6">
           <div className="rounded border bg-red-50 p-4 text-red-700">
@@ -115,64 +115,64 @@ export default async function SupervisorDashboardPage() {
   ]);
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <main className="flex-1 p-6">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Supervisor Dashboard</h1>
-          <p className="mt-1 text-sm text-zinc-600">Team overview & metrics.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Supervisor Dashboard</h1>
+          <p className="page-subtitle">Team overview & metrics.</p>
         </div>
 
         {/* Key Metrics */}
         <div className="grid grid-cols-2 gap-4 mb-8 md:grid-cols-4 lg:grid-cols-8">
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Team Members</div>
             <div className="mt-2 text-2xl font-semibold">{teamCount}</div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Pending Shifts</div>
             <div className="mt-2 text-2xl font-semibold text-amber-600">
               {pendingShiftsCount}
             </div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Approved Shifts</div>
             <div className="mt-2 text-2xl font-semibold text-emerald-600">
               {approvedShiftsCount}
             </div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Reports Submitted</div>
             <div className="mt-2 text-2xl font-semibold text-emerald-600">
               {shiftsWithReport}
             </div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Reports Missing</div>
             <div className="mt-2 text-2xl font-semibold text-amber-600">
               {shiftsWithoutReport}
             </div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Draft Payrolls</div>
-            <div className="mt-2 text-2xl font-semibold text-blue-600">
+            <div className="mt-2 text-2xl font-semibold text-[color:var(--brand)]">
               {draftPayrollsCount}
             </div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Approved Payrolls</div>
             <div className="mt-2 text-2xl font-semibold text-purple-600">
               {approvedPayrollsCount}
             </div>
           </div>
 
-          <div className="rounded border bg-white p-4">
+          <div className="card">
             <div className="text-xs text-zinc-600">Paid Payrolls</div>
             <div className="mt-2 text-2xl font-semibold text-teal-600">
               {paidPayrollsCount}
@@ -184,7 +184,7 @@ export default async function SupervisorDashboardPage() {
         <div className="mb-8">
           <h2 className="text-lg font-semibold mb-3">Team Performance</h2>
           {teamMembers.length === 0 ? (
-            <div className="rounded border bg-white p-4 text-sm text-zinc-600">
+            <div className="card text-sm text-zinc-600 dark:text-zinc-400">
               No team members yet.
             </div>
           ) : (
@@ -194,7 +194,7 @@ export default async function SupervisorDashboardPage() {
                 const latestKpi = member.kpiSnapshots[0];
 
                 return (
-                  <div key={member.id} className="rounded border bg-white p-4">
+                  <div key={member.id} className="card">
                     <div className="font-medium text-sm">{member.name}</div>
                     {primaryAssignment && (
                       <div className="text-xs text-zinc-600 mt-1">
@@ -237,16 +237,16 @@ export default async function SupervisorDashboardPage() {
           <div>
             <h2 className="text-lg font-semibold mb-3">Recent Shifts</h2>
             {recentShifts.length === 0 ? (
-              <div className="rounded border bg-white p-4 text-sm text-zinc-600">
+              <div className="card text-sm text-zinc-600 dark:text-zinc-400">
                 No shifts yet.
               </div>
             ) : (
-              <div className="rounded border bg-white overflow-hidden">
+              <div className="table-wrap">
                 <div className="space-y-2">
                   {recentShifts.map((s) => (
-                    <div key={s.id} className="border-b p-3 text-xs last:border-b-0">
+                    <div key={s.id} className="border-b border-zinc-100 dark:border-zinc-900 p-3 text-xs last:border-b-0">
                       <div className="font-medium">{s.chatter.name}</div>
-                      <div className="text-zinc-500">
+                      <div className="text-zinc-500 dark:text-zinc-400">
                         {new Date(s.clockIn).toLocaleString()}
                       </div>
                     </div>
@@ -260,20 +260,20 @@ export default async function SupervisorDashboardPage() {
           <div>
             <h2 className="text-lg font-semibold mb-3">Recent Payrolls</h2>
             {recentPayrolls.length === 0 ? (
-              <div className="rounded border bg-white p-4 text-sm text-zinc-600">
+              <div className="card text-sm text-zinc-600 dark:text-zinc-400">
                 No payrolls yet.
               </div>
             ) : (
-              <div className="rounded border bg-white overflow-hidden">
+              <div className="table-wrap">
                 <div className="space-y-2">
                   {recentPayrolls.map((p) => (
-                    <div key={p.id} className="border-b p-3 text-xs last:border-b-0">
+                    <div key={p.id} className="border-b border-zinc-100 dark:border-zinc-900 p-3 text-xs last:border-b-0">
                       <div className="font-medium">
                         {p.chatter.name} •{' '}
                         <span
                           className={`text-xs font-semibold ${
                             p.status === 'draft'
-                              ? 'text-blue-600'
+                              ? 'text-[color:var(--brand)]'
                               : p.status === 'approved'
                                 ? 'text-purple-600'
                                 : 'text-teal-600'
@@ -282,7 +282,7 @@ export default async function SupervisorDashboardPage() {
                           {p.status}
                         </span>
                       </div>
-                      <div className="text-zinc-500">
+                      <div className="text-zinc-500 dark:text-zinc-400">
                         {new Date(p.payPeriod.startDate).toISOString().slice(0, 10)} to{' '}
                         {new Date(p.payPeriod.endDate).toISOString().slice(0, 10)}
                       </div>

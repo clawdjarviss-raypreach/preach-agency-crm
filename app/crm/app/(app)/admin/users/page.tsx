@@ -38,7 +38,7 @@ export default async function AdminUsersPage() {
   }));
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <UsersClient
         initialUsers={rows}

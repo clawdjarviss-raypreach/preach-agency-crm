@@ -84,7 +84,7 @@ export default async function AdminAssignmentsPage() {
   }));
 
   return (
-    <div className="min-h-screen flex">
+    <div className="app-shell flex">
       <Sidebar />
       <AssignmentsClient
         initialRows={rows}

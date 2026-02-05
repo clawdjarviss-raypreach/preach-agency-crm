@@ -384,3 +384,12 @@
 - `/supervisor/dashboard`: added “Reports Submitted” and “Reports Missing” metrics (closed shifts only).
 - Added reusable `ShiftReportView` component for consistent report rendering.
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 21:55 (Europe/Madrid)
+- **CRM UX + Branding**: applied Preach Agency brand theme across CRM UI.
+- Sidebar: active nav states now use brand gold; added "My Stats" link.
+- Buttons: standardized primary CTAs via `.btn-primary` (brand gold + black text).
+- Dark mode: standardized app shell + cards/tables to true black backgrounds.
+- Cards/Tables: added shared `.card` + `.table-ui` styling for consistent hierarchy + zebra/hover.
+- **New page**: `/my-stats` chatter performance dashboard (hours, revenue, tips, trends, assignments, recent shifts, team average comparison).
+- Verified: `npm run lint` + `npm run build` passing.

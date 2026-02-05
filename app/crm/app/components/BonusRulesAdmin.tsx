@@ -58,10 +58,7 @@ export default function BonusRulesAdmin() {
         <div className="text-sm text-zinc-600">
           {loading ? 'Loading…' : `${rules.length} rules • ${activeCount} active`}
         </div>
-        <button
-          onClick={openCreate}
-          className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
+        <button onClick={openCreate} className="btn-primary px-3 py-1">
           New rule
         </button>
       </div>
@@ -72,8 +69,8 @@ export default function BonusRulesAdmin() {
         </div>
       )}
 
-      <div className="mt-4 overflow-x-auto border rounded">
-        <table className="min-w-full text-sm">
+      <div className="mt-4 overflow-x-auto table-wrap">
+        <table className="table-ui min-w-full">
           <thead className="bg-zinc-50 text-left">
             <tr>
               <th className="p-2">Name</th>

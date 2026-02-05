@@ -186,7 +186,7 @@ export default function CreatorsClient({ initialCreators }: { initialCreators: C
             <button
               type="submit"
               disabled={loading}
-              className="rounded bg-blue-600 text-white px-3 py-1 text-sm hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary px-3 py-1"
             >
               {loading ? 'Creating…' : 'Create'}
             </button>
@@ -198,7 +198,7 @@ export default function CreatorsClient({ initialCreators }: { initialCreators: C
         <div className="rounded border bg-white p-4 text-sm text-zinc-600">No creators yet.</div>
       ) : (
         <div className="overflow-hidden rounded border bg-white">
-          <table className="w-full text-sm">
+          <table className="table-ui">
             <thead className="bg-zinc-50 text-left text-xs font-semibold text-zinc-600">
               <tr>
                 <th className="px-3 py-2">Platform</th>
@@ -211,7 +211,7 @@ export default function CreatorsClient({ initialCreators }: { initialCreators: C
             </thead>
             <tbody className="divide-y">
               {creators.map((c) => (
-                <tr key={c.id} className="hover:bg-zinc-50">
+                <tr key={c.id} >
                   <td className="px-3 py-2">{c.platform}</td>
                   <td className="px-3 py-2 font-medium">{c.username}</td>
                   <td className="px-3 py-2 text-zinc-600">{c.displayName ?? '-'}</td>
@@ -242,7 +242,7 @@ export default function CreatorsClient({ initialCreators }: { initialCreators: C
                           status: c.status,
                         })
                       }
-                      className="text-xs text-blue-600 hover:underline"
+                      className="text-xs brand-link"
                     >
                       Edit
                     </button>
@@ -257,7 +257,7 @@ export default function CreatorsClient({ initialCreators }: { initialCreators: C
       {/* Edit Modal */}
       {editModal && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
-          <div className="rounded bg-white p-6 shadow-lg max-w-sm w-full">
+          <div className="card p-6 shadow-lg max-w-sm w-full">
             <h2 className="text-lg font-semibold mb-4">Edit Creator</h2>
             {editError && (
               <div className="mb-4 rounded bg-red-50 p-2 text-sm text-red-700">
@@ -299,14 +299,14 @@ export default function CreatorsClient({ initialCreators }: { initialCreators: C
               <button
                 onClick={() => setEditModal(null)}
                 disabled={editLoading}
-                className="rounded px-3 py-1 text-sm bg-zinc-200 hover:bg-zinc-300 disabled:opacity-50"
+                className="btn-ghost"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSaveEdit}
                 disabled={editLoading}
-                className="rounded px-3 py-1 text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary px-3 py-1"
               >
                 {editLoading ? 'Saving…' : 'Save'}
               </button>
