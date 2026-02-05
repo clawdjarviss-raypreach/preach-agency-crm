@@ -323,18 +323,31 @@ export default function PayrollsClient({
                       : formatMoney(p.commissionCents)}
                   </td>
                   <td className="px-3 py-2">
-                    <div className="text-xs font-medium">
-                      {formatMoney(p.bonusTotalCents)}
-                    </div>
-                    {p.bonuses.length > 0 && (
-                      <div className="mt-1 space-y-0.5">
-                        {p.bonuses.map((b) => (
-                          <div key={b.id} className="text-xs text-zinc-500">
-                            {b.bonusRule?.name ?? 'Custom'}: {formatMoney(b.amountCents)}
+                    <div className="text-xs font-medium">{formatMoney(p.bonusTotalCents)}</div>
+
+                    {p.bonuses.length > 0 && (() => {
+                      const auto = p.bonuses
+                        .filter((b) => b.bonusRule != null)
+                        .reduce((sum, b) => sum + b.amountCents, 0);
+                      const manual = p.bonuses
+                        .filter((b) => b.bonusRule == null)
+                        .reduce((sum, b) => sum + b.amountCents, 0);
+
+                      return (
+                        <div className="mt-1 space-y-0.5">
+                          <div className="text-xs text-zinc-500">Auto: {formatMoney(auto)}</div>
+                          <div className="text-xs text-zinc-500">Manual: {formatMoney(manual)}</div>
+
+                          <div className="mt-1 space-y-0.5">
+                            {p.bonuses.map((b) => (
+                              <div key={b.id} className="text-xs text-zinc-500">
+                                {b.bonusRule?.name ?? 'Custom'}: {formatMoney(b.amountCents)}
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {formatMoney(p.deductionsCents)}

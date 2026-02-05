@@ -6,6 +6,27 @@ import { CreatorStatus, Platform } from '@prisma/client';
 const PLATFORMS = new Set<Platform>(['onlyfans', 'fansly', 'other']);
 const STATUSES = new Set<CreatorStatus>(['active', 'paused', 'churned']);
 
+export async function GET() {
+  const role = await getRole();
+  if (role !== 'admin') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  }
+
+  const creators = await prisma.creator.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 500,
+    select: {
+      id: true,
+      username: true,
+      displayName: true,
+      platform: true,
+      status: true,
+    },
+  });
+
+  return NextResponse.json(creators);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const role = await getRole();

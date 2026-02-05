@@ -1,8 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CreateBonusRuleModal from '@/app/components/CreateBonusRuleModal';
 import type { BonusRule } from '@prisma/client';
+
+type CreatorOption = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  platform: string;
+  status: string;
+};
 
 interface BonusRulesClientProps {
   initialRules: BonusRule[];
@@ -18,12 +26,53 @@ function formatBps(bps: number | null) {
   return `${(bps / 100).toFixed(2)}%`;
 }
 
+function formatDate(d: Date | string | null) {
+  if (!d) return null;
+  const date = typeof d === 'string' ? new Date(d) : d;
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function targetLabel(t: BonusRule['targetType']) {
+  switch (t) {
+    case 'revenue':
+      return 'Gross Revenue';
+    case 'net_revenue':
+      return 'Net Revenue';
+    case 'messages_sent':
+      return 'Messages';
+    case 'new_subs':
+      return 'New Subs';
+    case 'tips':
+      return 'Tips';
+    case 'manual':
+    default:
+      return 'Manual';
+  }
+}
+
 export default function BonusRulesClient({ initialRules }: BonusRulesClientProps) {
   const [rules, setRules] = useState<BonusRule[]>(initialRules);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedRule, setSelectedRule] = useState<BonusRule | null>(null);
   const [toggleLoading, setToggleLoading] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+
+  const [creators, setCreators] = useState<CreatorOption[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/creators');
+        if (!res.ok) return;
+        const data = (await res.json()) as CreatorOption[];
+        setCreators(data);
+      } catch {
+        // non-blocking
+      }
+    })();
+  }, []);
+
+  const creatorsById = useMemo(() => new Map(creators.map((c) => [c.id, c] as const)), [creators]);
 
   const openCreateModal = () => {
     setSelectedRule(null);
@@ -63,11 +112,18 @@ export default function BonusRulesClient({ initialRules }: BonusRulesClientProps
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           name: rule.name,
+          description: rule.description,
           type: rule.type,
+          targetType: rule.targetType,
           isActive: !rule.isActive,
           thresholdCents: rule.thresholdCents,
+          targetThreshold: rule.targetThreshold,
           percentageBps: rule.percentageBps,
           flatAmountCents: rule.flatAmountCents,
+          multiplier: rule.multiplier,
+          creatorId: rule.creatorId,
+          startDate: rule.startDate,
+          endDate: rule.endDate,
         }),
       });
 
@@ -111,28 +167,27 @@ export default function BonusRulesClient({ initialRules }: BonusRulesClientProps
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold">Bonus Rules</h1>
-          <p className="mt-1 text-sm text-zinc-600">
-            Configure reusable bonus rules (percentage/flat/milestone).
-          </p>
+          <p className="mt-1 text-sm text-zinc-600">Define auto-applied bonus rules (targets, scopes, multipliers).</p>
         </div>
-        <button
-          onClick={openCreateModal}
-          className="btn-primary px-3 py-1"
-        >
+        <button onClick={openCreateModal} className="btn-primary px-3 py-1">
           + Create Rule
         </button>
       </div>
 
-      <div className="mt-4 overflow-auto rounded border">
-        <table className="min-w-full text-sm">
-          <thead className="bg-zinc-50 text-left">
+      <div className="mt-4 overflow-auto rounded border border-zinc-200 dark:border-zinc-800">
+        <table className="table-ui min-w-full text-sm">
+          <thead>
             <tr>
               <th className="p-2">Name</th>
               <th className="p-2">Type</th>
-              <th className="p-2">Active</th>
+              <th className="p-2">Target</th>
               <th className="p-2">Threshold</th>
               <th className="p-2">Percent</th>
               <th className="p-2">Flat</th>
+              <th className="p-2">×</th>
+              <th className="p-2">Scope</th>
+              <th className="p-2">Active Period</th>
+              <th className="p-2">Active</th>
               <th className="p-2">Created</th>
               <th className="p-2">Actions</th>
             </tr>
@@ -140,62 +195,85 @@ export default function BonusRulesClient({ initialRules }: BonusRulesClientProps
           <tbody>
             {rules.length === 0 ? (
               <tr>
-                <td className="p-2 text-zinc-500" colSpan={8}>
+                <td className="p-2 text-zinc-500" colSpan={12}>
                   No bonus rules yet.
                 </td>
               </tr>
             ) : (
-              rules.map((r) => (
-                <tr key={r.id} className="border-t hover:bg-zinc-50">
-                  <td className="p-2">{r.name}</td>
-                  <td className="p-2">{r.type}</td>
-                  <td className="p-2">
-                    <button
-                      onClick={() => handleToggleActive(r)}
-                      disabled={toggleLoading === r.id}
-                      className={`rounded px-2 py-0.5 text-xs font-medium disabled:opacity-50 ${
-                        r.isActive
-                          ? 'bg-[color:var(--brand-soft)]/60 text-[color:var(--brand)] hover:bg-[color:var(--brand-soft)]/80'
-                          : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900'
-                      }`}
-                      title="Toggle active"
-                    >
-                      {toggleLoading === r.id ? '…' : r.isActive ? 'Active' : 'Inactive'}
-                    </button>
-                  </td>
-                  <td className="p-2">{formatCents(r.thresholdCents)}</td>
-                  <td className="p-2">{formatBps(r.percentageBps)}</td>
-                  <td className="p-2">{formatCents(r.flatAmountCents)}</td>
-                  <td className="p-2 text-xs">{new Date(r.createdAt).toISOString().slice(0, 10)}</td>
-                  <td className="p-2 flex items-center gap-3">
-                    <button
-                      onClick={() => openEditModal(r)}
-                      className="text-xs brand-link"
-                    >
-                      Edit
-                    </button>
+              rules.map((r) => {
+                const start = formatDate(r.startDate);
+                const end = formatDate(r.endDate);
+                const creator = r.creatorId ? creatorsById.get(r.creatorId) : null;
 
-                    <button
-                      onClick={() => handleDelete(r)}
-                      disabled={deleteLoading === r.id}
-                      className="text-red-600 hover:underline text-xs disabled:opacity-50"
-                    >
-                      {deleteLoading === r.id ? 'Deleting…' : 'Delete'}
-                    </button>
-                  </td>
-                </tr>
-              ))
+                const threshold = r.targetThreshold ?? r.thresholdCents;
+                const thresholdDisplay =
+                  threshold == null
+                    ? '—'
+                    : r.targetType === 'messages_sent' || r.targetType === 'new_subs'
+                      ? threshold.toString()
+                      : formatCents(threshold);
+
+                return (
+                  <tr key={r.id} className="border-t border-zinc-200/50 dark:border-zinc-800 hover:bg-zinc-50/50 dark:hover:bg-zinc-950">
+                    <td className="p-2">
+                      <div className="font-medium">{r.name}</div>
+                      {r.description && <div className="text-xs text-zinc-500 truncate max-w-[360px]">{r.description}</div>}
+                    </td>
+                    <td className="p-2">{r.type}</td>
+                    <td className="p-2">{targetLabel(r.targetType)}</td>
+                    <td className="p-2">{r.targetType === 'manual' ? '—' : thresholdDisplay}</td>
+                    <td className="p-2">{formatBps(r.percentageBps)}</td>
+                    <td className="p-2">{formatCents(r.flatAmountCents)}</td>
+                    <td className="p-2">{(r.multiplier ?? 1).toFixed(2)}</td>
+                    <td className="p-2">
+                      {r.creatorId ? (
+                        <span className="rounded bg-[color:var(--brand-soft)]/60 text-[color:var(--brand)] px-2 py-0.5 text-xs font-medium">
+                          {creator ? creator.displayName || creator.username : 'Creator'}
+                        </span>
+                      ) : (
+                        <span className="rounded bg-zinc-100 dark:bg-zinc-950 px-2 py-0.5 text-xs">Global</span>
+                      )}
+                    </td>
+                    <td className="p-2 text-xs">
+                      {start || end ? `${start ?? '∞'} — ${end ?? '∞'}` : 'Always'}
+                    </td>
+                    <td className="p-2">
+                      <button
+                        onClick={() => handleToggleActive(r)}
+                        disabled={toggleLoading === r.id}
+                        className={`rounded px-2 py-0.5 text-xs font-medium disabled:opacity-50 ${
+                          r.isActive
+                            ? 'bg-[color:var(--brand-soft)]/60 text-[color:var(--brand)] hover:bg-[color:var(--brand-soft)]/80'
+                            : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900'
+                        }`}
+                        title="Toggle active"
+                      >
+                        {toggleLoading === r.id ? '…' : r.isActive ? 'Active' : 'Inactive'}
+                      </button>
+                    </td>
+                    <td className="p-2 text-xs">{new Date(r.createdAt).toISOString().slice(0, 10)}</td>
+                    <td className="p-2 flex items-center gap-3">
+                      <button onClick={() => openEditModal(r)} className="text-xs brand-link">
+                        Edit
+                      </button>
+
+                      <button
+                        onClick={() => handleDelete(r)}
+                        disabled={deleteLoading === r.id}
+                        className="text-red-600 hover:underline text-xs disabled:opacity-50"
+                      >
+                        {deleteLoading === r.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
       </div>
 
-      <CreateBonusRuleModal
-        isOpen={isModalOpen}
-        onClose={handleModalClose}
-        onSuccess={handleSuccess}
-        rule={selectedRule}
-      />
+      <CreateBonusRuleModal isOpen={isModalOpen} onClose={handleModalClose} onSuccess={handleSuccess} rule={selectedRule} />
     </main>
   );
 }

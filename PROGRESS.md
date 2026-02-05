@@ -425,3 +425,11 @@
 - Payroll generation now creates `Bonus` records linked to `BonusRule` for *new* payrolls (preserves historical payrolls on rule changes).
 - Evaluates rules by target type (gross/net revenue, messages, new subs, tips), applies thresholds, and applies multiplier.
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 23:20 (Europe/Madrid)
+- **Bonus Targets (Phase 3 — Admin UI + API)**: upgraded BonusRule create/edit UX with new fields (description, target type/threshold, multiplier, creator scope, start/end dates).
+- Added Preview/Simulate flow via `POST /api/admin/bonus-rules/preview` (qualifiers for last 7 days KPIs).
+- Updated Bonus Rules list view to show scope + active period + multiplier + target details.
+- Updated BonusRule create/update APIs to validate/persist new fields.
+- Payroll UI: admin + supervisor payroll tables now show bonus breakdown (Auto vs Manual).
+- Verified: `npm run lint` + `npm run build` passing.

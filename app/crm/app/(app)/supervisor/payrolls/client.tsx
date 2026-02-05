@@ -9,7 +9,7 @@ type PayrollRow = {
   basePayCents: number;
   bonusTotalCents: number;
   netPayCents: number;
-  bonuses: { id: string; amountCents: number }[];
+  bonuses: { id: string; amountCents: number; bonusRule: { id: string; name: string } | null }[];
 };
 
 interface PayrollApprovalsClientProps {
@@ -161,11 +161,20 @@ export default function PayrollApprovalsClient({
                     <td className="px-3 py-2 font-medium">{formatMoney(p.basePayCents)}</td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{formatMoney(p.bonusTotalCents)}</div>
-                      {p.bonuses.length > 0 && (
-                        <div className="text-xs text-zinc-500">
-                          {p.bonuses.length} rule{p.bonuses.length !== 1 ? 's' : ''}
-                        </div>
-                      )}
+                      {p.bonuses.length > 0 && (() => {
+                        const auto = p.bonuses
+                          .filter((b) => b.bonusRule != null)
+                          .reduce((sum, b) => sum + b.amountCents, 0);
+                        const manual = p.bonuses
+                          .filter((b) => b.bonusRule == null)
+                          .reduce((sum, b) => sum + b.amountCents, 0);
+
+                        return (
+                          <div className="text-xs text-zinc-500">
+                            Auto: {formatMoney(auto)} • Manual: {formatMoney(manual)}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-lg font-semibold">
                       {formatMoney(p.netPayCents)}
@@ -219,11 +228,20 @@ export default function PayrollApprovalsClient({
                     <td className="px-3 py-2 font-medium">{formatMoney(p.basePayCents)}</td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{formatMoney(p.bonusTotalCents)}</div>
-                      {p.bonuses.length > 0 && (
-                        <div className="text-xs text-zinc-500">
-                          {p.bonuses.length} rule{p.bonuses.length !== 1 ? 's' : ''}
-                        </div>
-                      )}
+                      {p.bonuses.length > 0 && (() => {
+                        const auto = p.bonuses
+                          .filter((b) => b.bonusRule != null)
+                          .reduce((sum, b) => sum + b.amountCents, 0);
+                        const manual = p.bonuses
+                          .filter((b) => b.bonusRule == null)
+                          .reduce((sum, b) => sum + b.amountCents, 0);
+
+                        return (
+                          <div className="text-xs text-zinc-500">
+                            Auto: {formatMoney(auto)} • Manual: {formatMoney(manual)}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-lg font-semibold">
                       {formatMoney(p.netPayCents)}
@@ -276,11 +294,20 @@ export default function PayrollApprovalsClient({
                     <td className="px-3 py-2 font-medium">{formatMoney(p.basePayCents)}</td>
                     <td className="px-3 py-2">
                       <div className="font-medium">{formatMoney(p.bonusTotalCents)}</div>
-                      {p.bonuses.length > 0 && (
-                        <div className="text-xs text-zinc-500">
-                          {p.bonuses.length} rule{p.bonuses.length !== 1 ? 's' : ''}
-                        </div>
-                      )}
+                      {p.bonuses.length > 0 && (() => {
+                        const auto = p.bonuses
+                          .filter((b) => b.bonusRule != null)
+                          .reduce((sum, b) => sum + b.amountCents, 0);
+                        const manual = p.bonuses
+                          .filter((b) => b.bonusRule == null)
+                          .reduce((sum, b) => sum + b.amountCents, 0);
+
+                        return (
+                          <div className="text-xs text-zinc-500">
+                            Auto: {formatMoney(auto)} • Manual: {formatMoney(manual)}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-lg font-semibold">
                       {formatMoney(p.netPayCents)}

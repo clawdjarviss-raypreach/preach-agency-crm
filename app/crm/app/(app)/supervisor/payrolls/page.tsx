@@ -33,7 +33,7 @@ export default async function SupervisorPayrollsPage() {
       include: {
         chatter: { select: { name: true, email: true } },
         payPeriod: true,
-        bonuses: true,
+        bonuses: { include: { bonusRule: { select: { id: true, name: true } } } },
       },
     }),
     prisma.payroll.findMany({
@@ -46,7 +46,7 @@ export default async function SupervisorPayrollsPage() {
       include: {
         chatter: { select: { name: true } },
         payPeriod: true,
-        bonuses: true,
+        bonuses: { include: { bonusRule: { select: { id: true, name: true } } } },
       },
     }),
     prisma.payroll.findMany({
@@ -59,7 +59,7 @@ export default async function SupervisorPayrollsPage() {
       include: {
         chatter: { select: { name: true } },
         payPeriod: true,
-        bonuses: true,
+        bonuses: { include: { bonusRule: { select: { id: true, name: true } } } },
       },
     }),
   ]);
