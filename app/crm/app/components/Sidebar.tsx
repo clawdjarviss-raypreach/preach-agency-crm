@@ -6,7 +6,7 @@ export default async function Sidebar() {
 
   return (
     <aside className="w-64 border-r bg-white p-4">
-      <div className="text-sm font-semibold">Dashboard v0</div>
+      <div className="text-sm font-semibold">Preach Agency CRM</div>
       <div className="mt-1 text-xs text-zinc-500">role: {role ?? 'none'}</div>
 
       <nav className="mt-6 space-y-2 text-sm">

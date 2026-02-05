@@ -21,12 +21,55 @@ export default async function ShiftsPage() {
       })
     : [];
 
+  // V0 stats (server-side): last 7 days of closed shifts only.
+  // Avoid Date.now() to satisfy react-hooks/purity lint rule.
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const recentClosed = chatter
+    ? await prisma.shift.findMany({
+        where: {
+          chatterId: chatter.id,
+          clockOut: { not: null },
+          clockIn: { gte: sevenDaysAgo },
+        },
+        select: { clockIn: true, clockOut: true, breakMinutes: true },
+        take: 250,
+      })
+    : [];
+
+  const recentMinutes = recentClosed.reduce((sum, s) => {
+    const out = s.clockOut;
+    if (!out) return sum;
+    const minutes = Math.max(
+      0,
+      Math.floor((out.getTime() - s.clockIn.getTime()) / 60000) - (s.breakMinutes ?? 0)
+    );
+    return sum + minutes;
+  }, 0);
+
+  const recentHours = (recentMinutes / 60).toFixed(2);
+
   return (
     <div className="min-h-screen flex">
       <Sidebar />
       <main className="flex-1 p-6">
         <h1 className="text-xl font-semibold">My Shifts</h1>
         <p className="mt-1 text-sm text-zinc-600">V0: shifts are tied to your dev-login role via seeded demo users.</p>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-md border bg-white p-3 text-sm">
+            <div className="text-xs text-zinc-500">Last 7 days (closed shifts)</div>
+            <div className="mt-1 text-lg font-semibold">{recentHours} h</div>
+          </div>
+          <div className="rounded-md border bg-white p-3 text-sm">
+            <div className="text-xs text-zinc-500">Open shift</div>
+            <div className="mt-1 text-lg font-semibold">{openShift ? 'Running' : 'None'}</div>
+          </div>
+          <div className="rounded-md border bg-white p-3 text-sm">
+            <div className="text-xs text-zinc-500">Total shown</div>
+            <div className="mt-1 text-lg font-semibold">{shifts.length}</div>
+          </div>
+        </div>
 
         <div className="mt-4 flex gap-2">
           <form action="/api/shifts/clock-in" method="post">

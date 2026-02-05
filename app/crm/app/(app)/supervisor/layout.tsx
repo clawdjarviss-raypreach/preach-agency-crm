@@ -1,4 +1,4 @@
-import { auth } from '@/lib/auth';
+import { getRole } from '@/lib/auth';
 import { ReactNode } from 'react';
 
 export default async function SupervisorLayout({
@@ -6,9 +6,9 @@ export default async function SupervisorLayout({
 }: {
   children: ReactNode;
 }) {
-  const user = await auth();
+  const role = await getRole();
 
-  if (!user || (user.role !== 'supervisor' && user.role !== 'admin')) {
+  if (role !== 'supervisor' && role !== 'admin') {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="rounded-lg border border-red-200 bg-red-50 p-6 max-w-md">

@@ -164,6 +164,45 @@
 - **Next**: Once Rayan provides GitHub account info + CLI auth, run `gh repo create` + `git push`.
 - **Blockers**: Waiting on GitHub account/org name + auth from Rayan.
 
+### 2026-02-05 14:28 (Europe/Madrid)
+- **Health check**: Gateway + Node running ✅. Dev server restarted (was holding port lock).
+- **Shipped**: Created comprehensive `scripts/smoke-test.sh` for end-to-end workflow validation (clock-in → approval → payroll → bonuses → mark paid).
+- **Script**: Automates role-based login + multi-step workflow via curl + jq. Ready for CI/CD integration.
+- **Next**: Execute smoke test + document any issues, then consider analytics dashboard or real auth implementation.
+- **Build status**: `npm run dev` ready on localhost:3000.
+
+### 2026-02-05 14:33 (Europe/Madrid)
+- **GitHub setup**: Installed gh CLI + authenticated as clawdjarviss-raypreach (OAuth via device flow).
+- **Shipped**: Created public repo `mission-control-dashboard` + pushed all code (3 commits).
+- **Repository**: https://github.com/clawdjarviss-raypreach/mission-control-dashboard
+- **Contents**: PLAN.md, PROGRESS.md, README.md, + full Next.js app with schema/seeds.
+- **Next**: Execute smoke test workflow or begin analytics dashboard feature.
+- **Blockers**: none.
+
+### 2026-02-05 14:50 (Europe/Madrid)
+- **Health check**: Gateway + Node running ✅.
+- **Shipped**: Added supervisor route-guard layout (`app/(app)/supervisor/layout.tsx`). Blocks non-supervisor/admin access.
+- **Shipped**: Configured git credential helper (gh auth). Committed + pushed to GitHub.
+- **Build status**: `npm run lint` passing.
+- **Next**: Add chatter route-guard, then execute smoke test or implement analytics dashboard.
+- **Blockers**: none.
+
+### 2026-02-05 14:59 (Europe/Madrid)
+- **Health check**: Gateway + Node running ✅. Dev server was killed (SIGKILL).
+- **Shipped**: Added chatter route-guard layout (`app/(app)/shifts/layout.tsx`). Now all three roles have route protection.
+- **Shipped**: Committed + pushed to GitHub (5 commits total).
+- **Build status**: `npm run lint` passing.
+- **Next**: Start dev server + execute smoke test or implement analytics dashboard.
+- **Blockers**: none.
+
+### 2026-02-05 15:12 (Europe/Madrid)
+- **Rebrand**: Updated UI branding from “Mission Control” → **“Preach Agency CRM”** (login + home + sidebar + app metadata title).
+- **Fix**: Removed accidental duplicate route-group folder `app/\(app\)` that broke builds.
+- **Fix**: Supervisor/Shifts route-guards now use `getRole()` (no non-existent `auth()` import).
+- **Shipped**: Lint + build passing after rebrand.
+- **Next**: Push these branding/build fixes to GitHub + (optional) rebrand any remaining strings in docs/components.
+- **Blockers**: none.
+
 ### 2026-02-05 14:01 (Europe/Madrid)
 - Shipped: cleaned up a naming mismatch in Admin Users form (`hourlyRateEur` → `hourlyRateUsd`) so the field matches the UI label `$/h`.
 - Verified: `npm run lint` passes.
@@ -174,4 +213,17 @@
 - Shipped: fixed `POST /api/admin/kpi-snapshots` so `0` values (e.g., $0 revenue, 0 messages) are persisted correctly (`|| null` → `?? null`).
 - Verified: `npm run lint` passes.
 - Next: add `/supervisor/dashboard` stub w/ pending counts or start analytics/reporting.
+- Blockers: none.
+
+### 2026-02-05 14:48 (Europe/Madrid)
+- Shipped: added `app/(app)/admin/layout.tsx` route-guard so **all /admin pages** return an Unauthorized screen unless role=admin.
+- Verified: `npm run lint` passes.
+- Next: add similar route-guard for `/supervisor/*` (layout) + start tightening auth/role handling for shared components.
+- Blockers: none.
+
+### 2026-02-05 15:10 (Europe/Madrid)
+- Shipped: “My Shifts” page now shows a small stats strip (last-7-days closed-hours, open-shift status, total rows shown).
+- Added server-side computation for last-7-days worked minutes (closed shifts only) and rendered as hours.
+- Lint: passing.
+- Next: extend this to show totals for the current open pay period (and optionally per-day breakdown).
 - Blockers: none.

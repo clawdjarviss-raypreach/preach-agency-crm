@@ -108,7 +108,7 @@ export default async function HomePage() {
       <Sidebar />
       <main className="flex-1 p-6">
         <div className="mb-6">
-          <h1 className="text-3xl font-bold">Mission Control v0</h1>
+          <h1 className="text-3xl font-bold">Preach Agency — CRM</h1>
           <p className="mt-1 text-sm text-zinc-600">OnlyFans Agency CRM — Shifts, Payroll, Bonuses</p>
         </div>
 
@@ -119,7 +119,7 @@ export default async function HomePage() {
         {!role && (
           <div className="rounded border bg-yellow-50 p-4 text-sm text-yellow-800">
             <div className="font-medium">Not signed in</div>
-            <p className="mt-1">Please log in to access Dashboard v0.</p>
+            <p className="mt-1">Please log in to access Preach Agency CRM.</p>
           </div>
         )}
       </main>
