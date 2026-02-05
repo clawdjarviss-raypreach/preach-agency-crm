@@ -137,6 +137,40 @@ export default async function AdminDashboardPage() {
     workedMinutesByDay.set(k, (workedMinutesByDay.get(k) ?? 0) + minutes);
   }
 
+  // Quick 7d vs previous 7d summary
+  let revenueLast7 = 0;
+  let revenuePrev7 = 0;
+  let tipsLast7 = 0;
+  let tipsPrev7 = 0;
+  for (const s of kpiSnapshots14d) {
+    const isLast7 = new Date(s.snapshotDate) >= days7;
+    if (isLast7) {
+      revenueLast7 += s.revenueCents ?? 0;
+      tipsLast7 += s.tipsReceivedCents ?? 0;
+    } else {
+      revenuePrev7 += s.revenueCents ?? 0;
+      tipsPrev7 += s.tipsReceivedCents ?? 0;
+    }
+  }
+
+  let workedMinutesLast7 = 0;
+  let workedMinutesPrev7 = 0;
+  for (const sh of shifts14d) {
+    const isLast7 = new Date(sh.clockIn) >= days7;
+    const clockIn = new Date(sh.clockIn).getTime();
+    const clockOut = new Date(sh.clockOut!).getTime();
+    const minutes = Math.max(0, Math.floor((clockOut - clockIn) / 60000) - (sh.breakMinutes ?? 0));
+    if (isLast7) workedMinutesLast7 += minutes;
+    else workedMinutesPrev7 += minutes;
+  }
+
+  function formatDeltaPct(current: number, previous: number): string {
+    if (previous <= 0) return current > 0 ? '+∞' : '—';
+    const pct = ((current - previous) / previous) * 100;
+    const sign = pct >= 0 ? '+' : '';
+    return `${sign}${pct.toFixed(0)}%`;
+  }
+
   // Top chatters (last 7 days): by worked hours, tie-breaker by revenue
   const workedMinutes7d = new Map<string, number>();
   for (const sh of shifts14d) {
@@ -217,6 +251,41 @@ export default async function AdminDashboardPage() {
             <div>
               <h2 className="text-lg font-semibold">Analytics (MVP)</h2>
               <p className="text-xs text-zinc-600">Aggregated from KPI snapshots + closed shifts.</p>
+            </div>
+
+            <a
+              href="/api/admin/analytics/export"
+              className="text-xs font-medium text-blue-700 hover:underline"
+            >
+              Download CSV
+            </a>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 mb-4 md:grid-cols-3">
+            <div className="rounded border bg-white p-4">
+              <div className="text-xs text-zinc-600">Revenue (last 7d)</div>
+              <div className="mt-2 flex items-end justify-between gap-2">
+                <div className="text-2xl font-semibold">{formatMoney(revenueLast7)}</div>
+                <div className="text-xs text-zinc-600">vs prev: {formatDeltaPct(revenueLast7, revenuePrev7)}</div>
+              </div>
+            </div>
+            <div className="rounded border bg-white p-4">
+              <div className="text-xs text-zinc-600">Tips (last 7d)</div>
+              <div className="mt-2 flex items-end justify-between gap-2">
+                <div className="text-2xl font-semibold">{formatMoney(tipsLast7)}</div>
+                <div className="text-xs text-zinc-600">vs prev: {formatDeltaPct(tipsLast7, tipsPrev7)}</div>
+              </div>
+            </div>
+            <div className="rounded border bg-white p-4">
+              <div className="text-xs text-zinc-600">Hours worked (last 7d)</div>
+              <div className="mt-2 flex items-end justify-between gap-2">
+                <div className="text-2xl font-semibold">
+                  {formatHoursFromMinutes(workedMinutesLast7)}
+                </div>
+                <div className="text-xs text-zinc-600">
+                  vs prev: {formatDeltaPct(workedMinutesLast7, workedMinutesPrev7)}
+                </div>
+              </div>
             </div>
           </div>
 

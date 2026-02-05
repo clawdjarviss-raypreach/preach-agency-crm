@@ -272,3 +272,47 @@
 - **Verified**: `npm run lint` passes.
 - **Next**: Decide whether to add simple sparklines/bars or keep tables; optionally add filters (creator/team/date range).
 - **Blockers**: none.
+
+### 2026-02-05 16:51 (Europe/Madrid)
+- **Health check**: Gateway restarted ✅. Nodes + dev server running ✅. #jarvis-logs Discord channel live.
+- **Build status**: `npm run lint` + `npm run build` clean. Dev server on localhost:3000, login page responding.
+- **Next**: Manual end-to-end workflow test in browser (chatter clock-in → supervisor approve shift → admin payroll).
+- **Blockers**: None.
+
+### 2026-02-05 17:02 (Europe/Madrid)
+- Shipped: Admin analytics CSV export endpoint: `GET /api/admin/analytics/export` (admin-only).
+- Shipped: Added “Download CSV” link to `/admin/dashboard` Analytics (MVP) header.
+- Verified: `npm run build` passes; route shows up in build output.
+- Next: decide if Analytics MVP TODO can be marked ✅ Done; optionally add supervisor-scoped analytics/export.
+- Blockers: none.
+
+### 2026-02-05 17:16 (Europe/Madrid)
+- Shipped: Discord sales-report **paste + parse** helper on Admin → KPI Snapshots (auto-prefills Revenue/Tips/Messages/New Subs).
+- Shipped: KPI snapshot API now accepts `source` + `rawData` (+ optional extra KPI fields) and persists `source=discord` + raw JSON for auditability.
+- Verified: `npx tsc --noEmit` passes.
+- Next: expand parser to match your exact Discord template (add PPV, renewals, avg response time) + optionally support multi-line multi-creator imports.
+
+### 2026-02-05 17:21 (Europe/Madrid)
+- **Fixed**: TypeScript error in kpi-snapshots route (KpiSource type guard; used readonly array + type assertion).
+- **Verified**: `npx tsc --noEmit` ✅, `npm run lint` ✅, `npm run build` ✅ all passing.
+- **Blocker workaround**: Skipped `npm test` (not configured); lint + build = verification gate.
+- **Next**: Manual end-to-end workflow test or continue feature work.
+
+### 2026-02-05 17:32 (Europe/Madrid)
+- Shipped: added `ShiftReport` model + migration (1:1 report tied to a Shift; stores busyness, what went well / didn’t, MM notes, revenue).
+- Shipped: extended `/shifts` clock-out form with end-of-shift report fields (V0).
+- Shipped: updated `POST /api/shifts/clock-out` to upsert `ShiftReport` on clock-out when report fields are provided.
+- Verified: `npm run lint` passes.
+- Next: make report fields required on clock-out + surface validation errors in the UI; then supervisor view of reports.
+
+### 2026-02-05 17:50 (Europe/Madrid)
+- Shipped: hardened `POST /api/shifts/clock-out` — if a chatter touches any end-of-shift report field, we now require the core trio (Busyness + What went well + What didn’t go well) and block clock-out with `?error=missing_report_fields` instead of silently dropping the report.
+- Shipped: `/shifts` page now shows a clear red validation banner when that error is present.
+- Verified: `npm run lint` + `npx tsc --noEmit` passing.
+- Next: wire a Supervisor/Admin view for submitted shift reports (list + drilldown + revenue totals).
+
+### 2026-02-05 18:01 (Europe/Madrid)
+- Shipped: added 7-day summary cards on Admin Dashboard analytics (Revenue, Tips, Hours worked) with % change vs previous 7 days.
+- Verified: `npm run lint` + `npm run build` passing.
+- Next: either add simple sparklines/bars for the 14-day tables, or move to Supervisor dashboard pending counts.
+- Blockers: none.
