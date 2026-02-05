@@ -25,6 +25,14 @@ export default async function ShiftsPage({ searchParams }: ShiftsPageProps) {
       })
     : [];
 
+  const activeCreators = chatter
+    ? await prisma.chatterCreator.findMany({
+        where: { chatterId: chatter.id, unassignedAt: null },
+        include: { creator: true },
+        orderBy: { assignedAt: 'desc' },
+      })
+    : [];
+
   // V0 stats (server-side): last 7 days of closed shifts only.
   // Avoid Date.now() to satisfy react-hooks/purity lint rule.
   const sevenDaysAgo = new Date();
@@ -96,6 +104,18 @@ export default async function ShiftsPage({ searchParams }: ShiftsPageProps) {
           <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
             End-of-shift report: if you fill any report field, you must also provide <b>Busyness</b>, <b>What went well</b>, and{' '}
             <b>What didn’t go well</b>.
+          </div>
+        )}
+
+        {searchParams?.error === 'missing_creator' && (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            End-of-shift report: please select the <b>Creator</b> you worked on.
+          </div>
+        )}
+
+        {searchParams?.error === 'invalid_creator' && (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            End-of-shift report: that creator is not assigned to you.
           </div>
         )}
 
@@ -176,10 +196,31 @@ export default async function ShiftsPage({ searchParams }: ShiftsPageProps) {
                     </select>
                   </label>
 
-                  <label className="grid gap-1 sm:col-span-2">
-                    <span className="text-xs text-zinc-600">Revenue (EUR)</span>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-zinc-600">Creator</span>
+                    <select
+                      name="creatorId"
+                      className="w-full rounded-md border bg-white px-2 py-1 text-sm"
+                      defaultValue=""
+                    >
+                      <option value="" disabled>
+                        Select
+                      </option>
+                      {activeCreators.map((a) => (
+                        <option key={a.creatorId} value={a.creatorId}>
+                          {a.creator.displayName || a.creator.username}
+                        </option>
+                      ))}
+                    </select>
+                    {activeCreators.length === 0 && (
+                      <span className="text-[11px] text-zinc-500">No active creator assignments found.</span>
+                    )}
+                  </label>
+
+                  <label className="grid gap-1">
+                    <span className="text-xs text-zinc-600">Revenue (USD)</span>
                     <input
-                      name="revenueEur"
+                      name="revenueUsd"
                       type="number"
                       min={0}
                       step="0.01"

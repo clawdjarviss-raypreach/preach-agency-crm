@@ -6,7 +6,6 @@
 - [ ] End-of-shift report (sales report template) tied to Shift (priority: High)
 - [ ] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High)
 - [ ] CRM UX + branding: match preachagency.com colors and chatter stats views (priority: High)
-- [ ] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High)
 - [ ] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High) (priority: High)
 
 ## 📥 Backlog

@@ -21,7 +21,8 @@ export async function POST(req: Request) {
   const rawWentWell = form.get('whatWentWell');
   const rawDidntGoWell = form.get('whatDidntGoWell');
   const rawMmSellingChats = form.get('mmSellingChats');
-  const rawRevenueEur = form.get('revenueEur');
+  const rawRevenueUsd = form.get('revenueUsd');
+  const rawCreatorId = form.get('creatorId');
 
   const breakMinutes = (() => {
     if (typeof rawBreak !== 'string' || rawBreak.trim() === '') return undefined;
@@ -50,11 +51,13 @@ export async function POST(req: Request) {
       : undefined;
 
   const revenueCents = (() => {
-    if (typeof rawRevenueEur !== 'string' || rawRevenueEur.trim() === '') return undefined;
-    const n = Number.parseFloat(rawRevenueEur);
+    if (typeof rawRevenueUsd !== 'string' || rawRevenueUsd.trim() === '') return undefined;
+    const n = Number.parseFloat(rawRevenueUsd);
     if (!Number.isFinite(n) || Number.isNaN(n) || n < 0) return undefined;
     return Math.round(n * 100);
   })();
+
+  const creatorId = typeof rawCreatorId === 'string' && rawCreatorId.trim() ? rawCreatorId.trim() : undefined;
 
   const openShift = await prisma.shift.findFirst({
     where: { chatterId: user.id, clockOut: null },
@@ -66,12 +69,28 @@ export async function POST(req: Request) {
     whatWentWell !== undefined ||
     whatDidntGoWell !== undefined ||
     mmSellingChats !== undefined ||
-    revenueCents !== undefined;
+    revenueCents !== undefined ||
+    creatorId !== undefined;
 
-  // If the chatter touched the report fields, enforce the core trio.
+  // If the chatter touched the report fields, enforce the core trio + creator selection.
   // Otherwise we end up with silent “clocked out but no report saved” confusion.
   if (attemptedReport && (busyness === undefined || !whatWentWell || !whatDidntGoWell)) {
     return NextResponse.redirect(new URL('/shifts?error=missing_report_fields', req.url));
+  }
+
+  if (attemptedReport && !creatorId) {
+    return NextResponse.redirect(new URL('/shifts?error=missing_creator', req.url));
+  }
+
+  if (attemptedReport && creatorId) {
+    const assignment = await prisma.chatterCreator.findFirst({
+      where: { chatterId: user.id, creatorId, unassignedAt: null },
+      select: { id: true },
+    });
+
+    if (!assignment) {
+      return NextResponse.redirect(new URL('/shifts?error=invalid_creator', req.url));
+    }
   }
 
   if (openShift) {
@@ -89,11 +108,14 @@ export async function POST(req: Request) {
 
       // V0: if report fields are provided, persist a ShiftReport tied 1:1 to the Shift.
       if (attemptedReport) {
+        const creatorIdValue = creatorId!;
+
         await tx.shiftReport.upsert({
           where: { shiftId: openShift.id },
           create: {
             shiftId: openShift.id,
             createdById: user.id,
+            creatorId: creatorIdValue,
             busyness: busyness!,
             whatWentWell: whatWentWell!,
             whatDidntGoWell: whatDidntGoWell!,
@@ -101,6 +123,7 @@ export async function POST(req: Request) {
             revenueCents,
           },
           update: {
+            creatorId: creatorIdValue,
             busyness: busyness!,
             whatWentWell: whatWentWell!,
             whatDidntGoWell: whatDidntGoWell!,

@@ -108,6 +108,7 @@ model Creator {
 
   assignments  ChatterCreator[]
   kpiSnapshots KpiSnapshot[]
+  shiftReports ShiftReport[]
 
   @@unique([platform, username])
 }
@@ -264,10 +265,14 @@ model ShiftReport {
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id])
 
+  // Who the shift was for (e.g. Abby)
+  creatorId String
+  creator   Creator @relation(fields: [creatorId], references: [id])
+
   // 1–5 subjective rating
   busyness Int
 
-  whatWentWell   String
+  whatWentWell    String
   whatDidntGoWell String
 
   // Freeform notes: e.g. “MM selling chats”
@@ -279,4 +284,5 @@ model ShiftReport {
   createdAt DateTime @default(now())
 
   @@index([createdById])
+  @@index([creatorId])
 }

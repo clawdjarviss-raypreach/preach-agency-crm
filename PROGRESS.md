@@ -369,3 +369,10 @@
 ### 2026-02-05 21:19 (Europe/Madrid)
 - Mission Control hygiene: analytics MVP admin dashboard task was a duplicate/obsolete item (feature already shipped earlier today).
 - Action: marking the task as 🗄️ Archived in Mission Control to keep the board clean.
+
+### 2026-02-05 21:27 (Europe/Madrid)
+- Shipped: End-of-shift report now captures the **Creator** worked on (e.g., Abby) via required selector on clock-out.
+- Shipped: `ShiftReport` schema updated with `creatorId` relation + migration applied.
+- Fixed: revenue field naming/labeling for shift report is now **USD** (`revenueUsd`).
+- Validation: blocks clock-out report submission if creator missing/invalid or core fields missing.
+- Verified: `npm run lint` + `npm run build` passing.
