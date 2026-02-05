@@ -83,6 +83,10 @@ model User {
   // Stored as cents (integer) for sqlite compatibility
   hourlyRateCents Int?
 
+  // Commission rate in basis points (e.g., 1000 = 10%)
+  // Applied to net sales (after 20% agency fee)
+  commissionBps Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -169,9 +173,15 @@ model Payroll {
   // Stored as minutes + cents (integer) for sqlite compatibility
   hoursWorkedMinutes Int
   basePayCents       Int
-  bonusTotalCents    Int @default(0)
-  deductionsCents    Int @default(0)
-  netPayCents        Int
+
+  // Revenue tracking (new)
+  grossSalesCents Int?
+  netSalesCents   Int?
+  commissionCents Int?
+
+  bonusTotalCents Int @default(0)
+  deductionsCents Int @default(0)
+  netPayCents     Int
 
   status PayrollStatus @default(draft)
 

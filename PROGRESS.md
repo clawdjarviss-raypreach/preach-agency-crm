@@ -393,3 +393,7 @@
 - Cards/Tables: added shared `.card` + `.table-ui` styling for consistent hierarchy + zebra/hover.
 - **New page**: `/my-stats` chatter performance dashboard (hours, revenue, tips, trends, assignments, recent shifts, team average comparison).
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 22:05 (Europe/Madrid)
+- **Payroll overhaul (Phase 1 — Schema)**: added `User.commissionBps` (default 0) and new nullable `Payroll` revenue fields (`grossSalesCents`, `netSalesCents`, `commissionCents`).
+- Migration applied cleanly on existing SQLite data.
