@@ -1,0 +1,252 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  chatter
+  supervisor
+  admin
+}
+
+enum UserStatus {
+  active
+  inactive
+  onboarding
+}
+
+enum Platform {
+  onlyfans
+  fansly
+  other
+}
+
+enum CreatorStatus {
+  active
+  paused
+  churned
+}
+
+enum PayPeriodStatus {
+  open
+  calculating
+  review
+  approved
+  paid
+}
+
+enum PayrollStatus {
+  draft
+  approved
+  paid
+}
+
+enum BonusType {
+  percentage
+  flat
+  milestone
+}
+
+enum KpiSource {
+  creatorhero_scrape
+  onlymonster_api
+  manual
+}
+
+enum SyncStatus {
+  running
+  success
+  partial
+  failed
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  name         String
+  role         Role
+  status       UserStatus @default(active)
+
+  supervisorId String?
+  supervisor   User?   @relation("UserSupervisor", fields: [supervisorId], references: [id])
+  team         User[]  @relation("UserSupervisor")
+
+  // Stored as cents (integer) for sqlite compatibility
+  hourlyRateCents Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  creatorAssignments ChatterCreator[]
+  chatterShifts      Shift[]          @relation("ChatterShifts")
+  approvedShifts     Shift[]          @relation("ApprovedShifts")
+  payrolls           Payroll[]
+  kpiSnapshots       KpiSnapshot[]
+  syncLogs           SyncLog[]        @relation("SyncTriggeredBy")
+}
+
+model Creator {
+  id          String        @id @default(cuid())
+  platform    Platform
+  username    String
+  displayName String?
+  platformId  String?
+  status      CreatorStatus @default(active)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments  ChatterCreator[]
+  kpiSnapshots KpiSnapshot[]
+
+  @@unique([platform, username])
+}
+
+model ChatterCreator {
+  id           String    @id @default(cuid())
+  chatterId    String
+  creatorId    String
+  assignedAt   DateTime  @default(now())
+  unassignedAt DateTime?
+  isPrimary    Boolean   @default(false)
+
+  chatter User    @relation(fields: [chatterId], references: [id])
+  creator Creator @relation(fields: [creatorId], references: [id])
+
+  @@index([chatterId, creatorId])
+}
+
+model Shift {
+  id           String    @id @default(cuid())
+  chatterId    String
+  clockIn      DateTime
+  clockOut     DateTime?
+  breakMinutes Int       @default(0)
+  notes        String?
+
+  approvedById String?
+  approvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  chatter    User  @relation("ChatterShifts", fields: [chatterId], references: [id])
+  approvedBy User? @relation("ApprovedShifts", fields: [approvedById], references: [id])
+
+  @@index([chatterId])
+  @@index([approvedById])
+}
+
+model PayPeriod {
+  id        String          @id @default(cuid())
+  startDate DateTime
+  endDate   DateTime
+  status    PayPeriodStatus @default(open)
+  createdAt DateTime        @default(now())
+
+  payrolls Payroll[]
+
+  @@index([startDate, endDate])
+}
+
+model Payroll {
+  id          String @id @default(cuid())
+  chatterId   String
+  payPeriodId String
+
+  // Stored as minutes + cents (integer) for sqlite compatibility
+  hoursWorkedMinutes Int
+  basePayCents       Int
+  bonusTotalCents    Int @default(0)
+  deductionsCents    Int @default(0)
+  netPayCents        Int
+
+  status PayrollStatus @default(draft)
+
+  approvedById String?
+  approvedAt   DateTime?
+
+  chatter   User      @relation(fields: [chatterId], references: [id])
+  payPeriod PayPeriod @relation(fields: [payPeriodId], references: [id])
+
+  bonuses Bonus[]
+
+  @@unique([chatterId, payPeriodId])
+}
+
+model BonusRule {
+  id              String    @id @default(cuid())
+  name            String
+  type            BonusType
+  // threshold/flat stored as cents; percentage stored as basis points
+  thresholdCents  Int?
+  percentageBps   Int?
+  flatAmountCents Int?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  bonuses Bonus[]
+}
+
+model Bonus {
+  id          String   @id @default(cuid())
+  payrollId   String
+  bonusRuleId String?
+  description String
+  amountCents Int
+  createdAt   DateTime @default(now())
+
+  payroll   Payroll    @relation(fields: [payrollId], references: [id])
+  bonusRule BonusRule? @relation(fields: [bonusRuleId], references: [id])
+
+  @@index([payrollId])
+}
+
+model KpiSnapshot {
+  id           String   @id @default(cuid())
+  chatterId    String
+  creatorId    String
+  snapshotDate DateTime
+
+  revenueCents       Int?
+  messagesSent       Int?
+  messagesReceived   Int?
+  tipsReceivedCents  Int?
+  ppvRevenueCents    Int?
+  subsRenewed        Int?
+  newSubs            Int?
+  avgResponseTimeSec Int?
+
+  source  KpiSource
+  rawData Json?
+
+  createdAt DateTime @default(now())
+
+  chatter User    @relation(fields: [chatterId], references: [id])
+  creator Creator @relation(fields: [creatorId], references: [id])
+
+  @@unique([chatterId, creatorId, snapshotDate])
+  @@index([chatterId, snapshotDate])
+  @@index([creatorId, snapshotDate])
+}
+
+model SyncLog {
+  id              String     @id @default(cuid())
+  source          String
+  startedAt       DateTime
+  completedAt     DateTime?
+  status          SyncStatus
+  recordsFetched  Int?
+  recordsInserted Int?
+  errors          Json?
+
+  triggeredById String?
+  triggeredBy   User?   @relation("SyncTriggeredBy", fields: [triggeredById], references: [id])
+}
