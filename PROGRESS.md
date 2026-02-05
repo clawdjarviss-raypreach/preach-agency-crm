@@ -408,3 +408,8 @@
 - **User management**: Admin → Users create/edit now includes **Commission %** (stored as `commissionBps`), with validation 0–100%.
 - API: updated admin user create/update endpoints to persist + validate `commissionBps`.
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 22:15 (Europe/Madrid)
+- **Payroll overhaul (Phase 4 — CSV export)**: updated `GET /api/payrolls/export` to include Gross Sales, Net Sales, Commission, Bonuses, Deductions (all USD) in the CSV.
+- Fix: TypeScript build error in `StatusBadge` (added missing `neutral` status option).
+- Verified: `npm run lint` + `npm run build` passing.

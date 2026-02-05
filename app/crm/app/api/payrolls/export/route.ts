@@ -50,7 +50,11 @@ export async function GET() {
       'Period End',
       'Hours Worked',
       'Base Pay (USD)',
-      'Bonus Total (USD)',
+      'Gross Sales (USD)',
+      'Net Sales (USD)',
+      'Commission (USD)',
+      'Bonuses (USD)',
+      'Deductions (USD)',
       'Net Pay (USD)',
       'Status',
     ];
@@ -62,6 +66,9 @@ export async function GET() {
       maximumFractionDigits: 2,
     });
 
+    const formatMaybeMoney = (cents: number | null | undefined) =>
+      cents === null || cents === undefined ? '' : usdFormatter.format(cents / 100);
+
     const rows = payrolls.map((p) => [
       p.chatter.name,
       p.chatter.email,
@@ -69,7 +76,11 @@ export async function GET() {
       new Date(p.payPeriod.endDate).toISOString().split('T')[0],
       (p.hoursWorkedMinutes / 60).toFixed(2),
       usdFormatter.format(p.basePayCents / 100),
+      formatMaybeMoney(p.grossSalesCents),
+      formatMaybeMoney(p.netSalesCents),
+      formatMaybeMoney(p.commissionCents),
       usdFormatter.format(p.bonusTotalCents / 100),
+      usdFormatter.format(p.deductionsCents / 100),
       usdFormatter.format(p.netPayCents / 100),
       p.status,
     ]);
