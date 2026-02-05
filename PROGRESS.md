@@ -397,3 +397,8 @@
 ### 2026-02-05 22:05 (Europe/Madrid)
 - **Payroll overhaul (Phase 1 — Schema)**: added `User.commissionBps` (default 0) and new nullable `Payroll` revenue fields (`grossSalesCents`, `netSalesCents`, `commissionCents`).
 - Migration applied cleanly on existing SQLite data.
+
+### 2026-02-05 22:07 (Europe/Madrid)
+- **Payroll overhaul (Phase 2 — Generation API)**: updated `/api/payrolls/generate` to aggregate gross sales from `KpiSnapshot` for the pay period, compute net sales (80%), commission (bps), and net pay = base + commission + bonuses - deductions.
+- Edge cases handled: revenue-only chatters now generate payrolls even with 0 hours; no KPI data yields $0 commission.
+- Updated `POST /api/payrolls/[id]/apply-bonuses` to include commission in net-pay calculation.

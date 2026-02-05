@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { calculateNetPayCents } from '@/lib/payroll-calculations';
 
 export async function POST(
   req: NextRequest,
@@ -71,7 +72,12 @@ export async function POST(
       where: { id },
       data: {
         bonusTotalCents: totalBonusCents,
-        netPayCents: payroll.basePayCents + totalBonusCents - payroll.deductionsCents,
+        netPayCents: calculateNetPayCents({
+          basePayCents: payroll.basePayCents,
+          commissionCents: payroll.commissionCents,
+          bonusTotalCents: totalBonusCents,
+          deductionsCents: payroll.deductionsCents,
+        }),
       },
       include: { bonuses: { include: { bonusRule: true } } },
     });
