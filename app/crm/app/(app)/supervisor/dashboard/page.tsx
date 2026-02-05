@@ -29,6 +29,8 @@ export default async function SupervisorDashboardPage() {
     draftPayrollsCount,
     approvedPayrollsCount,
     paidPayrollsCount,
+    shiftsWithReport,
+    shiftsWithoutReport,
     recentShifts,
     recentPayrolls,
     teamMembers,
@@ -64,6 +66,20 @@ export default async function SupervisorDashboardPage() {
       where: {
         status: 'paid',
         chatter: { supervisorId: supervisor.id },
+      },
+    }),
+    prisma.shift.count({
+      where: {
+        chatter: { supervisorId: supervisor.id },
+        clockOut: { not: null },
+        report: { isNot: null },
+      },
+    }),
+    prisma.shift.count({
+      where: {
+        chatter: { supervisorId: supervisor.id },
+        clockOut: { not: null },
+        report: null,
       },
     }),
     prisma.shift.findMany({
@@ -108,7 +124,7 @@ export default async function SupervisorDashboardPage() {
         </div>
 
         {/* Key Metrics */}
-        <div className="grid grid-cols-2 gap-4 mb-8 md:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 mb-8 md:grid-cols-4 lg:grid-cols-8">
           <div className="rounded border bg-white p-4">
             <div className="text-xs text-zinc-600">Team Members</div>
             <div className="mt-2 text-2xl font-semibold">{teamCount}</div>
@@ -125,6 +141,20 @@ export default async function SupervisorDashboardPage() {
             <div className="text-xs text-zinc-600">Approved Shifts</div>
             <div className="mt-2 text-2xl font-semibold text-emerald-600">
               {approvedShiftsCount}
+            </div>
+          </div>
+
+          <div className="rounded border bg-white p-4">
+            <div className="text-xs text-zinc-600">Reports Submitted</div>
+            <div className="mt-2 text-2xl font-semibold text-emerald-600">
+              {shiftsWithReport}
+            </div>
+          </div>
+
+          <div className="rounded border bg-white p-4">
+            <div className="text-xs text-zinc-600">Reports Missing</div>
+            <div className="mt-2 text-2xl font-semibold text-amber-600">
+              {shiftsWithoutReport}
             </div>
           </div>
 

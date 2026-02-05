@@ -1,4 +1,5 @@
 import Sidebar from '@/app/components/Sidebar';
+import ShiftReportView from '@/app/components/ShiftReportView';
 import { prisma } from '@/lib/prisma';
 import { getActingUserEmail } from '@/lib/acting-user';
 
@@ -22,6 +23,13 @@ export default async function ShiftsPage({ searchParams }: ShiftsPageProps) {
         where: { chatterId: chatter.id },
         orderBy: { clockIn: 'desc' },
         take: 50,
+        include: {
+          report: {
+            include: {
+              creator: { select: { displayName: true, username: true } },
+            },
+          },
+        },
       })
     : [];
 
@@ -283,20 +291,50 @@ export default async function ShiftsPage({ searchParams }: ShiftsPageProps) {
                 <th className="p-2">Clock out</th>
                 <th className="p-2">Break (min)</th>
                 <th className="p-2">Notes</th>
+                <th className="p-2">Report</th>
               </tr>
             </thead>
             <tbody>
-              {shifts.map((s) => (
-                <tr key={s.id} className="border-t">
-                  <td className="p-2">{s.clockIn.toISOString()}</td>
-                  <td className="p-2">{s.clockOut ? s.clockOut.toISOString() : '-'}</td>
-                  <td className="p-2">{s.breakMinutes}</td>
-                  <td className="p-2 text-zinc-600">{s.notes ?? '-'}</td>
-                </tr>
-              ))}
+              {shifts.map((s) => {
+                const reportState = !s.clockOut ? 'na' : s.report ? 'yes' : 'no';
+
+                return (
+                  <tr key={s.id} className="border-t align-top">
+                    <td className="p-2">{s.clockIn.toISOString()}</td>
+                    <td className="p-2">{s.clockOut ? s.clockOut.toISOString() : '-'}</td>
+                    <td className="p-2">{s.breakMinutes}</td>
+                    <td className="p-2 text-zinc-600">{s.notes ?? '-'}</td>
+                    <td className="p-2">
+                      {reportState === 'na' && <span className="text-zinc-400">N/A</span>}
+                      {reportState === 'no' && <span className="text-zinc-400">—</span>}
+                      {reportState === 'yes' && s.report && (
+                        <details className="group">
+                          <summary className="cursor-pointer select-none">
+                            <span className="font-medium text-emerald-700">✓</span>{' '}
+                            <span className="text-xs text-blue-700 group-open:hidden">View</span>
+                            <span className="text-xs text-blue-700 hidden group-open:inline">Hide</span>
+                          </summary>
+                          <div className="mt-2">
+                            <ShiftReportView
+                              report={{
+                                busyness: s.report.busyness,
+                                whatWentWell: s.report.whatWentWell,
+                                whatDidntGoWell: s.report.whatDidntGoWell,
+                                mmSellingChats: s.report.mmSellingChats,
+                                revenueCents: s.report.revenueCents,
+                                creator: s.report.creator,
+                              }}
+                            />
+                          </div>
+                        </details>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {shifts.length === 0 && (
                 <tr>
-                  <td className="p-4 text-zinc-500" colSpan={4}>
+                  <td className="p-4 text-zinc-500" colSpan={5}>
                     No shifts yet.
                   </td>
                 </tr>

@@ -1,6 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
+
+import ShiftReportView from '@/app/components/ShiftReportView';
 
 type ShiftRow = {
   id: string;
@@ -14,6 +16,14 @@ type ShiftRow = {
   status: 'pending' | 'approved';
   approvedBy: string | null;
   approvedAt: string | null;
+  report: {
+    busyness: number;
+    whatWentWell: string;
+    whatDidntGoWell: string;
+    mmSellingChats: string | null;
+    revenueCents: number | null;
+    creator: { displayName: string | null; username: string };
+  } | null;
 };
 
 interface ShiftsAdminClientProps {
@@ -40,6 +50,7 @@ export default function ShiftsAdminClient({
 }: ShiftsAdminClientProps) {
   const [shifts, setShifts] = useState<ShiftRow[]>(initialShifts);
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved'>('all');
+  const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
   const [editModal, setEditModal] = useState<{
     shiftId: string;
     breakMinutes: number;
@@ -193,95 +204,129 @@ export default function ShiftsAdminClient({
                 <th className="px-3 py-2">Break (min)</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Approved By</th>
+                <th className="px-3 py-2">Report</th>
                 <th className="px-3 py-2">Notes</th>
                 <th className="px-3 py-2">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {filtered.map((s) => (
-                <tr key={s.id} className="hover:bg-zinc-50">
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{s.chatterName}</div>
-                    <div className="text-xs text-zinc-500">{s.chatterEmail}</div>
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {new Date(s.clockIn).toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {s.clockOut ? new Date(s.clockOut).toLocaleString() : '(ongoing)'}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {calculateDuration(s.clockIn, s.clockOut, s.breakMinutes)}
-                  </td>
-                  <td className="px-3 py-2 text-xs">{s.breakMinutes}</td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
-                        s.status === 'approved'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-amber-50 text-amber-700'
-                      }`}
-                    >
-                      {s.status}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {s.approvedBy ? (
-                      <div>
-                        <div>{s.approvedBy}</div>
-                        <div className="text-zinc-500">
-                          {s.approvedAt ? new Date(s.approvedAt).toLocaleString() : '—'}
+              {filtered.map((s) => {
+                const canHaveReport = !!s.clockOut;
+                const hasReport = !!s.report;
+                const isExpanded = expandedShiftId === s.id;
+
+                return (
+                  <Fragment key={s.id}>
+                    <tr className="hover:bg-zinc-50">
+                      <td className="px-3 py-2">
+                        <div className="font-medium">{s.chatterName}</div>
+                        <div className="text-xs text-zinc-500">{s.chatterEmail}</div>
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {new Date(s.clockIn).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {s.clockOut ? new Date(s.clockOut).toLocaleString() : '(ongoing)'}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {calculateDuration(s.clockIn, s.clockOut, s.breakMinutes)}
+                      </td>
+                      <td className="px-3 py-2 text-xs">{s.breakMinutes}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${
+                            s.status === 'approved'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-amber-50 text-amber-700'
+                          }`}
+                        >
+                          {s.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {s.approvedBy ? (
+                          <div>
+                            <div>{s.approvedBy}</div>
+                            <div className="text-zinc-500">
+                              {s.approvedAt ? new Date(s.approvedAt).toLocaleString() : '—'}
+                            </div>
+                          </div>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {!canHaveReport && <span className="text-zinc-400">N/A</span>}
+                        {canHaveReport && !hasReport && <span className="text-zinc-400">—</span>}
+                        {canHaveReport && hasReport && (
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-emerald-700">✓</span>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedShiftId((prev) => (prev === s.id ? null : s.id))}
+                              className="text-xs text-blue-600 hover:underline"
+                            >
+                              {isExpanded ? 'Hide' : 'View'}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-zinc-600">{s.notes ? s.notes : '—'}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col gap-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditModal({
+                                shiftId: s.id,
+                                breakMinutes: s.breakMinutes,
+                                notes: s.notes || '',
+                              })
+                            }
+                            className="text-xs text-blue-600 hover:underline text-left"
+                          >
+                            Edit
+                          </button>
+
+                          {s.clockOut && s.status === 'pending' && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleApprove(s.id, true)}
+                              disabled={approveLoadingId === s.id}
+                              className="text-xs text-emerald-700 hover:underline disabled:opacity-50 text-left"
+                            >
+                              {approveLoadingId === s.id ? 'Approving…' : 'Approve'}
+                            </button>
+                          )}
+
+                          {s.status === 'approved' && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleApprove(s.id, false)}
+                              disabled={approveLoadingId === s.id}
+                              className="text-xs text-amber-700 hover:underline disabled:opacity-50 text-left"
+                            >
+                              {approveLoadingId === s.id ? 'Reverting…' : 'Unapprove'}
+                            </button>
+                          )}
+
+                          {!s.clockOut && (
+                            <span className="text-[11px] text-zinc-400">Approve disabled (ongoing)</span>
+                          )}
                         </div>
-                      </div>
-                    ) : (
-                      '—'
+                      </td>
+                    </tr>
+
+                    {isExpanded && s.report && (
+                      <tr className="bg-zinc-50/50">
+                        <td className="px-3 py-3" colSpan={10}>
+                          <ShiftReportView report={s.report} />
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-zinc-600">
-                    {s.notes ? s.notes : '—'}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-col gap-1">
-                      <button
-                        onClick={() =>
-                          setEditModal({
-                            shiftId: s.id,
-                            breakMinutes: s.breakMinutes,
-                            notes: s.notes || '',
-                          })
-                        }
-                        className="text-xs text-blue-600 hover:underline text-left"
-                      >
-                        Edit
-                      </button>
-
-                      {s.clockOut && s.status === 'pending' && (
-                        <button
-                          onClick={() => handleToggleApprove(s.id, true)}
-                          disabled={approveLoadingId === s.id}
-                          className="text-xs text-emerald-700 hover:underline disabled:opacity-50 text-left"
-                        >
-                          {approveLoadingId === s.id ? 'Approving…' : 'Approve'}
-                        </button>
-                      )}
-
-                      {s.status === 'approved' && (
-                        <button
-                          onClick={() => handleToggleApprove(s.id, false)}
-                          disabled={approveLoadingId === s.id}
-                          className="text-xs text-amber-700 hover:underline disabled:opacity-50 text-left"
-                        >
-                          {approveLoadingId === s.id ? 'Reverting…' : 'Unapprove'}
-                        </button>
-                      )}
-
-                      {!s.clockOut && (
-                        <span className="text-[11px] text-zinc-400">Approve disabled (ongoing)</span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

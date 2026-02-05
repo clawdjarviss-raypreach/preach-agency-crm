@@ -376,3 +376,11 @@
 - Fixed: revenue field naming/labeling for shift report is now **USD** (`revenueUsd`).
 - Validation: blocks clock-out report submission if creator missing/invalid or core fields missing.
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 21:34 (Europe/Madrid)
+- Shipped: view-only UX for submitted end-of-shift reports.
+- `/shifts`: added Report ✓/— indicator + expandable report details (busyness dots, creator, notes, revenue in USD).
+- `/admin/shifts`: added Report ✓/— column + expandable report detail row in the admin shifts table.
+- `/supervisor/dashboard`: added “Reports Submitted” and “Reports Missing” metrics (closed shifts only).
+- Added reusable `ShiftReportView` component for consistent report rendering.
+- Verified: `npm run lint` + `npm run build` passing.

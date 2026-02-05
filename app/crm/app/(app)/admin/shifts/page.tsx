@@ -16,6 +16,14 @@ type ShiftRow = {
   status: 'pending' | 'approved';
   approvedBy: string | null;
   approvedAt: string | null;
+  report: {
+    busyness: number;
+    whatWentWell: string;
+    whatDidntGoWell: string;
+    mmSellingChats: string | null;
+    revenueCents: number | null;
+    creator: { displayName: string | null; username: string };
+  } | null;
 };
 
 export default async function AdminShiftsPage() {
@@ -25,6 +33,11 @@ export default async function AdminShiftsPage() {
     include: {
       chatter: { select: { name: true, email: true } },
       approvedBy: { select: { name: true } },
+      report: {
+        include: {
+          creator: { select: { displayName: true, username: true } },
+        },
+      },
     },
   });
 
@@ -40,6 +53,16 @@ export default async function AdminShiftsPage() {
     status: s.approvedAt ? 'approved' : 'pending',
     approvedBy: s.approvedBy?.name ?? null,
     approvedAt: s.approvedAt ? s.approvedAt.toISOString() : null,
+    report: s.report
+      ? {
+          busyness: s.report.busyness,
+          whatWentWell: s.report.whatWentWell,
+          whatDidntGoWell: s.report.whatDidntGoWell,
+          mmSellingChats: s.report.mmSellingChats,
+          revenueCents: s.report.revenueCents,
+          creator: s.report.creator,
+        }
+      : null,
   }));
 
   return (
