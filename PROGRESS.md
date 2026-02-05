@@ -419,3 +419,9 @@
 - Added `BonusTargetType` enum + `Creator.bonusRules` relation.
 - Migration `20260205212419_bonus_targets_schema` applied cleanly.
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 22:35 (Europe/Madrid)
+- **Bonus Targets (Phase 2 — Auto Evaluation)**: added `lib/bonus-engine.ts` and integrated auto-bonus evaluation into `POST /api/payrolls/generate`.
+- Payroll generation now creates `Bonus` records linked to `BonusRule` for *new* payrolls (preserves historical payrolls on rule changes).
+- Evaluates rules by target type (gross/net revenue, messages, new subs, tips), applies thresholds, and applies multiplier.
+- Verified: `npm run lint` + `npm run build` passing.

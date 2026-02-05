@@ -6,6 +6,7 @@ import {
   calculateNetPayCents,
   calculateNetSalesCents,
 } from '@/lib/payroll-calculations';
+import { evaluateBonuses } from '@/lib/bonus-engine';
 
 function toISODate(d: Date) {
   return d.toISOString();
@@ -72,20 +73,30 @@ export async function POST(req: NextRequest) {
       minutesByChatter.set(s.chatterId, (minutesByChatter.get(s.chatterId) ?? 0) + worked);
     }
 
-    // Aggregate gross sales from KPI snapshots by chatter for the same period.
-    const revenueAgg = await prisma.kpiSnapshot.groupBy({
+    // Aggregate KPI totals by chatter for the same period.
+    const kpiAgg = await prisma.kpiSnapshot.groupBy({
       by: ['chatterId'],
       where: {
         snapshotDate: { gte: startDate, lte: endDate },
       },
       _sum: {
         revenueCents: true,
+        messagesSent: true,
+        newSubs: true,
+        tipsReceivedCents: true,
       },
     });
 
     const grossSalesByChatter = new Map<string, number>();
-    for (const row of revenueAgg) {
+    const messagesSentByChatter = new Map<string, number>();
+    const newSubsByChatter = new Map<string, number>();
+    const tipsByChatter = new Map<string, number>();
+
+    for (const row of kpiAgg) {
       grossSalesByChatter.set(row.chatterId, row._sum.revenueCents ?? 0);
+      messagesSentByChatter.set(row.chatterId, row._sum.messagesSent ?? 0);
+      newSubsByChatter.set(row.chatterId, row._sum.newSubs ?? 0);
+      tipsByChatter.set(row.chatterId, row._sum.tipsReceivedCents ?? 0);
     }
 
     // Union of chatters with either shifts or revenue.
@@ -99,6 +110,26 @@ export async function POST(req: NextRequest) {
     });
 
     const chatterById = new Map(chatters.map((c) => [c.id, c] as const));
+
+    const activeBonusRules = await prisma.bonusRule.findMany({
+      where: { isActive: true },
+    });
+
+    const assignments = await prisma.chatterCreator.findMany({
+      where: {
+        chatterId: { in: chatterIds },
+        unassignedAt: null,
+      },
+      select: { chatterId: true, creatorId: true },
+      take: 50000,
+    });
+
+    const assignedCreatorsByChatter = new Map<string, string[]>();
+    for (const a of assignments) {
+      const cur = assignedCreatorsByChatter.get(a.chatterId) ?? [];
+      cur.push(a.creatorId);
+      assignedCreatorsByChatter.set(a.chatterId, cur);
+    }
 
     let createdOrUpdated = 0;
 
@@ -117,22 +148,67 @@ export async function POST(req: NextRequest) {
 
       const existing = await prisma.payroll.findUnique({
         where: { chatterId_payPeriodId: { chatterId, payPeriodId: payPeriod.id } },
-        select: { bonusTotalCents: true, deductionsCents: true },
+        select: { id: true, bonusTotalCents: true, deductionsCents: true },
       });
 
-      const bonusTotalCents = existing?.bonusTotalCents ?? 0;
-      const deductionsCents = existing?.deductionsCents ?? 0;
+      // Important: do not auto-modify bonuses for existing payrolls.
+      // This preserves historical payrolls even if BonusRules change later.
+      if (existing) {
+        const bonusTotalCents = existing.bonusTotalCents ?? 0;
+        const deductionsCents = existing.deductionsCents ?? 0;
+
+        const netPayCents = calculateNetPayCents({
+          basePayCents,
+          commissionCents,
+          bonusTotalCents,
+          deductionsCents,
+        });
+
+        await prisma.payroll.update({
+          where: { id: existing.id },
+          data: {
+            hoursWorkedMinutes: minutes,
+            basePayCents,
+            grossSalesCents,
+            netSalesCents,
+            commissionCents,
+            netPayCents,
+          },
+        });
+
+        createdOrUpdated += 1;
+        continue;
+      }
+
+      // Auto-evaluate bonuses for NEW payrolls.
+      const assignedCreatorIds = assignedCreatorsByChatter.get(chatterId) ?? [];
+      const autoBonuses = await evaluateBonuses(
+        {
+          chatterId,
+          payPeriodId: payPeriod.id,
+          periodStart: startDate,
+          periodEnd: endDate,
+          grossSalesCents,
+          netSalesCents,
+          messagesSent: messagesSentByChatter.get(chatterId) ?? 0,
+          newSubs: newSubsByChatter.get(chatterId) ?? 0,
+          tipsCents: tipsByChatter.get(chatterId) ?? 0,
+          assignedCreatorIds,
+        },
+        activeBonusRules
+      );
+
+      const bonusTotalCents = autoBonuses.reduce((sum, b) => sum + b.amountCents, 0);
 
       const netPayCents = calculateNetPayCents({
         basePayCents,
         commissionCents,
         bonusTotalCents,
-        deductionsCents,
+        deductionsCents: 0,
       });
 
-      await prisma.payroll.upsert({
-        where: { chatterId_payPeriodId: { chatterId, payPeriodId: payPeriod.id } },
-        create: {
+      const payroll = await prisma.payroll.create({
+        data: {
           chatterId,
           payPeriodId: payPeriod.id,
           hoursWorkedMinutes: minutes,
@@ -140,19 +216,23 @@ export async function POST(req: NextRequest) {
           grossSalesCents,
           netSalesCents,
           commissionCents,
-          bonusTotalCents: 0,
+          bonusTotalCents,
           deductionsCents: 0,
-          netPayCents: calculateNetPayCents({ basePayCents, commissionCents }),
-        },
-        update: {
-          hoursWorkedMinutes: minutes,
-          basePayCents,
-          grossSalesCents,
-          netSalesCents,
-          commissionCents,
           netPayCents,
         },
+        select: { id: true },
       });
+
+      if (autoBonuses.length > 0) {
+        await prisma.bonus.createMany({
+          data: autoBonuses.map((b) => ({
+            payrollId: payroll.id,
+            bonusRuleId: b.ruleId,
+            description: b.description,
+            amountCents: b.amountCents,
+          })),
+        });
+      }
 
       createdOrUpdated += 1;
     }
