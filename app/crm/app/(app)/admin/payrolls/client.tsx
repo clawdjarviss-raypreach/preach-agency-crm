@@ -10,6 +10,9 @@ type PayrollRow = {
   payPeriod: PayPeriod;
   hoursWorkedMinutes: number;
   basePayCents: number;
+  grossSalesCents?: number | null;
+  netSalesCents?: number | null;
+  commissionCents?: number | null;
   bonusTotalCents: number;
   deductionsCents: number;
   netPayCents: number;
@@ -277,6 +280,9 @@ export default function PayrollsClient({
                 <th className="px-3 py-2">Period</th>
                 <th className="px-3 py-2">Hours</th>
                 <th className="px-3 py-2">Base Pay</th>
+                <th className="px-3 py-2">Gross Sales</th>
+                <th className="px-3 py-2">Net Sales</th>
+                <th className="px-3 py-2">Commission</th>
                 <th className="px-3 py-2">Bonuses</th>
                 <th className="px-3 py-2">Deductions</th>
                 <th className="px-3 py-2">Net Pay</th>
@@ -300,6 +306,21 @@ export default function PayrollsClient({
                   </td>
                   <td className="px-3 py-2 text-xs font-medium">
                     {formatMoney(p.basePayCents)}
+                  </td>
+                  <td className="px-3 py-2 text-xs font-medium">
+                    {p.grossSalesCents === null || p.grossSalesCents === undefined
+                      ? '—'
+                      : formatMoney(p.grossSalesCents)}
+                  </td>
+                  <td className="px-3 py-2 text-xs font-medium">
+                    {p.netSalesCents === null || p.netSalesCents === undefined
+                      ? '—'
+                      : formatMoney(p.netSalesCents)}
+                  </td>
+                  <td className="px-3 py-2 text-xs font-medium">
+                    {p.commissionCents === null || p.commissionCents === undefined
+                      ? '—'
+                      : formatMoney(p.commissionCents)}
                   </td>
                   <td className="px-3 py-2">
                     <div className="text-xs font-medium">

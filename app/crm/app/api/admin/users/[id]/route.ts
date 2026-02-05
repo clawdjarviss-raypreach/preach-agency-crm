@@ -14,7 +14,7 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
-    const { supervisorId, hourlyRateCents } = body;
+    const { supervisorId, hourlyRateCents, commissionBps } = body;
 
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) {
@@ -32,11 +32,35 @@ export async function PATCH(
       }
     }
 
+    if (hourlyRateCents !== undefined) {
+      if (hourlyRateCents !== null) {
+        if (
+          typeof hourlyRateCents !== 'number' ||
+          !Number.isInteger(hourlyRateCents) ||
+          hourlyRateCents < 0
+        ) {
+          return NextResponse.json({ error: 'Invalid hourlyRateCents' }, { status: 400 });
+        }
+      }
+    }
+
+    if (commissionBps !== undefined) {
+      if (
+        typeof commissionBps !== 'number' ||
+        !Number.isInteger(commissionBps) ||
+        commissionBps < 0 ||
+        commissionBps > 10000
+      ) {
+        return NextResponse.json({ error: 'Invalid commissionBps' }, { status: 400 });
+      }
+    }
+
     const updated = await prisma.user.update({
       where: { id },
       data: {
         ...(supervisorId !== undefined && { supervisorId: supervisorId || null }),
         ...(hourlyRateCents !== undefined && { hourlyRateCents }),
+        ...(commissionBps !== undefined && { commissionBps }),
       },
     });
 
@@ -48,6 +72,7 @@ export async function PATCH(
       status: updated.status,
       supervisorId: updated.supervisorId,
       hourlyRateCents: updated.hourlyRateCents,
+      commissionBps: updated.commissionBps,
       createdAt: updated.createdAt,
     });
   } catch (error) {

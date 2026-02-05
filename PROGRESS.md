@@ -402,3 +402,9 @@
 - **Payroll overhaul (Phase 2 — Generation API)**: updated `/api/payrolls/generate` to aggregate gross sales from `KpiSnapshot` for the pay period, compute net sales (80%), commission (bps), and net pay = base + commission + bonuses - deductions.
 - Edge cases handled: revenue-only chatters now generate payrolls even with 0 hours; no KPI data yields $0 commission.
 - Updated `POST /api/payrolls/[id]/apply-bonuses` to include commission in net-pay calculation.
+
+### 2026-02-05 22:12 (Europe/Madrid)
+- **Payroll overhaul (Phase 3 — Admin UI)**: Admin → Payrolls table now shows **Gross Sales**, **Net Sales**, **Commission** columns (USD formatting; handles nulls for pre-overhaul payrolls).
+- **User management**: Admin → Users create/edit now includes **Commission %** (stored as `commissionBps`), with validation 0–100%.
+- API: updated admin user create/update endpoints to persist + validate `commissionBps`.
+- Verified: `npm run lint` + `npm run build` passing.

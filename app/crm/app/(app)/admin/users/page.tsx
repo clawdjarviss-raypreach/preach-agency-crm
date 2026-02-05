@@ -12,6 +12,7 @@ type UserRow = {
   status: 'active' | 'inactive' | 'onboarding';
   supervisorId: string | null;
   hourlyRateCents: number | null;
+  commissionBps: number;
   createdAt: Date;
 };
 
@@ -34,6 +35,7 @@ export default async function AdminUsersPage() {
     status: u.status as 'active' | 'inactive' | 'onboarding',
     supervisorId: u.supervisorId,
     hourlyRateCents: u.hourlyRateCents,
+    commissionBps: u.commissionBps,
     createdAt: u.createdAt,
   }));
 

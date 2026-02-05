@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
       status,
       supervisorId,
       hourlyRateCents,
+      commissionBps,
     } = body;
 
     if (!name || !email || !password || !userRole || !status) {
@@ -56,11 +57,23 @@ export async function POST(req: NextRequest) {
     }
 
     if (hourlyRateCents !== null && hourlyRateCents !== undefined) {
-      if (typeof hourlyRateCents !== 'number' || !Number.isInteger(hourlyRateCents) || hourlyRateCents < 0) {
-        return NextResponse.json(
-          { error: 'Invalid hourlyRateCents' },
-          { status: 400 }
-        );
+      if (
+        typeof hourlyRateCents !== 'number' ||
+        !Number.isInteger(hourlyRateCents) ||
+        hourlyRateCents < 0
+      ) {
+        return NextResponse.json({ error: 'Invalid hourlyRateCents' }, { status: 400 });
+      }
+    }
+
+    if (commissionBps !== null && commissionBps !== undefined) {
+      if (
+        typeof commissionBps !== 'number' ||
+        !Number.isInteger(commissionBps) ||
+        commissionBps < 0 ||
+        commissionBps > 10000
+      ) {
+        return NextResponse.json({ error: 'Invalid commissionBps' }, { status: 400 });
       }
     }
 
@@ -75,6 +88,7 @@ export async function POST(req: NextRequest) {
         status,
         supervisorId: supervisorId ?? null,
         hourlyRateCents: hourlyRateCents ?? null,
+        commissionBps: commissionBps ?? 0,
       },
     });
 
@@ -87,6 +101,7 @@ export async function POST(req: NextRequest) {
         status: user.status,
         supervisorId: user.supervisorId,
         hourlyRateCents: user.hourlyRateCents,
+        commissionBps: user.commissionBps,
         createdAt: user.createdAt,
       },
       { status: 201 }

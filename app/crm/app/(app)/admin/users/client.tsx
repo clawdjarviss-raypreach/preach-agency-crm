@@ -10,6 +10,7 @@ type UserRow = {
   status: 'active' | 'inactive' | 'onboarding';
   supervisorId: string | null;
   hourlyRateCents?: number | null;
+  commissionBps?: number;
   createdAt: Date;
 };
 
@@ -33,6 +34,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
     userId: string;
     supervisorId: string | null;
     hourlyRateCents: number | null;
+    commissionBps: number;
   } | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -44,6 +46,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
     status: 'active' as const,
     supervisorId: '' as string,
     hourlyRateUsd: '' as string,
+    commissionPercent: '' as string,
   });
 
   const supervisorById = new Map(supervisors.map((s) => [s.id, s] as const));
@@ -81,6 +84,18 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
         ? (hourlyRateCentsRaw as number)
         : null;
 
+      const commissionPercentRaw = formData.commissionPercent
+        ? parseFloat(formData.commissionPercent)
+        : 0;
+
+      if (!Number.isFinite(commissionPercentRaw) || commissionPercentRaw < 0 || commissionPercentRaw > 100) {
+        setError('Commission must be between 0 and 100%');
+        setLoading(false);
+        return;
+      }
+
+      const commissionBps = Math.round(commissionPercentRaw * 100);
+
       const payload = {
         name: formData.name,
         email: formData.email,
@@ -92,6 +107,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
             ? formData.supervisorId
             : null,
         hourlyRateCents: formData.role === 'chatter' ? hourlyRateCents : null,
+        commissionBps: formData.role === 'chatter' ? commissionBps : 0,
       };
 
       const response = await fetch('/api/admin/users', {
@@ -116,6 +132,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
         status: 'active',
         supervisorId: '',
         hourlyRateUsd: '',
+        commissionPercent: '',
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create user');
@@ -131,12 +148,19 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
     setEditError(null);
 
     try {
+      if (!Number.isInteger(editModal.commissionBps) || editModal.commissionBps < 0 || editModal.commissionBps > 10000) {
+        setEditError('Commission must be between 0 and 100%');
+        setEditLoading(false);
+        return;
+      }
+
       const response = await fetch(`/api/admin/users/${editModal.userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           supervisorId: editModal.supervisorId,
           hourlyRateCents: editModal.hourlyRateCents,
+          commissionBps: editModal.commissionBps,
         }),
       });
 
@@ -146,7 +170,12 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
       setUsers((prev) =>
         prev.map((u) =>
           u.id === editModal.userId
-            ? { ...u, supervisorId: updated.supervisorId, hourlyRateCents: updated.hourlyRateCents }
+            ? {
+                ...u,
+                supervisorId: updated.supervisorId,
+                hourlyRateCents: updated.hourlyRateCents,
+                commissionBps: updated.commissionBps,
+              }
             : u
         )
       );
@@ -284,6 +313,21 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
                     placeholder="e.g., 9.25"
                   />
                 </label>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs text-zinc-600">Commission (%)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.01}
+                    name="commissionPercent"
+                    value={formData.commissionPercent}
+                    onChange={handleInputChange}
+                    className="rounded border px-2 py-1 text-sm"
+                    placeholder="e.g., 10"
+                  />
+                </label>
               </div>
             )}
 
@@ -313,6 +357,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Supervisor</th>
                 <th className="px-3 py-2">$/h</th>
+                <th className="px-3 py-2">Commission %</th>
                 <th className="px-3 py-2">Created</th>
                 <th className="px-3 py-2">Actions</th>
               </tr>
@@ -354,6 +399,11 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
                       ? (u.hourlyRateCents / 100).toFixed(2)
                       : '—'}
                   </td>
+                  <td className="px-3 py-2 text-xs text-zinc-700">
+                    {typeof u.commissionBps === 'number'
+                      ? (u.commissionBps / 100).toFixed(2)
+                      : '—'}
+                  </td>
                   <td className="px-3 py-2 text-xs text-zinc-500">
                     {typeof u.createdAt === 'string'
                       ? new Date(u.createdAt).toLocaleDateString()
@@ -366,6 +416,7 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
                           userId: u.id,
                           supervisorId: u.supervisorId || '',
                           hourlyRateCents: u.hourlyRateCents || null,
+                          commissionBps: u.commissionBps ?? 0,
                         })
                       }
                       className="text-xs brand-link"
@@ -429,6 +480,27 @@ export default function UsersClient({ initialUsers, supervisors }: UsersClientPr
                   }
                   className="rounded border px-2 py-1 text-sm"
                   placeholder="e.g., 9.25"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-zinc-600">Commission (%)</span>
+                <input
+                  type="number"
+                  step={0.01}
+                  min={0}
+                  max={100}
+                  value={(editModal.commissionBps / 100).toFixed(2)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const pct = v ? parseFloat(v) : 0;
+                    setEditModal({
+                      ...editModal,
+                      commissionBps: Number.isFinite(pct) ? Math.round(pct * 100) : editModal.commissionBps,
+                    });
+                  }}
+                  className="rounded border px-2 py-1 text-sm"
+                  placeholder="e.g., 10"
                 />
               </label>
             </div>
