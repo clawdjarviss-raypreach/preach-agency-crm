@@ -227,3 +227,48 @@
 - Lint: passing.
 - Next: extend this to show totals for the current open pay period (and optionally per-day breakdown).
 - Blockers: none.
+
+### 2026-02-05 15:39 (Europe/Madrid)
+- Shipped: Added server-side validation for Bonus Rules create/update (required fields + integer/negative checks +  ap).
+- Shipped: Bonus Rule modal now shows type-specific fields (hides irrelevant inputs) and clears incompatible values when switching types.
+- Verified: `npm run lint` passes.
+- Next: add quick-toggle (active/inactive) directly in the Bonus Rules table or add a “preview payload”/helper for bps↔ onversion.
+- Blockers: none.
+
+### 2026-02-05 15:38 (Europe/Madrid)
+- **Health check**: Gateway + Node running ✅.
+- **Shipped**: Extended "My Shifts" page with current pay-period stats (hours worked + shift count + date range).
+- **Shipped**: Fetches open PayPeriod server-side, calculates hours from shifts in that period.
+- **Shipped**: 4-column stats grid now shows (Current Pay Period + Period Shifts + Last 7 days + Open shift).
+- **Verified**: `npm run lint` + `npm run build` passing. Pushed to GitHub.
+- **Next**: Add analytics dashboard (revenue trends, chatter performance ranking) or add supervisor dashboard enhancements.
+- **Blockers**: none.
+
+### 2026-02-05 15:58 (Europe/Madrid)
+- Shipped: added `GET /api/admin/bonus-rules` (admin-only) so the Bonus Rules page can refetch after create/edit.
+- Shipped: implemented `PUT` + `DELETE /api/bonus-rules/:id` for bonus rule updates, toggles, and deletions.
+- Verified: `npm run lint` passes in `app/crm`.
+- Next: start Shifts admin page clock-in/out + approvals flow end-to-end (chatter → supervisor → payroll).
+- Blockers: none.
+
+### 2026-02-05 16:01 (Europe/Madrid)
+- **Health check**: Gateway + Node running ✅. Dev server operational.
+- **Shipped**: Bonus Rules API endpoints finalized (GET /api/admin/bonus-rules + PUT/DELETE for edit/toggle/delete).
+- **Verified**: Admin-only role checks; `npm run lint` passing.
+- **Smoke test**: Initiated end-to-end test; auth/user session handling in curl-based test needs refinement (chatter user lookup issue).
+- **Next**: Fix smoke-test auth flow or run manual UI-based workflow test. Or pivot to analytics dashboard.
+- **Blockers**: Smoke test auth needs debugging (session user matching).
+
+### 2026-02-05 16:20 (Europe/Madrid)
+- **Health check**: Gateway restarted + allowlist updated. Nodes connected ✅.
+- **Discord channel setup**: Created #jarvis-logs in BUSINESS category for heartbeats/build logs.
+- **Build verification**: `npm run lint` + `npm run build` ✅ passing. All API routes + pages live.
+- **Next**: Manual UI workflow test (chatter clock-in → supervisor approve → admin payroll) or analytics dashboard.
+- **Blockers**: None.
+
+### 2026-02-05 16:46 (Europe/Madrid)
+- **Shipped**: Admin Dashboard Analytics MVP section (last-14-days revenue+tipped trend + hours-worked trend; top chatters last 7 days).
+- **Data source**: aggregates from `KpiSnapshot` + closed `Shift` rows (server-side, no chart deps).
+- **Verified**: `npm run lint` passes.
+- **Next**: Decide whether to add simple sparklines/bars or keep tables; optionally add filters (creator/team/date range).
+- **Blockers**: none.
