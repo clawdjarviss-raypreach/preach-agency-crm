@@ -157,8 +157,21 @@
   3. Or: Implement real email/Slack notifications on payroll approvals.
 - **Blockers**: none.
 
+### 2026-02-05 14:16 (Europe/Madrid)
+- **GitHub prep**: Reorganized git repo root to `projects/dashboard-v0/` (includes PLAN/PROGRESS + app/).
+- **Shipped**: Added `.gitignore` (dev.db, node_modules, .next, etc.) + comprehensive README.md.
+- **Repo status**: Ready to push — awaiting GitHub account/org + auth (gh CLI or PAT token).
+- **Next**: Once Rayan provides GitHub account info + CLI auth, run `gh repo create` + `git push`.
+- **Blockers**: Waiting on GitHub account/org name + auth from Rayan.
+
 ### 2026-02-05 14:01 (Europe/Madrid)
 - Shipped: cleaned up a naming mismatch in Admin Users form (`hourlyRateEur` → `hourlyRateUsd`) so the field matches the UI label `$/h`.
 - Verified: `npm run lint` passes.
 - Next: add `/supervisor/dashboard` stub with pending counts (shifts + draft payrolls) or start analytics/reporting.
+- Blockers: none.
+
+### 2026-02-05 14:24 (Europe/Madrid)
+- Shipped: fixed `POST /api/admin/kpi-snapshots` so `0` values (e.g., $0 revenue, 0 messages) are persisted correctly (`|| null` → `?? null`).
+- Verified: `npm run lint` passes.
+- Next: add `/supervisor/dashboard` stub w/ pending counts or start analytics/reporting.
 - Blockers: none.
