@@ -54,6 +54,15 @@ enum BonusType {
   milestone
 }
 
+enum BonusTargetType {
+  revenue
+  net_revenue
+  messages_sent
+  new_subs
+  tips
+  manual
+}
+
 enum KpiSource {
   creatorhero_scrape
   onlymonster_api
@@ -113,6 +122,8 @@ model Creator {
   assignments  ChatterCreator[]
   kpiSnapshots KpiSnapshot[]
   shiftReports ShiftReport[]
+
+  bonusRules BonusRule[]
 
   @@unique([platform, username])
 }
@@ -197,17 +208,36 @@ model Payroll {
 }
 
 model BonusRule {
-  id              String    @id @default(cuid())
-  name            String
-  type            BonusType
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+
+  type       BonusType
+  targetType BonusTargetType @default(manual)
+
   // threshold/flat stored as cents; percentage stored as basis points
+  // `thresholdCents` is kept for backwards compatibility; prefer `targetThreshold`.
   thresholdCents  Int?
+  targetThreshold Int?
+
   percentageBps   Int?
   flatAmountCents Int?
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
 
+  multiplier Float @default(1.0)
+
+  // Scoping (nullable = global rule)
+  creatorId String?
+  startDate DateTime?
+  endDate   DateTime?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  creator Creator? @relation(fields: [creatorId], references: [id])
   bonuses Bonus[]
+
+  @@index([creatorId])
+  @@index([startDate, endDate])
 }
 
 model Bonus {

@@ -3,17 +3,10 @@
 <!-- AUTO-GENERATED from Mission Control DB. Do not edit directly. -->
 
 ## 🚧 In Progress
-- [ ] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High)
-- [ ] CRM UX + branding: match preachagency.com colors and chatter stats views (priority: High)
-- [ ] Analytics MVP: Admin dashboard (revenue/tips trend, hours worked, top chatters) (priority: High) (priority: High)
+- (none)
 
 ## 📥 Backlog
-- [ ] Supervisor dashboard page with pending counts (shifts + draft payrolls) (priority: High)
 - [ ] Integrate bonus targets/rules from Discord into CRM (priority: High)
-- [ ] Payroll overhaul: hourly + net sales, 20% fee, pay periods (priority: High)
-- [ ] Supervisor dashboard page with pending counts (shifts + draft payrolls) (priority: High)
-- [ ] Supervisor dashboard page with pending counts (shifts + draft payrolls) (priority: High) (priority: High)
-- [ ] Supervisor dashboard page with pending counts (shifts + draft payrolls) (priority: High)
 - [ ] Fix + harden `scripts/smoke-test.sh` auth flow (priority: Medium)
 - [ ] Fix + harden `scripts/smoke-test.sh` auth flow (priority: Medium)
 - [ ] Fix + harden scripts/smoke-test.sh auth flow (priority: Medium)
@@ -27,6 +20,8 @@
 - [x] End-to-end workflow: clock-in → shift approval → payroll gen → apply bonuses → approve → mark paid → CSV export (priority: High)
 - [x] Role-gated routing for admin/supervisor/chatter areas (priority: High)
 - [x] Bonus rules CRUD + toggles + validation (priority: High)
+- [x] Payroll overhaul: hourly + net sales, 20% fee, pay periods (priority: High)
+- [x] CRM UX + branding: match preachagency.com colors and chatter stats views (priority: High)
 - [x] End-to-end workflow: clock-in → shift approval → payroll gen → apply bonuses → approve → mark paid → CSV export (priority: High)
 - [x] End-to-end workflow: clock-in → shift approval → payroll gen → apply bonuses → approve → mark paid → CSV export (priority: Medium)
 - [x] End-to-end workflow: clock-in → shift approval → payroll gen → apply bonuses → approve → mark paid → CSV export (priority: Medium)

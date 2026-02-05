@@ -413,3 +413,9 @@
 - **Payroll overhaul (Phase 4 — CSV export)**: updated `GET /api/payrolls/export` to include Gross Sales, Net Sales, Commission, Bonuses, Deductions (all USD) in the CSV.
 - Fix: TypeScript build error in `StatusBadge` (added missing `neutral` status option).
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 22:25 (Europe/Madrid)
+- **Bonus Targets (Phase 1 — Schema)**: extended `BonusRule` with `targetType`, `targetThreshold`, `multiplier`, optional `creatorId`, optional `startDate`/`endDate`, and `description`.
+- Added `BonusTargetType` enum + `Creator.bonusRules` relation.
+- Migration `20260205212419_bonus_targets_schema` applied cleanly.
+- Verified: `npm run lint` + `npm run build` passing.
