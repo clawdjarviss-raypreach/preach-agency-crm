@@ -433,3 +433,8 @@
 - Updated BonusRule create/update APIs to validate/persist new fields.
 - Payroll UI: admin + supervisor payroll tables now show bonus breakdown (Auto vs Manual).
 - Verified: `npm run lint` + `npm run build` passing.
+
+### 2026-02-05 23:30 (Europe/Madrid)
+- **Bonus Targets (Phase 4 — Validation / Edge cases)**: updated `POST /api/payrolls/[id]/apply-bonuses` to use the new bonus engine and preserve manual/unlinked bonuses.
+- Reapply now replaces only auto bonuses (`bonusRuleId != null`) and recalculates totals.
+- Verified: `npm run lint` + `npm run build` passing.

@@ -1,81 +1,103 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { calculateNetPayCents } from '@/lib/payroll-calculations';
+import { calculateNetPayCents, calculateNetSalesCents } from '@/lib/payroll-calculations';
+import { evaluateBonuses } from '@/lib/bonus-engine';
 
 export async function POST(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
 
-    // Fetch payroll with related data
     const payroll = await prisma.payroll.findUnique({
       where: { id },
-      include: { bonuses: true },
+      include: {
+        payPeriod: true,
+        bonuses: true,
+      },
     });
 
     if (!payroll) {
       return NextResponse.json({ error: 'Payroll not found' }, { status: 404 });
     }
 
-    // Fetch active bonus rules
-    const rules = await prisma.bonusRule.findMany({
-      where: { isActive: true },
+    const rules = await prisma.bonusRule.findMany({ where: { isActive: true } });
+
+    // KPI totals for the pay period.
+    const kpiAgg = await prisma.kpiSnapshot.aggregate({
+      where: {
+        chatterId: payroll.chatterId,
+        snapshotDate: { gte: payroll.payPeriod.startDate, lte: payroll.payPeriod.endDate },
+      },
+      _sum: {
+        revenueCents: true,
+        messagesSent: true,
+        newSubs: true,
+        tipsReceivedCents: true,
+      },
     });
 
-    let totalBonusCents = 0;
-    const newBonuses = [];
+    const grossSalesCents = kpiAgg._sum.revenueCents ?? 0;
+    const netSalesCents = calculateNetSalesCents(grossSalesCents);
 
-    // Apply each rule
-    for (const rule of rules) {
-      let bonusAmount = 0;
+    const assignments = await prisma.chatterCreator.findMany({
+      where: { chatterId: payroll.chatterId, unassignedAt: null },
+      select: { creatorId: true },
+      take: 5000,
+    });
 
-      if (rule.type === 'percentage' && rule.percentageBps !== null) {
-        // Calculate percentage of base pay
-        bonusAmount = Math.round((payroll.basePayCents * rule.percentageBps) / 10000);
-      } else if (rule.type === 'flat' && rule.flatAmountCents !== null) {
-        // Flat bonus
-        bonusAmount = rule.flatAmountCents;
-      } else if (rule.type === 'milestone' && rule.thresholdCents !== null) {
-        // Milestone: bonus if base pay exceeds threshold
-        if (payroll.basePayCents >= rule.thresholdCents && rule.flatAmountCents !== null) {
-          bonusAmount = rule.flatAmountCents;
-        }
-      }
+    const autoBonuses = await evaluateBonuses(
+      {
+        chatterId: payroll.chatterId,
+        payPeriodId: payroll.payPeriodId,
+        periodStart: payroll.payPeriod.startDate,
+        periodEnd: payroll.payPeriod.endDate,
+        grossSalesCents,
+        netSalesCents,
+        messagesSent: kpiAgg._sum.messagesSent ?? 0,
+        newSubs: kpiAgg._sum.newSubs ?? 0,
+        tipsCents: kpiAgg._sum.tipsReceivedCents ?? 0,
+        assignedCreatorIds: assignments.map((a) => a.creatorId),
+      },
+      rules
+    );
 
-      if (bonusAmount > 0) {
-        newBonuses.push({
-          payrollId: payroll.id,
-          bonusRuleId: rule.id,
-          description: rule.name,
-          amountCents: bonusAmount,
-        });
-        totalBonusCents += bonusAmount;
-      }
-    }
+    const autoTotalCents = autoBonuses.reduce((sum, b) => sum + b.amountCents, 0);
 
-    // Delete existing bonuses (if reapplying)
+    // Preserve manual/unlinked bonuses.
+    const manualTotalCents = payroll.bonuses
+      .filter((b) => b.bonusRuleId == null)
+      .reduce((sum, b) => sum + b.amountCents, 0);
+
+    // Replace auto-linked bonuses only.
     await prisma.bonus.deleteMany({
-      where: { payrollId: payroll.id },
+      where: { payrollId: payroll.id, bonusRuleId: { not: null } },
     });
 
-    // Create new bonuses
-    if (newBonuses.length > 0) {
+    if (autoBonuses.length > 0) {
       await prisma.bonus.createMany({
-        data: newBonuses,
+        data: autoBonuses.map((b) => ({
+          payrollId: payroll.id,
+          bonusRuleId: b.ruleId,
+          description: b.description,
+          amountCents: b.amountCents,
+        })),
       });
     }
 
-    // Update payroll with new bonus total
+    const bonusTotalCents = manualTotalCents + autoTotalCents;
+
     const updated = await prisma.payroll.update({
-      where: { id },
+      where: { id: payroll.id },
       data: {
-        bonusTotalCents: totalBonusCents,
+        grossSalesCents,
+        netSalesCents,
+        bonusTotalCents,
         netPayCents: calculateNetPayCents({
           basePayCents: payroll.basePayCents,
           commissionCents: payroll.commissionCents,
-          bonusTotalCents: totalBonusCents,
+          bonusTotalCents,
           deductionsCents: payroll.deductionsCents,
         }),
       },
