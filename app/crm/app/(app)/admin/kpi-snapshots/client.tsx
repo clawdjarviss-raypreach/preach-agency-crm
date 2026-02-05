@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useMemo, useState } from 'react';
+import { parseDiscordSalesReport } from '@/lib/discordSalesReport';
 
 type SnapshotRow = {
   id: string;
@@ -41,6 +42,9 @@ export default function KpiSnapshotsClient({
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [discordPaste, setDiscordPaste] = useState('');
+  const [discordParsed, setDiscordParsed] = useState<Record<string, unknown> | null>(null);
+
   const [formData, setFormData] = useState({
     chatterId: '',
     creatorId: '',
@@ -49,6 +53,7 @@ export default function KpiSnapshotsClient({
     messagesSent: '',
     tipsReceivedCents: '',
     newSubs: '',
+    source: 'manual' as 'manual' | 'discord',
   });
 
   const chatterOptions = useMemo(() => chatters, [chatters]);
@@ -73,6 +78,13 @@ export default function KpiSnapshotsClient({
         return;
       }
 
+      const revenueCents = formData.revenueCents
+        ? Math.round(parseFloat(formData.revenueCents) * 100)
+        : null;
+      const tipsReceivedCents = formData.tipsReceivedCents
+        ? Math.round(parseFloat(formData.tipsReceivedCents) * 100)
+        : null;
+
       const response = await fetch('/api/admin/kpi-snapshots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -80,10 +92,20 @@ export default function KpiSnapshotsClient({
           chatterId: formData.chatterId,
           creatorId: formData.creatorId,
           snapshotDate: formData.snapshotDate,
-          revenueCents: formData.revenueCents ? Math.round(parseFloat(formData.revenueCents) * 100) : null,
+          revenueCents,
           messagesSent: formData.messagesSent ? parseInt(formData.messagesSent) : null,
-          tipsReceivedCents: formData.tipsReceivedCents ? Math.round(parseFloat(formData.tipsReceivedCents) * 100) : null,
+          tipsReceivedCents,
           newSubs: formData.newSubs ? parseInt(formData.newSubs) : null,
+          source: formData.source,
+          rawData:
+            formData.source === 'discord'
+              ? {
+                  discordPaste,
+                  parsed: discordParsed,
+                  revenueCents,
+                  tipsReceivedCents,
+                }
+              : null,
         }),
       });
 
@@ -102,6 +124,8 @@ export default function KpiSnapshotsClient({
         ...prev,
       ]);
       setShowForm(false);
+      setDiscordPaste('');
+      setDiscordParsed(null);
       setFormData({
         chatterId: '',
         creatorId: '',
@@ -110,6 +134,7 @@ export default function KpiSnapshotsClient({
         messagesSent: '',
         tipsReceivedCents: '',
         newSubs: '',
+        source: 'manual',
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create snapshot');
@@ -181,6 +206,79 @@ export default function KpiSnapshotsClient({
                 </select>
               </label>
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-zinc-600">Source</span>
+                <select
+                  name="source"
+                  value={formData.source}
+                  onChange={handleInputChange}
+                  className="rounded border px-2 py-1 text-sm"
+                >
+                  <option value="manual">Manual</option>
+                  <option value="discord">Discord (paste)</option>
+                </select>
+              </label>
+
+              <div className="text-xs text-zinc-500 flex items-end">
+                {formData.source === 'discord'
+                  ? 'Paste a Discord sales report below, click Parse, then submit.'
+                  : 'Standard manual entry.'}
+              </div>
+            </div>
+
+            {formData.source === 'discord' && (
+              <div className="rounded border bg-zinc-50 p-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-xs font-semibold text-zinc-700">Discord sales report paste</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const parsed = parseDiscordSalesReport(discordPaste);
+                      setDiscordParsed(parsed as Record<string, unknown>);
+                      // Prefill common fields.
+                      setFormData((prev) => ({
+                        ...prev,
+                        revenueCents:
+                          typeof parsed.revenueDollars === 'number'
+                            ? String(parsed.revenueDollars)
+                            : prev.revenueCents,
+                        tipsReceivedCents:
+                          typeof parsed.tipsDollars === 'number'
+                            ? String(parsed.tipsDollars)
+                            : prev.tipsReceivedCents,
+                        messagesSent:
+                          typeof parsed.messagesSent === 'number'
+                            ? String(parsed.messagesSent)
+                            : prev.messagesSent,
+                        newSubs:
+                          typeof parsed.newSubs === 'number'
+                            ? String(parsed.newSubs)
+                            : prev.newSubs,
+                      }));
+                    }}
+                    className="rounded bg-zinc-900 px-3 py-1 text-xs font-semibold text-white hover:bg-zinc-800"
+                  >
+                    Parse
+                  </button>
+                </div>
+
+                <textarea
+                  value={discordPaste}
+                  onChange={(e) => setDiscordPaste(e.target.value)}
+                  className="w-full rounded border bg-white p-2 text-xs font-mono"
+                  rows={6}
+                  placeholder={`Revenue: $1,234.56\nTips: $123.00\nPPV: $420.00\nNew subs: 12\nMessages sent: 1500`}
+                />
+
+                {discordParsed && (
+                  <pre className="mt-2 overflow-auto rounded bg-white p-2 text-[11px] text-zinc-700">
+                    {JSON.stringify(discordParsed, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
 
             <label className="flex flex-col gap-1">
               <span className="text-xs text-zinc-600">Snapshot Date</span>

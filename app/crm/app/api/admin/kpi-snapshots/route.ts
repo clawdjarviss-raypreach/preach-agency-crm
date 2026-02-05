@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getRole } from '@/lib/auth';
+import { KpiSource } from '@prisma/client';
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,6 +19,12 @@ export async function POST(req: NextRequest) {
       messagesSent,
       tipsReceivedCents,
       newSubs,
+      source,
+      rawData,
+      messagesReceived,
+      ppvRevenueCents,
+      subsRenewed,
+      avgResponseTimeSec,
     } = body;
 
     if (!chatterId || !creatorId || !snapshotDate) {
@@ -40,6 +47,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Creator not found' }, { status: 404 });
     }
 
+    const allowedSources: readonly KpiSource[] = [
+      'manual',
+      'creatorhero_scrape',
+      'onlymonster_api',
+      'discord',
+    ];
+
+    const normalizedSource: KpiSource =
+      (typeof source === 'string' && (allowedSources as string[]).includes(source))
+        ? (source as KpiSource)
+        : 'manual';
+
     const snapshot = await prisma.kpiSnapshot.create({
       data: {
         chatterId,
@@ -47,9 +66,15 @@ export async function POST(req: NextRequest) {
         snapshotDate: new Date(snapshotDate),
         revenueCents: revenueCents ?? null,
         messagesSent: messagesSent ?? null,
+        messagesReceived: messagesReceived ?? null,
         tipsReceivedCents: tipsReceivedCents ?? null,
+        ppvRevenueCents: ppvRevenueCents ?? null,
+        subsRenewed: subsRenewed ?? null,
         newSubs: newSubs ?? null,
-        source: 'manual',
+        avgResponseTimeSec: avgResponseTimeSec ?? null,
+        // Allow explicit sources for structured imports (e.g. Discord paste)
+        source: normalizedSource,
+        rawData: rawData ?? null,
       },
     });
 

@@ -2,7 +2,11 @@ import Sidebar from '@/app/components/Sidebar';
 import { prisma } from '@/lib/prisma';
 import { getActingUserEmail } from '@/lib/acting-user';
 
-export default async function ShiftsPage() {
+type ShiftsPageProps = {
+  searchParams?: Record<string, string | string[] | undefined>;
+};
+
+export default async function ShiftsPage({ searchParams }: ShiftsPageProps) {
   const email = await getActingUserEmail();
   const chatter = email ? await prisma.user.findUnique({ where: { email } }) : null;
 
@@ -88,6 +92,13 @@ export default async function ShiftsPage() {
         <h1 className="text-xl font-semibold">My Shifts</h1>
         <p className="mt-1 text-sm text-zinc-600">V0: shifts are tied to your dev-login role via seeded demo users.</p>
 
+        {searchParams?.error === 'missing_report_fields' && (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            End-of-shift report: if you fill any report field, you must also provide <b>Busyness</b>, <b>What went well</b>, and{' '}
+            <b>What didn’t go well</b>.
+          </div>
+        )}
+
         <div className="mt-3 grid gap-2 sm:grid-cols-4">
           <div className="rounded-md border bg-white p-3 text-sm">
             <div className="text-xs text-zinc-500">Current Pay Period</div>
@@ -147,6 +158,68 @@ export default async function ShiftsPage() {
                   placeholder="Optional"
                 />
               </label>
+
+              <div className="sm:col-span-3 mt-2 border-t pt-3">
+                <div className="text-xs font-medium text-zinc-700">End-of-shift report (V0)</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  <label className="grid gap-1">
+                    <span className="text-xs text-zinc-600">Busyness (1–5)</span>
+                    <select name="busyness" className="w-full rounded-md border bg-white px-2 py-1 text-sm" defaultValue="">
+                      <option value="" disabled>
+                        Select
+                      </option>
+                      <option value="1">1</option>
+                      <option value="2">2</option>
+                      <option value="3">3</option>
+                      <option value="4">4</option>
+                      <option value="5">5</option>
+                    </select>
+                  </label>
+
+                  <label className="grid gap-1 sm:col-span-2">
+                    <span className="text-xs text-zinc-600">Revenue (EUR)</span>
+                    <input
+                      name="revenueEur"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      className="w-full rounded-md border bg-white px-2 py-1 text-sm"
+                      placeholder="Optional"
+                    />
+                  </label>
+
+                  <label className="grid gap-1 sm:col-span-3">
+                    <span className="text-xs text-zinc-600">What went well?</span>
+                    <textarea
+                      name="whatWentWell"
+                      maxLength={1000}
+                      className="min-h-[72px] w-full rounded-md border bg-white px-2 py-1 text-sm"
+                      placeholder="Quick bullets are fine"
+                    />
+                  </label>
+
+                  <label className="grid gap-1 sm:col-span-3">
+                    <span className="text-xs text-zinc-600">What didn’t go well?</span>
+                    <textarea
+                      name="whatDidntGoWell"
+                      maxLength={1000}
+                      className="min-h-[72px] w-full rounded-md border bg-white px-2 py-1 text-sm"
+                      placeholder="Blockers / issues"
+                    />
+                  </label>
+
+                  <label className="grid gap-1 sm:col-span-3">
+                    <span className="text-xs text-zinc-600">MM selling chats</span>
+                    <input
+                      name="mmSellingChats"
+                      type="text"
+                      maxLength={500}
+                      className="w-full rounded-md border bg-white px-2 py-1 text-sm"
+                      placeholder="Optional"
+                    />
+                  </label>
+                </div>
+              </div>
 
               <div className="sm:col-span-3">
                 <button className="rounded-md border px-3 py-2 text-sm">Clock out</button>

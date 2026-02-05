@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
 :root {
+  /* Preach Agency brand tokens (from preachagency.com) */
+  --brand: #f2af3a;
+  --brand-foreground: #000000;
+  --brand-soft: #2a200b;
+
   --background: #ffffff;
   --foreground: #171717;
 }
@@ -14,9 +19,27 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
+    /* Dark mode baseline closer to preachagency.com */
+    --background: #000000;
     --foreground: #ededed;
   }
+}
+
+.brand-primary {
+  background: var(--brand);
+  color: var(--brand-foreground);
+}
+
+.brand-primary:hover {
+  filter: brightness(0.95);
+}
+
+.brand-link {
+  color: var(--brand);
+}
+
+.brand-link:hover {
+  text-decoration: underline;
 }
 
 body {

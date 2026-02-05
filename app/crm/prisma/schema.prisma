@@ -58,6 +58,7 @@ enum KpiSource {
   creatorhero_scrape
   onlymonster_api
   manual
+  discord
 }
 
 enum SyncStatus {
@@ -88,6 +89,7 @@ model User {
   creatorAssignments ChatterCreator[]
   chatterShifts      Shift[]          @relation("ChatterShifts")
   approvedShifts     Shift[]          @relation("ApprovedShifts")
+  shiftReports       ShiftReport[]
   payrolls           Payroll[]
   kpiSnapshots       KpiSnapshot[]
   syncLogs           SyncLog[]        @relation("SyncTriggeredBy")
@@ -139,6 +141,8 @@ model Shift {
 
   chatter    User  @relation("ChatterShifts", fields: [chatterId], references: [id])
   approvedBy User? @relation("ApprovedShifts", fields: [approvedById], references: [id])
+
+  report ShiftReport?
 
   @@index([chatterId])
   @@index([approvedById])
@@ -249,4 +253,30 @@ model SyncLog {
 
   triggeredById String?
   triggeredBy   User?   @relation("SyncTriggeredBy", fields: [triggeredById], references: [id])
+}
+
+model ShiftReport {
+  id String @id @default(cuid())
+
+  shiftId String @unique
+  shift   Shift  @relation(fields: [shiftId], references: [id])
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  // 1–5 subjective rating
+  busyness Int
+
+  whatWentWell   String
+  whatDidntGoWell String
+
+  // Freeform notes: e.g. “MM selling chats”
+  mmSellingChats String?
+
+  // Stored as cents (integer) for sqlite compatibility
+  revenueCents Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdById])
 }
