@@ -1,4 +1,4 @@
-# Dashboard v0 — Mission Control CRM
+# Preach Agency — CRM (Dashboard v0)
 
 A complete OnlyFans agency CRM system for shift tracking, payroll calculation, bonus management, and KPI tracking.
 
