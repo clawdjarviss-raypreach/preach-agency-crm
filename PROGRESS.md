@@ -357,3 +357,15 @@
 - Verified: `npm run lint` passes.
 - Next: if you want a standalone Analytics page, I’ll split the analytics block into `/admin/analytics` + shared server logic.
 - Blockers: none.
+
+### 2026-02-05 19:26 (Europe/Madrid)
+- **Health check**: Gateway + nodes running ✅.
+- **Mark-paid endpoint**: Verified working correctly (returns updated payroll); smoke-test script parse issue minor.
+- **Build verification**: `npm run lint` + `npm run build` ✅ passing.
+- **Status**: Dashboard v0 end-to-end workflow solid. Ready for next feature or final polish.
+- **Next**: Decide on next priority (analytics enhancements, supervisor dashboard UX, or ship current state).
+- **Blockers**: None.
+
+### 2026-02-05 21:19 (Europe/Madrid)
+- Mission Control hygiene: analytics MVP admin dashboard task was a duplicate/obsolete item (feature already shipped earlier today).
+- Action: marking the task as 🗄️ Archived in Mission Control to keep the board clean.
