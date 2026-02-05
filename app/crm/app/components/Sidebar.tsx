@@ -21,6 +21,12 @@ export default async function Sidebar() {
           <>
             <div className="pt-2 text-xs font-semibold text-zinc-500">Admin</div>
             <Link className="block rounded px-2 py-1 hover:bg-zinc-900" href="/admin/dashboard">Dashboard</Link>
+            <Link
+              className="block rounded px-2 py-1 hover:bg-zinc-900"
+              href="/admin/dashboard#analytics"
+            >
+              Analytics
+            </Link>
             <Link className="block rounded px-2 py-1 hover:bg-zinc-900" href="/admin/users">Users</Link>
             <Link className="block rounded px-2 py-1 hover:bg-zinc-900" href="/admin/creators">Creators</Link>
             <Link className="block rounded px-2 py-1 hover:bg-zinc-900" href="/admin/assignments">Assignments</Link>

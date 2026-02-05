@@ -163,6 +163,10 @@ export default async function AdminDashboardPage() {
     else workedMinutesPrev7 += minutes;
   }
 
+  // Revenue per hour (uses closed shifts as denominator)
+  const revenuePerHourLast7Cents = workedMinutesLast7 > 0 ? Math.round((revenueLast7 * 60) / workedMinutesLast7) : 0;
+  const revenuePerHourPrev7Cents = workedMinutesPrev7 > 0 ? Math.round((revenuePrev7 * 60) / workedMinutesPrev7) : 0;
+
   function formatDeltaPct(current: number, previous: number): string {
     if (previous <= 0) return current > 0 ? '+∞' : '—';
     const pct = ((current - previous) / previous) * 100;
@@ -245,7 +249,7 @@ export default async function AdminDashboardPage() {
         </div>
 
         {/* Analytics MVP */}
-        <div className="mb-10">
+        <div id="analytics" className="mb-10 scroll-mt-6">
           <div className="flex items-end justify-between mb-3">
             <div>
               <h2 className="text-lg font-semibold">Analytics (MVP)</h2>
@@ -260,7 +264,7 @@ export default async function AdminDashboardPage() {
             </a>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 mb-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 mb-4 md:grid-cols-4">
             <div className="rounded border bg-white p-4">
               <div className="text-xs text-zinc-600">Revenue (last 7d)</div>
               <div className="mt-2 flex items-end justify-between gap-2">
@@ -283,6 +287,19 @@ export default async function AdminDashboardPage() {
                 </div>
                 <div className="text-xs text-zinc-600">
                   vs prev: {formatDeltaPct(workedMinutesLast7, workedMinutesPrev7)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded border bg-white p-4">
+              <div className="text-xs text-zinc-600">Revenue / hour (last 7d)</div>
+              <div className="mt-2 flex items-end justify-between gap-2">
+                <div className="text-2xl font-semibold">
+                  {formatMoney(revenuePerHourLast7Cents)}
+                  <span className="ml-1 text-xs font-medium text-zinc-500">/h</span>
+                </div>
+                <div className="text-xs text-zinc-600">
+                  vs prev: {formatDeltaPct(revenuePerHourLast7Cents, revenuePerHourPrev7Cents)}
                 </div>
               </div>
             </div>

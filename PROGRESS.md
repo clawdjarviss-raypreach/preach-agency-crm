@@ -321,3 +321,39 @@
 - Shipped: admin analytics daily bucketing now uses UTC cutoffs (avoids off-by-one day issues across timezones).
 - Verified: `npx tsc -p tsconfig.json --noEmit` + `npm run lint` passing (run inside `app/crm`).
 - Next: Supervisor dashboard pending counts page (shifts + draft payrolls) (High).
+
+### 2026-02-05 18:26 (Europe/Madrid)
+- **Health check**: Gateway + nodes running ✅.
+- **Blocker workaround**: git commit had zsh glob expansion issue on `app/(app)/...` path; bypassed with proper quoting.
+- **Status**: All prior work already committed; working tree clean.
+- **Next**: Decide next Dashboard v0 feature (analytics enhancements, supervisor dashboard, or task-linking).
+- **Blockers**: None.
+
+### 2026-02-05 18:42 (Europe/Madrid)
+- Shipped: added **Revenue / hour (last 7d)** KPI card to Admin Dashboard Analytics (computed from KPI revenue ÷ closed shift minutes).
+- Includes % delta vs previous 7 days (same computation), with safe handling when hours=0.
+- Verified: `npm run lint` passes.
+- Next: decide if Analytics MVP is ✅ Done, or add basic bar/sparkline visuals for the 14-day tables.
+- Blockers: none.
+
+### 2026-02-05 18:54 (Europe/Madrid)
+- Shipped: fixed/hardened `scripts/smoke-test.sh` auth + workflow calls (Server Actions login → dev JSON login endpoint; updated shift/payroll endpoints to match current API).
+- Shipped: added dev-only helper APIs for automation: `POST /api/dev/login`, `POST /api/dev/shifts/clock-in`, `POST /api/dev/shifts/clock-out`, `GET /api/dev/payrolls/latest`.
+- Verified: `npm run lint` passes.
+- Next: run the smoke test against a running `npm run dev` and iterate on any remaining endpoint mismatches.
+- Blockers: none.
+
+### 2026-02-05 19:00 (Europe/Madrid)
+- **Cron executed**: Mission Control sync (7 TODO items → tasks table with stable IDs).
+- **Shipped**: Dev-only automation endpoints (`POST /api/dev/login`, clock-in/out, payroll helpers).
+- **Shipped**: Hardened `scripts/smoke-test.sh` to use new `/api/dev/` endpoints.
+- **Verified**: `npm run lint` ✅. Smoke test end-to-end workflow ✅ (12 steps, 2 minor warnings on response formats).
+- **Next**: Fix mark-paid response format + complete any remaining Dashboard v0 features or ship.
+- **Blockers**: None critical; all endpoints working.
+
+### 2026-02-05 19:12 (Europe/Madrid)
+- Shipped: added an **Analytics** link in the Admin sidebar that deep-links to the analytics section on `/admin/dashboard`.
+- Shipped: added an `id="analytics"` anchor + `scroll-mt` on the analytics block so the deep-link lands cleanly.
+- Verified: `npm run lint` passes.
+- Next: if you want a standalone Analytics page, I’ll split the analytics block into `/admin/analytics` + shared server logic.
+- Blockers: none.
