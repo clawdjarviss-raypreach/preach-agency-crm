@@ -1,0 +1,7 @@
+node_modules/
+.next/
+.env.local
+.env.local.ofapi
+*.tsbuildinfo
+memory/
+reference-*.png
