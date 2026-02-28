@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useAction } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Area, AreaChart, CartesianGrid,
 } from "recharts";
 
@@ -135,7 +135,6 @@ function ChartTooltip({ active, payload, label }: any) {
 
 export default function AdminRevenueDashboard({ user, token }: { user: any; token: string }) {
   const [periodKey, setPeriodKey] = useState("30d");
-  const [creatorFilter, setCreatorFilter] = useState("all");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [customStart, setCustomStart] = useState(() => getDaysAgoRange(30).start);
@@ -155,12 +154,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
   }, [periodKey, drillDate, dateRange.start, dateRange.end]);
 
   // ── Queries ──
-  const creators = useQuery(api.crm.creators.list, token ? { token } : "skip");
-  const selectedAccountId = useMemo(() => {
-    if (creatorFilter === "all") return undefined;
-    const selectedCreator = creators?.find((c: any) => c.id === creatorFilter);
-    return selectedCreator?.accountId;
-  }, [creatorFilter, creators]);
   const dashboard = useQuery(
     api.crm.analyticsV2.getDashboard,
     token && dateRange.start
@@ -168,7 +161,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
           token,
           startDate: dateRange.start,
           endDate: dateRange.end,
-          ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
         }
       : "skip"
   );
@@ -179,7 +171,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
           token,
           startDate: comparisonRange.start,
           endDate: comparisonRange.end,
-          ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
         }
       : "skip"
   );
@@ -190,8 +181,13 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
           token,
           startDate: dateRange.start,
           endDate: dateRange.end,
-          ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
         }
+      : "skip"
+  );
+  const creatorOverviewRows = useQuery(
+    api.crm.analyticsV2.getCreatorOverviewTable,
+    token && dateRange.start
+      ? { token, startDate: dateRange.start, endDate: dateRange.end }
       : "skip"
   );
   const syncStatus = useQuery(api.crm.analyticsV2.getSyncStatus, token ? { token } : "skip");
@@ -202,7 +198,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
           token,
           startDate: dateRange.start,
           endDate: dateRange.end,
-          ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
         }
       : "skip"
   );
@@ -213,7 +208,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
           token,
           startDate: comparisonRange.start,
           endDate: comparisonRange.end,
-          ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
         }
       : "skip"
   );
@@ -225,16 +219,15 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const accountId = selectedAccountId || "all";
-      await syncNow({ token, accountId, endpoint: "earnings" });
-      setSyncMsg({ text: accountId === "all" ? "OF sync triggered for all creators" : "OF sync triggered successfully", type: "success" });
+      await syncNow({ token, accountId: "all", endpoint: "earnings" });
+      setSyncMsg({ text: "OF sync triggered for all creators", type: "success" });
     } catch (err: any) {
       setSyncMsg({ text: err.message || "Sync failed", type: "error" });
     } finally {
       setSyncing(false);
       setTimeout(() => setSyncMsg(null), 6000);
     }
-  }, [token, syncing, syncNow, selectedAccountId]);
+  }, [token, syncing, syncNow]);
 
   // ── Derived ──
   const syncStatusText = useMemo(() => {
@@ -338,23 +331,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          {/* Creator Filter */}
-          <select
-            value={creatorFilter}
-            onChange={(e) => setCreatorFilter(e.target.value)}
-            style={{
-              padding: "10px 16px", fontSize: "13px", fontWeight: "600",
-              background: "#1e1e1e", color: "#fff", border: "1px solid #333",
-              borderRadius: "10px", outline: "none", cursor: "pointer",
-              appearance: "none", minWidth: "140px",
-            }}
-          >
-            <option value="all">All Creators</option>
-            {creators?.filter((c: any) => c.accountId).map((c: any) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-
           {/* Period Selector */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             <div style={{ display: "flex", background: "#1e1e1e", borderRadius: "10px", border: "1px solid #333", overflow: "hidden" }}>
@@ -680,21 +656,109 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
         </div>
       </div>
 
-      {/* ─── Quick Stats Row ─── */}
-      <div className="admin-rev-stats-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
-        {[
-          { label: "Unique Spenders", value: dashboard?.uniqueSpenders?.toLocaleString() || "—", color: "#8b5cf6" },
-          { label: "Avg Per Customer", value: dashboard?.avgPerCustomer ? formatCurrency(toNet(dashboard.avgPerCustomer)) : "—", color: "#f1ae38" },
-          { label: "Recurring %", value: dashboard?.recurringRevenuePct ? `${dashboard.recurringRevenuePct.toFixed(1)}%` : "—", color: "#3b82f6" },
-          { label: "Chargebacks", value: dashboard?.chargebackAmount ? `-${formatCurrency(toNet(dashboard.chargebackAmount))}` : "$0", color: "#ef4444" },
-        ].map((s) => (
-          <div key={s.label} style={card()}>
-            <div style={{ fontSize: "11px", color: "#a0a0a0", fontWeight: "500", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "6px" }}>
-              {s.label}
-            </div>
-            <div style={{ fontSize: "22px", fontWeight: "700", color: s.color }}>{s.value}</div>
+      {/* ─── Avg Fan Spend ─── */}
+      <div className="admin-rev-stats-row" style={{ display: "grid", gridTemplateColumns: "1fr", gap: "16px", marginBottom: "24px" }}>
+        <div style={card()}>
+          <div style={{ fontSize: "11px", color: "#a0a0a0", fontWeight: "500", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "6px" }}>
+            Avg Fan Spend
           </div>
-        ))}
+          <div style={{ fontSize: "22px", fontWeight: "700", color: "#f1ae38" }}>
+            {dashboard ? formatCurrency(toNet(dashboard.avgFanSpend || 0)) : "—"}
+          </div>
+          <div style={{ marginTop: "6px", fontSize: "12px", color: "#777" }}>
+            Total sales revenue ÷ new subscriptions for selected period
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Creator Overview Table ─── */}
+      <div style={{ ...card(), marginBottom: "24px", overflowX: "auto" }}>
+        <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+          Creator Overview
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "980px" }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
+              {['Creator', 'Total Revenue', 'PPV Revenue', 'Subscription Revenue', 'Tips Revenue', 'New Fans', 'Avg Fan Spend'].map((h) => (
+                <th key={h} style={{ padding: "12px 10px", fontSize: "12px", color: "#a0a0a0", fontWeight: 600 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(creatorOverviewRows || []).map((row: any) => (
+              <tr key={row.creatorId} style={{ borderBottom: "1px solid #242424" }}>
+                <td style={{ padding: "12px 10px", color: "#fff", fontWeight: 600 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    {row.avatarUrl ? (
+                      <img src={row.avatarUrl} alt={row.creatorName} style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover" }} />
+                    ) : (
+                      <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#2a2a2a", display: "grid", placeItems: "center", fontSize: 11 }}>👤</div>
+                    )}
+                    <span>{row.creatorName}</span>
+                  </div>
+                </td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>
+                  <div style={{ fontWeight: 600 }}>{formatCurrency(row.totalRevenue || 0)}</div>
+                  <div style={{ fontSize: "12px", color: row.totalRevenueChange >= 0 ? "#22c55e" : "#ef4444" }}>
+                    {row.totalRevenueChange >= 0 ? '↑' : '↓'} {formatCurrency(Math.abs(row.totalRevenueChange || 0))}
+                    {typeof row.totalRevenueChangePct === 'number' ? ` (${row.totalRevenueChangePct >= 0 ? '+' : ''}${row.totalRevenueChangePct.toFixed(1)}%)` : ''}
+                  </div>
+                </td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.ppvRevenue || 0)}</td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.subscriptionRevenue || 0)}</td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.tipsRevenue || 0)}</td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>
+                  <div style={{ fontWeight: 600 }}>{(row.newFans || 0).toLocaleString()}</div>
+                  <div style={{ fontSize: "12px", color: row.newFansChange >= 0 ? "#22c55e" : "#ef4444" }}>
+                    {row.newFansChange >= 0 ? '↑' : '↓'} {Math.abs(row.newFansChange || 0).toLocaleString()}
+                    {typeof row.newFansChangePct === 'number' ? ` (${row.newFansChangePct >= 0 ? '+' : ''}${row.newFansChangePct.toFixed(1)}%)` : ''}
+                  </div>
+                </td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.avgFanSpend || 0)}</td>
+              </tr>
+            ))}
+            {(() => {
+              const rows = creatorOverviewRows || [];
+              const count = rows.length || 1;
+              const total = rows.reduce((acc: any, row: any) => ({
+                totalRevenue: acc.totalRevenue + (row.totalRevenue || 0),
+                ppvRevenue: acc.ppvRevenue + (row.ppvRevenue || 0),
+                subscriptionRevenue: acc.subscriptionRevenue + (row.subscriptionRevenue || 0),
+                tipsRevenue: acc.tipsRevenue + (row.tipsRevenue || 0),
+                newFans: acc.newFans + (row.newFans || 0),
+                avgFanSpend: acc.avgFanSpend + (row.avgFanSpend || 0),
+              }), { totalRevenue: 0, ppvRevenue: 0, subscriptionRevenue: 0, tipsRevenue: 0, newFans: 0, avgFanSpend: 0 });
+              const avg = {
+                totalRevenue: total.totalRevenue / count,
+                ppvRevenue: total.ppvRevenue / count,
+                subscriptionRevenue: total.subscriptionRevenue / count,
+                tipsRevenue: total.tipsRevenue / count,
+                newFans: total.newFans / count,
+                avgFanSpend: total.avgFanSpend / count,
+              };
+              return (<>
+                <tr style={{ borderTop: "2px solid #333" }}>
+                  <td style={{ padding: "12px 10px", color: "#a0a0a0", fontWeight: 700 }}>Average</td>
+                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.totalRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.ppvRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.subscriptionRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.tipsRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{avg.newFans.toFixed(1)}</td>
+                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.avgFanSpend)}</td>
+                </tr>
+                <tr>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>Total</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.totalRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.ppvRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.subscriptionRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.tipsRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{total.newFans.toLocaleString()}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.newFans > 0 ? total.totalRevenue / total.newFans : 0)}</td>
+                </tr>
+              </>);
+            })()}
+          </tbody>
+        </table>
       </div>
 
       {/* ─── Responsive styles via media query workaround ─── */}
