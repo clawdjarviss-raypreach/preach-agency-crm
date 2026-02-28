@@ -303,6 +303,7 @@ export default function ManagerDashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(30));
   const [creatorFilter, setCreatorFilter] = useState<string>("all");
+  const [showAllAccounts, setShowAllAccounts] = useState(false);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -435,6 +436,7 @@ export default function ManagerDashboardPage() {
             Accounts <span style={{ fontSize: "12px", color: "#8899AA", fontWeight: 400 }}>ranked by views</span>
           </h3>
           {sortedAccounts.length > 0 ? (
+            <>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "700px" }}>
                 <thead>
@@ -445,12 +447,41 @@ export default function ManagerDashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedAccounts.map(({ account, stats: s }: any) => (
+                  {(showAllAccounts ? sortedAccounts : sortedAccounts.slice(0, 30)).map(({ account, stats: s }: any) => (
                     <AccountRow key={account._id} account={account} stats={s} token={token} startDate={dateRange.start} endDate={dateRange.end} />
                   ))}
                 </tbody>
               </table>
             </div>
+            {!showAllAccounts && sortedAccounts.length > 30 && (
+              <div style={{ textAlign: "center", paddingTop: "16px" }}>
+                <button
+                  onClick={() => setShowAllAccounts(true)}
+                  style={{
+                    background: "#253545", color: "#fff", border: "1px solid #3a4a5a",
+                    borderRadius: "8px", padding: "10px 24px", fontSize: "13px",
+                    fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  Show all {sortedAccounts.length} accounts
+                </button>
+              </div>
+            )}
+            {showAllAccounts && sortedAccounts.length > 30 && (
+              <div style={{ textAlign: "center", paddingTop: "16px" }}>
+                <button
+                  onClick={() => setShowAllAccounts(false)}
+                  style={{
+                    background: "transparent", color: "#8899AA", border: "1px solid #253545",
+                    borderRadius: "8px", padding: "10px 24px", fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Show less
+                </button>
+              </div>
+            )}
+            </>
           ) : (
             <div style={{ color: "#8899AA", fontSize: "13px", textAlign: "center", padding: "40px 0" }}>
               {accounts === undefined ? "Loading…" : "No reels found in this date range"}
