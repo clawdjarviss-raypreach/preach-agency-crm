@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery, useAction } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Area, AreaChart, CartesianGrid,
 } from "recharts";
+import DateRangePicker, { DateRange } from "../../../components/DateRangePicker";
 
 // ── Period helpers ──
 
@@ -14,39 +15,10 @@ function toDateOnly(d: Date) {
   return d.toISOString().split("T")[0];
 }
 
-function addDays(dateString: string, days: number) {
-  const d = new Date(`${dateString}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return toDateOnly(d);
-}
-
-function getToday() {
-  const d = toDateOnly(new Date());
-  return { start: d, end: d };
-}
-
-function getYesterday() {
-  const d = addDays(getToday().start, -1);
-  return { start: d, end: d };
-}
-
 function getDaysAgoRange(days: number) {
   const now = new Date();
   const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   return { start: toDateOnly(start), end: toDateOnly(now) };
-}
-
-function getMonthRange() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  return { start: toDateOnly(start), end: toDateOnly(now) };
-}
-
-function getPreviousMonthRange() {
-  const now = new Date();
-  const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-  return { start: toDateOnly(prevMonthStart), end: toDateOnly(prevMonthEnd) };
 }
 
 function getPreviousEquivalentRange(start: string, end: string) {
@@ -59,14 +31,6 @@ function getPreviousEquivalentRange(start: string, end: string) {
   prevStart.setDate(prevStart.getDate() - (dayCount - 1));
   return { start: toDateOnly(prevStart), end: toDateOnly(prevEnd) };
 }
-
-const PERIODS = [
-  { key: "today", label: "Today", ...getToday() },
-  { key: "yesterday", label: "Yesterday", ...getYesterday() },
-  { key: "7d", label: "7 Days", ...getDaysAgoRange(7) },
-  { key: "30d", label: "30 Days", ...getDaysAgoRange(30) },
-  { key: "month", label: "Month", ...getMonthRange() },
-] as const;
 
 // OF API already returns net earnings (after platform fee) — no adjustment needed
 const NET_MULTIPLIER = 1.0;
@@ -133,34 +97,29 @@ function ChartTooltip({ active, payload, label }: any) {
 
 // ── Main Component ──
 
-export default function AdminRevenueDashboard({ user, token }: { user: any; token: string }) {
-  const [periodKey, setPeriodKey] = useState("30d");
+export default function AdminRevenueDashboard({ user, token, filterCreatorNames }: { user: any; token: string; filterCreatorNames?: string[] }) {
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(29));
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
-  const [customStart, setCustomStart] = useState(() => getDaysAgoRange(30).start);
-  const [customEnd, setCustomEnd] = useState(() => getDaysAgoRange(30).end);
   const [drillDate, setDrillDate] = useState<string | null>(null);
 
-  const dateRange = useMemo(() => {
+  const effectiveDateRange = useMemo(() => {
     if (drillDate) return { start: drillDate, end: drillDate };
-    if (periodKey === "custom") return { start: customStart, end: customEnd };
-    const p = PERIODS.find((o) => o.key === periodKey);
-    return p ? { start: p.start, end: p.end } : PERIODS[3]; // default 30d
-  }, [periodKey, customStart, customEnd, drillDate]);
+    return dateRange;
+  }, [drillDate, dateRange]);
 
   const comparisonRange = useMemo(() => {
-    if (periodKey === "month" && !drillDate) return getPreviousMonthRange();
-    return getPreviousEquivalentRange(dateRange.start, dateRange.end);
-  }, [periodKey, drillDate, dateRange.start, dateRange.end]);
+    return getPreviousEquivalentRange(effectiveDateRange.start, effectiveDateRange.end);
+  }, [effectiveDateRange.start, effectiveDateRange.end]);
 
   // ── Queries ──
   const dashboard = useQuery(
     api.crm.analyticsV2.getDashboard,
-    token && dateRange.start
+    token && effectiveDateRange.start
       ? {
           token,
-          startDate: dateRange.start,
-          endDate: dateRange.end,
+          startDate: effectiveDateRange.start,
+          endDate: effectiveDateRange.end,
         }
       : "skip"
   );
@@ -176,28 +135,35 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
   );
   const trend = useQuery(
     api.crm.analyticsV2.getRevenueTrend,
-    token && dateRange.start
+    token && effectiveDateRange.start
       ? {
           token,
-          startDate: dateRange.start,
-          endDate: dateRange.end,
+          startDate: effectiveDateRange.start,
+          endDate: effectiveDateRange.end,
         }
       : "skip"
   );
   const creatorOverviewRows = useQuery(
     api.crm.analyticsV2.getCreatorOverviewTable,
-    token && dateRange.start
-      ? { token, startDate: dateRange.start, endDate: dateRange.end }
+    token && effectiveDateRange.start
+      ? { token, startDate: effectiveDateRange.start, endDate: effectiveDateRange.end }
       : "skip"
   );
   const syncStatus = useQuery(api.crm.analyticsV2.getSyncStatus, token ? { token } : "skip");
+
+  // ── Filter by accountIds (for manager dashboard) ──
+  const filteredCreatorRows = useMemo(() => {
+    const rows = creatorOverviewRows || [];
+    if (!filterCreatorNames || filterCreatorNames.length === 0) return rows;
+    return rows.filter((row: any) => filterCreatorNames.includes(row.creatorName));
+  }, [creatorOverviewRows, filterCreatorNames]);
   const subscriptions = useQuery(
     api.crm.analyticsV2.getTodaySubscriptions,
     token
       ? {
           token,
-          startDate: dateRange.start,
-          endDate: dateRange.end,
+          startDate: effectiveDateRange.start,
+          endDate: effectiveDateRange.end,
         }
       : "skip"
   );
@@ -238,23 +204,49 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
     return `${Math.floor(mins / 60)}h ${mins % 60}m ago`;
   }, [syncStatus]);
 
-  const totalTypeRevenue = dashboard
-    ? toNet(dashboard.subscriptionRevenue + dashboard.messageRevenue + dashboard.tipRevenue)
-    : 0;
+  // When filtering by accountIds, derive aggregates from filtered creator rows
+  const totalTypeRevenue = useMemo(() => {
+    if (filterCreatorNames && filterCreatorNames.length > 0) {
+      return filteredCreatorRows.reduce((sum: number, r: any) => sum + (r.subscriptionRevenue || 0) + (r.ppvRevenue || 0) + (r.tipsRevenue || 0), 0);
+    }
+    return dashboard ? toNet(dashboard.subscriptionRevenue + dashboard.messageRevenue + dashboard.tipRevenue) : 0;
+  }, [filterCreatorNames, filteredCreatorRows, dashboard]);
 
-  const currentRevenue = dashboard ? toNet(dashboard.netRevenue) : 0;
-  const previousRevenue = comparisonDashboard ? toNet(comparisonDashboard.netRevenue) : 0;
+  const currentRevenue = useMemo(() => {
+    if (filterCreatorNames && filterCreatorNames.length > 0) {
+      return filteredCreatorRows.reduce((sum: number, r: any) => sum + (r.totalRevenue || 0), 0);
+    }
+    return dashboard ? toNet(dashboard.netRevenue) : 0;
+  }, [filterCreatorNames, filteredCreatorRows, dashboard]);
+
+  const previousRevenue = useMemo(() => {
+    if (filterCreatorNames && filterCreatorNames.length > 0) {
+      return filteredCreatorRows.reduce((sum: number, r: any) => sum + (r.previousTotalRevenue || 0), 0);
+    }
+    return comparisonDashboard ? toNet(comparisonDashboard.netRevenue) : 0;
+  }, [filterCreatorNames, filteredCreatorRows, comparisonDashboard]);
   const revenueChangePct = previousRevenue > 0
     ? ((currentRevenue - previousRevenue) / previousRevenue) * 100
     : null;
 
-  const donutData = dashboard && totalTypeRevenue > 0
-    ? [
-        { name: "Subscriptions", value: toNet(dashboard.subscriptionRevenue), color: "#3b82f6" },
-        { name: "Messages (PPV)", value: toNet(dashboard.messageRevenue), color: "#f59e0b" },
-        { name: "Tips", value: toNet(dashboard.tipRevenue), color: "#22c55e" },
-      ]
-    : [];
+  const donutData = useMemo(() => {
+    if (filterCreatorNames && filterCreatorNames.length > 0 && totalTypeRevenue > 0) {
+      const subs = filteredCreatorRows.reduce((s: number, r: any) => s + (r.subscriptionRevenue || 0), 0);
+      const ppv = filteredCreatorRows.reduce((s: number, r: any) => s + (r.ppvRevenue || 0), 0);
+      const tips = filteredCreatorRows.reduce((s: number, r: any) => s + (r.tipsRevenue || 0), 0);
+      return [
+        { name: "Subscriptions", value: subs, color: "#3b82f6" },
+        { name: "Messages (PPV)", value: ppv, color: "#f59e0b" },
+        { name: "Tips", value: tips, color: "#22c55e" },
+      ];
+    }
+    if (!dashboard || totalTypeRevenue <= 0) return [];
+    return [
+      { name: "Subscriptions", value: toNet(dashboard.subscriptionRevenue), color: "#3b82f6" },
+      { name: "Messages (PPV)", value: toNet(dashboard.messageRevenue), color: "#f59e0b" },
+      { name: "Tips", value: toNet(dashboard.tipRevenue), color: "#22c55e" },
+    ];
+  }, [filterCreatorNames, filteredCreatorRows, totalTypeRevenue, dashboard]);
 
   const trendData = useMemo(() => {
     if (!trend) return [];
@@ -316,7 +308,7 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
       }}>
         <div>
           <h1 style={{ fontSize: "28px", fontWeight: "700", color: "#fff", margin: 0 }}>
-            {getGreeting()}, Preach Agency! 👑
+            {getGreeting()}, {filterCreatorNames ? user.name || "Manager" : "Preach Agency"}! {filterCreatorNames ? "📊" : "👑"}
           </h1>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
             <div style={{
@@ -331,64 +323,11 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          {/* Period Selector */}
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-            <div style={{ display: "flex", background: "#1e1e1e", borderRadius: "10px", border: "1px solid #333", overflow: "hidden" }}>
-              {PERIODS.map((p) => (
-                <button
-                  key={p.key}
-                  onClick={() => { setPeriodKey(p.key); setDrillDate(null); }}
-                  style={{
-                    padding: "10px 16px", fontSize: "13px", fontWeight: "600",
-                    color: periodKey === p.key && !drillDate ? "#1a1a1a" : "#a0a0a0",
-                    background: periodKey === p.key && !drillDate ? "#f1ae38" : "transparent",
-                    border: "none", cursor: "pointer", transition: "all 0.2s",
-                  }}
-                >
-                  {p.label}
-                </button>
-              ))}
-              <button
-                onClick={() => { setPeriodKey("custom"); setDrillDate(null); }}
-                style={{
-                  padding: "10px 16px", fontSize: "13px", fontWeight: "600",
-                  color: periodKey === "custom" && !drillDate ? "#1a1a1a" : "#a0a0a0",
-                  background: periodKey === "custom" && !drillDate ? "#f1ae38" : "transparent",
-                  border: "none", cursor: "pointer", transition: "all 0.2s",
-                }}
-              >
-                Custom
-              </button>
-            </div>
-            {periodKey === "custom" && !drillDate && (
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <input
-                  type="date"
-                  value={customStart}
-                  onChange={(e) => setCustomStart(e.target.value)}
-                  style={{
-                    padding: "8px 12px", fontSize: "13px", fontWeight: "500",
-                    background: "#1e1e1e", color: "#fff", border: "1px solid #333",
-                    borderRadius: "8px", outline: "none", colorScheme: "dark",
-                  }}
-                />
-                <span style={{ color: "#666", fontSize: "13px" }}>→</span>
-                <input
-                  type="date"
-                  value={customEnd}
-                  onChange={(e) => setCustomEnd(e.target.value)}
-                  style={{
-                    padding: "8px 12px", fontSize: "13px", fontWeight: "500",
-                    background: "#1e1e1e", color: "#fff", border: "1px solid #333",
-                    borderRadius: "8px", outline: "none", colorScheme: "dark",
-                  }}
-                />
-              </div>
-            )}
-          </div>
+          {/* Date Range Picker */}
+          <DateRangePicker value={dateRange} onChange={(r) => { setDateRange(r); setDrillDate(null); }} />
 
-          {/* Sync Button */}
-          <button
+          {/* Sync Button (admin only) */}
+          {user.role === "admin" && <button
             onClick={handleSync}
             disabled={syncing}
             style={{
@@ -400,7 +339,7 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
             }}
           >
             {syncing ? "⏳ Syncing..." : "🔄 Sync"}
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -450,7 +389,7 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
               borderRadius: "6px", cursor: "pointer",
             }}
           >
-            ✕ Back to {PERIODS.find((p) => p.key === periodKey)?.label || "Custom"}
+            ✕ Back to range
           </button>
         </div>
       )}
@@ -670,7 +609,7 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
             </tr>
           </thead>
           <tbody>
-            {(creatorOverviewRows || []).map((row: any) => (
+            {(filteredCreatorRows).map((row: any) => (
               <tr key={row.creatorId} style={{ borderBottom: "1px solid #242424" }}>
                 <td style={{ padding: "12px 10px", color: "#fff", fontWeight: 600 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -702,7 +641,7 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
               </tr>
             ))}
             {(() => {
-              const rows = creatorOverviewRows || [];
+              const rows = filteredCreatorRows;
               const total = rows.reduce((acc: any, row: any) => ({
                 totalRevenue: acc.totalRevenue + (row.totalRevenue || 0),
                 salesRevenue: acc.salesRevenue + (row.salesRevenue || 0),
