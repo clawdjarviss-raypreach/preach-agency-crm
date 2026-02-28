@@ -18,7 +18,7 @@ interface CrmUser {
 }
 
 const NAV_ITEMS = [
-  { href: "/manager-dashboard", label: "Manager Dashboard", emoji: "📈", enabled: true, roles: ["marketing_manager"] },
+  { href: "/manager-dashboard", label: "Traffic Dashboard", emoji: "📈", enabled: true, roles: ["marketing_manager", "admin"] },
   { href: "/dashboard", label: "Dashboard", emoji: "📊", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
   { href: "/creators", label: "Creators", emoji: "👤", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
   { href: "/reports", label: "Reports", emoji: "📝", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
@@ -32,6 +32,9 @@ const NAV_ITEMS = [
   { href: "/admin/imports", label: "Imports", emoji: "📥", enabled: true, roles: ["admin"] },
   { href: "/admin/of-api", label: "OF API", emoji: "💠", enabled: true, roles: ["admin", "manager"] },
   { href: "/admin/team", label: "Team", emoji: "👥", enabled: true, roles: ["admin"] },
+  { href: "/admin/members", label: "Members", emoji: "👤", enabled: true, roles: ["admin"] },
+  { href: "/admin/roles", label: "Roles", emoji: "🔐", enabled: true, roles: ["admin"] },
+  { href: "/admin/socials", label: "Socials", emoji: "📱", enabled: true, roles: ["admin"] },
 ];
 
 export default function CrmLayout({ children }: { children: React.ReactNode }) {
@@ -72,7 +75,7 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (pathname === "/manager-dashboard") {
+    if (pathname === "/manager-dashboard" && user.role !== "admin") {
       router.replace("/dashboard");
     }
   }, [user, pathname, router]);

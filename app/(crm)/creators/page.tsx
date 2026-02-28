@@ -12,10 +12,13 @@ export default function CreatorsPage() {
     if (userToken) setToken(userToken);
   }, []);
 
-  const creators = useQuery(
+  const allCreators = useQuery(
     api.crm.creators.list,
     token ? { token } : "skip"
   );
+
+  // Only show creators with OF API accounts
+  const creators = allCreators?.filter((c: any) => !!c.accountId);
 
   const activeShifts = useQuery(
     api.crm.shifts.getAllActive,

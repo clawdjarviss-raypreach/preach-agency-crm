@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import {
@@ -76,6 +76,15 @@ function LinkSparkline({ token, linkId }: { token: string; linkId: any }) {
   );
 }
 
+const COL_STYLES = {
+  linkName: { width: "30%", padding: "10px 10px", textAlign: "left" as const },
+  creator: { width: "18%", padding: "10px 10px", textAlign: "left" as const },
+  clicks: { width: "12%", padding: "10px 10px", textAlign: "right" as const },
+  subs: { width: "14%", padding: "10px 10px", textAlign: "right" as const },
+  conv: { width: "12%", padding: "10px 10px", textAlign: "right" as const },
+  synced: { width: "14%", padding: "10px 10px", textAlign: "right" as const },
+};
+
 export default function TrackingLinksCard({ token, isAdmin }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -122,26 +131,31 @@ export default function TrackingLinksCard({ token, isAdmin }: Props) {
         </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          {grouped.map(([creator, creatorLinks]) => (
-            <div key={creator} style={{ marginBottom: "16px" }}>
-              {grouped.length > 1 && (
-                <div style={{
-                  fontSize: "11px", color: "#f1ae38", fontWeight: 600,
-                  textTransform: "uppercase", letterSpacing: "0.5px",
-                  padding: "8px 10px", marginBottom: "4px",
-                }}>
-                  {creator}
-                </div>
-              )}
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "600px" }}>
-                <thead>
-                  <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-                    {["Link Name", "Creator", "Clicks", "Subscribers", "Conv. Rate", "Last Synced"].map((h) => (
-                      <th key={h} style={{ padding: "10px 10px", fontSize: "11px", color: "#666", fontWeight: 600 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "700px", tableLayout: "fixed" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #2a2a2a" }}>
+                <th style={{ ...COL_STYLES.linkName, fontSize: "11px", color: "#666", fontWeight: 600 }}>Link Name</th>
+                <th style={{ ...COL_STYLES.creator, fontSize: "11px", color: "#666", fontWeight: 600 }}>Creator</th>
+                <th style={{ ...COL_STYLES.clicks, fontSize: "11px", color: "#666", fontWeight: 600 }}>Clicks</th>
+                <th style={{ ...COL_STYLES.subs, fontSize: "11px", color: "#666", fontWeight: 600 }}>Subscribers</th>
+                <th style={{ ...COL_STYLES.conv, fontSize: "11px", color: "#666", fontWeight: 600 }}>Conv. Rate</th>
+                <th style={{ ...COL_STYLES.synced, fontSize: "11px", color: "#666", fontWeight: 600 }}>Last Synced</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grouped.map(([creator, creatorLinks]) => (
+                <Fragment key={creator}>
+                  {grouped.length > 1 && (
+                    <tr>
+                      <td colSpan={6} style={{
+                        fontSize: "11px", color: "#f1ae38", fontWeight: 600,
+                        textTransform: "uppercase", letterSpacing: "0.5px",
+                        padding: "12px 10px 4px",
+                      }}>
+                        {creator}
+                      </td>
+                    </tr>
+                  )}
                   {creatorLinks.map((link: any) => {
                     const id = link._id?.toString() || link.linkId;
                     const clicks = link.clicks ?? link.totalClicks ?? 0;
@@ -155,47 +169,63 @@ export default function TrackingLinksCard({ token, isAdmin }: Props) {
                     const isExpanded = expandedId === id;
 
                     return (
-                      <tr key={id} style={{ cursor: "pointer" }} onClick={() => toggleExpand(id)}>
-                        <td colSpan={6} style={{ padding: 0 }}>
-                          <div>
-                            <div style={{
-                              display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1.2fr",
-                              padding: "12px 10px", borderBottom: "1px solid #242424",
-                              transition: "background 0.15s",
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = "#242424")}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                            >
-                              <div style={{ color: "#fff", fontWeight: 500, display: "flex", alignItems: "center", gap: "6px" }}>
-                                <span style={{ fontSize: "10px", color: "#666", transition: "transform 0.2s", transform: isExpanded ? "rotate(90deg)" : "rotate(0)" }}>▶</span>
-                                {link.name || link.url || "Unnamed"}
-                              </div>
-                              <div style={{ color: "#a0a0a0", fontSize: "13px" }}>{(link as any).creatorName || creator}</div>
-                              <div style={{ color: "#fff", fontWeight: 600 }}>{clicks.toLocaleString()}</div>
-                              <div style={{ color: "#fff", fontWeight: 600 }}>{subs.toLocaleString()}</div>
-                              <div style={{ color: subs > 0 ? "#22c55e" : "#666", fontWeight: 600 }}>{convRate}</div>
-                              <div style={{ color: "#a0a0a0", fontSize: "12px" }}>{lastSynced}</div>
+                      <Fragment key={id}>
+                        <tr
+                          style={{ cursor: "pointer", borderBottom: isExpanded ? "none" : "1px solid #242424" }}
+                          onClick={() => toggleExpand(id)}
+                          onMouseEnter={(e) => {
+                            for (const cell of Array.from(e.currentTarget.children)) {
+                              (cell as HTMLElement).style.background = "#242424";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            for (const cell of Array.from(e.currentTarget.children)) {
+                              (cell as HTMLElement).style.background = "transparent";
+                            }
+                          }}
+                        >
+                          <td style={{ ...COL_STYLES.linkName, color: "#fff", fontWeight: 500, transition: "background 0.15s" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                              <span style={{ fontSize: "10px", color: "#666", transition: "transform 0.2s", transform: isExpanded ? "rotate(90deg)" : "rotate(0)", flexShrink: 0 }}>▶</span>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{link.name || link.url || "Unnamed"}</span>
                             </div>
-                            {isExpanded && (
-                              <div style={{
-                                padding: "12px 16px 16px", background: "#161616",
-                                borderBottom: "1px solid #2a2a2a",
-                              }}>
-                                <div style={{ fontSize: "11px", color: "#666", marginBottom: "8px", textTransform: "uppercase" }}>
-                                  30-Day Trend
-                                </div>
-                                <LinkSparkline token={token} linkId={link._id} />
+                          </td>
+                          <td style={{ ...COL_STYLES.creator, color: "#a0a0a0", fontSize: "13px", transition: "background 0.15s" }}>
+                            {(link as any).creatorName || creator}
+                          </td>
+                          <td style={{ ...COL_STYLES.clicks, color: "#fff", fontWeight: 600, fontVariantNumeric: "tabular-nums", transition: "background 0.15s" }}>
+                            {clicks.toLocaleString()}
+                          </td>
+                          <td style={{ ...COL_STYLES.subs, color: "#fff", fontWeight: 600, fontVariantNumeric: "tabular-nums", transition: "background 0.15s" }}>
+                            {subs.toLocaleString()}
+                          </td>
+                          <td style={{ ...COL_STYLES.conv, color: subs > 0 ? "#22c55e" : "#666", fontWeight: 600, fontVariantNumeric: "tabular-nums", transition: "background 0.15s" }}>
+                            {convRate}
+                          </td>
+                          <td style={{ ...COL_STYLES.synced, color: "#a0a0a0", fontSize: "12px", transition: "background 0.15s" }}>
+                            {lastSynced}
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={6} style={{
+                              padding: "12px 16px 16px", background: "#161616",
+                              borderBottom: "1px solid #2a2a2a",
+                            }}>
+                              <div style={{ fontSize: "11px", color: "#666", marginBottom: "8px", textTransform: "uppercase" }}>
+                                30-Day Trend
                               </div>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
+                              <LinkSparkline token={token} linkId={link._id} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-          ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

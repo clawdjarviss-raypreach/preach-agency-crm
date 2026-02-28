@@ -217,6 +217,7 @@ export default function MembersPage() {
   const [creatorAccess, setCreatorAccess] = useState<Record<string, AccessAxes>>({});
   const [editTrackingLinkIds, setEditTrackingLinkIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [editKey, setEditKey] = useState(0);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
   useEffect(() => {
@@ -258,6 +259,11 @@ export default function MembersPage() {
     token && editMember ? { token, userId: editMember._id } : "skip"
   ) as Id<"crm_of_tracking_links">[] | undefined;
 
+  const existingAccess = useQuery(
+    api.crm.teamManagement.getAllCreatorAccess,
+    token && editMember ? { token, userId: editMember._id } : "skip"
+  ) as Record<string, AccessAxes> | undefined;
+
   const updateMemberMut = useMutation(api.crm.teamManagement.updateMember);
   const doRemoveMember = useMutation(api.crm.teamManagement.removeMember);
   const setCreatorAccessMut = useMutation(api.crm.teamManagement.setCreatorAccess);
@@ -296,9 +302,16 @@ export default function MembersPage() {
     // Filter assigned creators to only OF API creators
     const validCreatorIds = new Set((creators || []).map((c) => String(c.id)));
     setEditCreatorIds((m.assignedCreators || []).filter((id: string) => validCreatorIds.has(id)));
-    setCreatorAccess({});
+    setEditKey(k => k + 1);
     setEditTrackingLinkIds([]);
   };
+
+  // Load existing creator access axes when they arrive
+  useEffect(() => {
+    if (existingAccess && editMember) {
+      setCreatorAccess(existingAccess);
+    }
+  }, [existingAccess, editMember, editKey]);
 
   // Load current tracking link assignments when they arrive
   useEffect(() => {
