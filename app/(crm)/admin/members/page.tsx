@@ -24,9 +24,19 @@ interface MemberDoc {
   role: RoleDoc | null;
 }
 
+// NOTE: api.crm.creators.list returns `id` (not `_id`) and includes `accountId`
 interface CreatorDoc {
-  _id: Id<"crm_creators">;
+  id: Id<"crm_creators">;
   name: string;
+  accountId?: string;
+}
+
+interface TrackingLinkDoc {
+  _id: Id<"crm_of_tracking_links">;
+  accountId: string;
+  name: string;
+  url: string;
+  creatorId?: Id<"crm_creators">;
 }
 
 interface AccessAxes {
@@ -93,14 +103,14 @@ function RoleBadge({ role }: { role: RoleDoc | null }) {
 
 function CreatorAvatars({ ids, creators }: { ids: string[]; creators: CreatorDoc[] }) {
   const MAX = 3;
-  const mapped = ids.map((id) => creators.find((c) => String(c._id) === id)).filter(Boolean) as CreatorDoc[];
+  const mapped = ids.map((id) => creators.find((c) => String(c.id) === id)).filter(Boolean) as CreatorDoc[];
   const shown = mapped.slice(0, MAX);
   const overflow = mapped.length - MAX;
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
       {shown.map((c, i) => (
-        <div key={String(c._id)} style={{ marginLeft: i > 0 ? -8 : 0, zIndex: MAX - i }}>
+        <div key={String(c.id)} style={{ marginLeft: i > 0 ? -8 : 0, zIndex: MAX - i }}>
           <AvatarInitial name={c.name} size={26} />
         </div>
       ))}
@@ -205,6 +215,7 @@ export default function MembersPage() {
   const [editRoleId, setEditRoleId] = useState<string>("");
   const [editCreatorIds, setEditCreatorIds] = useState<string[]>([]);
   const [creatorAccess, setCreatorAccess] = useState<Record<string, AccessAxes>>({});
+  const [editTrackingLinkIds, setEditTrackingLinkIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
@@ -227,13 +238,31 @@ export default function MembersPage() {
         }
       : "skip"
   ) as MemberDoc[] | undefined;
-  const creators = useQuery(api.crm.creators.list, token ? { token } : "skip") as CreatorDoc[] | undefined;
+  const allCreators = useQuery(api.crm.creators.list, token ? { token } : "skip") as CreatorDoc[] | undefined;
   const inviteLink = useQuery(api.crm.teamManagement.getInviteLink, token ? { token } : "skip");
+
+  // Filter creators to only those with an OF API account (have accountId)
+  const creators = useMemo(() => {
+    if (!allCreators) return undefined;
+    return allCreators.filter((c) => !!c.accountId);
+  }, [allCreators]);
+
+  // Tracking links queries (only when editing a member)
+  const allTrackingLinks = useQuery(
+    api.crm.trackingLinks.listTrackingLinksForAssignment,
+    token && editMember ? { token } : "skip"
+  ) as TrackingLinkDoc[] | undefined;
+
+  const currentAssignments = useQuery(
+    api.crm.trackingLinks.getAssignmentsForUser,
+    token && editMember ? { token, userId: editMember._id } : "skip"
+  ) as Id<"crm_of_tracking_links">[] | undefined;
 
   const updateMemberMut = useMutation(api.crm.teamManagement.updateMember);
   const doRemoveMember = useMutation(api.crm.teamManagement.removeMember);
   const setCreatorAccessMut = useMutation(api.crm.teamManagement.setCreatorAccess);
   const resetInviteLinkMut = useMutation(api.crm.teamManagement.resetInviteLink);
+  const setTrackingAssignmentsMut = useMutation(api.crm.trackingLinks.setAssignmentsForUser);
 
   const inviteUrl = useMemo(() => {
     if (!inviteLink?.token) return "";
@@ -241,12 +270,42 @@ export default function MembersPage() {
     return `${base}/crm/invite/${inviteLink.token}`;
   }, [inviteLink]);
 
+  // Group tracking links by creator, only for creators where user has trackingLinks axis enabled
+  const trackingLinksByCreator = useMemo(() => {
+    if (!allTrackingLinks || !creators) return [];
+    const groups: { creatorId: string; creatorName: string; links: TrackingLinkDoc[] }[] = [];
+    for (const cid of editCreatorIds) {
+      const axes = creatorAccess[cid];
+      if (!axes?.trackingLinks) continue;
+      const creator = creators.find((c) => String(c.id) === cid);
+      if (!creator) continue;
+      const links = allTrackingLinks.filter((l) => {
+        if (l.creatorId && String(l.creatorId) === cid) return true;
+        // Backward-compatible fallback while older tracking links are backfilled with creatorId.
+        return !l.creatorId && !!creator.accountId && l.accountId === creator.accountId;
+      });
+      if (links.length === 0) continue;
+      groups.push({ creatorId: cid, creatorName: creator.name, links });
+    }
+    return groups;
+  }, [allTrackingLinks, creators, editCreatorIds, creatorAccess]);
+
   const openEdit = (m: MemberDoc) => {
     setEditMember(m);
     setEditRoleId(m.role ? String(m.role._id) : "");
-    setEditCreatorIds(m.assignedCreators || []);
+    // Filter assigned creators to only OF API creators
+    const validCreatorIds = new Set((creators || []).map((c) => String(c.id)));
+    setEditCreatorIds((m.assignedCreators || []).filter((id: string) => validCreatorIds.has(id)));
     setCreatorAccess({});
+    setEditTrackingLinkIds([]);
   };
+
+  // Load current tracking link assignments when they arrive
+  useEffect(() => {
+    if (currentAssignments && editMember) {
+      setEditTrackingLinkIds(currentAssignments.map(String));
+    }
+  }, [currentAssignments, editMember]);
 
   const handleSaveEdit = async () => {
     if (!editMember) return;
@@ -266,6 +325,12 @@ export default function MembersPage() {
           axes,
         });
       }
+      // Save tracking link assignments
+      await setTrackingAssignmentsMut({
+        token,
+        userId: editMember._id,
+        trackingLinkIds: editTrackingLinkIds as Id<"crm_of_tracking_links">[],
+      });
       setEditMember(null);
     } catch (err: any) {
       alert(err.message || "Failed to save");
@@ -311,7 +376,7 @@ export default function MembersPage() {
         </select>
         <select value={creatorFilter} onChange={(e) => setCreatorFilter(e.target.value)} style={selectStyle}>
           <option value="all">All Creators</option>
-          {(creators || []).map((c) => <option key={String(c._id)} value={String(c._id)}>{c.name}</option>)}
+          {(creators || []).map((c) => <option key={String(c.id)} value={String(c.id)}>{c.name}</option>)}
         </select>
         <input placeholder="Search by name, username, email…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 13 }} />
       </div>
@@ -373,7 +438,7 @@ export default function MembersPage() {
           <label style={labelStyle}>Assigned Creators</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginBottom: 16, maxHeight: 200, overflowY: "auto" }}>
             {(creators || []).map((c) => {
-              const cid = String(c._id);
+              const cid = String(c.id);
               const checked = editCreatorIds.includes(cid);
               return (
                 <label key={cid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${checked ? "#3b82f6" : "var(--border)"}`, background: checked ? "rgba(59,130,246,0.08)" : "transparent", cursor: "pointer", fontSize: 13 }}>
@@ -387,10 +452,10 @@ export default function MembersPage() {
 
           {editCreatorIds.length > 0 && (
             <>
-              <label style={labelStyle}>Creator Access</label>
+              <label style={labelStyle}>Access Axes</label>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                 {editCreatorIds.map((cid) => {
-                  const creator = (creators || []).find((c) => String(c._id) === cid);
+                  const creator = (creators || []).find((c) => String(c.id) === cid);
                   const axes = creatorAccess[cid] || { socials: false, revenue: false, trackingLinks: false, subs: false };
                   const update = (field: keyof AccessAxes) => setCreatorAccess((prev) => ({ ...prev, [cid]: { ...axes, [field]: !axes[field] } }));
                   return (
@@ -407,6 +472,36 @@ export default function MembersPage() {
                     </div>
                   );
                 })}
+              </div>
+            </>
+          )}
+
+          {/* Assigned Tracking Links */}
+          {trackingLinksByCreator.length > 0 && (
+            <>
+              <label style={labelStyle}>Assigned Tracking Links</label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+                {trackingLinksByCreator.map((group) => (
+                  <div key={group.creatorId} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg)" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                      <AvatarInitial name={group.creatorName} size={20} />
+                      {group.creatorName}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {group.links.map((link) => {
+                        const lid = String(link._id);
+                        const checked = editTrackingLinkIds.includes(lid);
+                        return (
+                          <label key={lid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, border: `1px solid ${checked ? "#8b5cf6" : "var(--border)"}`, background: checked ? "rgba(139,92,246,0.08)" : "transparent", cursor: "pointer", fontSize: 12 }}>
+                            <input type="checkbox" checked={checked} onChange={() => setEditTrackingLinkIds((prev) => checked ? prev.filter((x) => x !== lid) : [...prev, lid])} />
+                            <span style={{ fontWeight: 500 }}>{link.name}</span>
+                            <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: "auto" }}>{link.url}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             </>
           )}
