@@ -656,21 +656,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
         </div>
       </div>
 
-      {/* ─── Avg Fan Spend ─── */}
-      <div className="admin-rev-stats-row" style={{ display: "grid", gridTemplateColumns: "1fr", gap: "16px", marginBottom: "24px" }}>
-        <div style={card()}>
-          <div style={{ fontSize: "11px", color: "#a0a0a0", fontWeight: "500", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "6px" }}>
-            Avg Fan Spend
-          </div>
-          <div style={{ fontSize: "22px", fontWeight: "700", color: "#f1ae38" }}>
-            {dashboard ? formatCurrency(toNet(dashboard.avgFanSpend || 0)) : "—"}
-          </div>
-          <div style={{ marginTop: "6px", fontSize: "12px", color: "#777" }}>
-            Total sales revenue ÷ new subscriptions for selected period
-          </div>
-        </div>
-      </div>
-
       {/* ─── Creator Overview Table ─── */}
       <div style={{ ...card(), marginBottom: "24px", overflowX: "auto" }}>
         <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
@@ -679,7 +664,7 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "980px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {['Creator', 'Total Revenue', 'PPV Revenue', 'Subscription Revenue', 'Tips Revenue', 'New Fans', 'Avg Fan Spend'].map((h) => (
+              {['Creator', 'Total Revenue', 'New Fans', 'Sales Revenue', 'Subscription Revenue', 'Avg Fan Spend'].map((h) => (
                 <th key={h} style={{ padding: "12px 10px", fontSize: "12px", color: "#a0a0a0", fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
@@ -704,9 +689,6 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
                     {typeof row.totalRevenueChangePct === 'number' ? ` (${row.totalRevenueChangePct >= 0 ? '+' : ''}${row.totalRevenueChangePct.toFixed(1)}%)` : ''}
                   </div>
                 </td>
-                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.ppvRevenue || 0)}</td>
-                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.subscriptionRevenue || 0)}</td>
-                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.tipsRevenue || 0)}</td>
                 <td style={{ padding: "12px 10px", color: "#fff" }}>
                   <div style={{ fontWeight: 600 }}>{(row.newFans || 0).toLocaleString()}</div>
                   <div style={{ fontSize: "12px", color: row.newFansChange >= 0 ? "#22c55e" : "#ef4444" }}>
@@ -714,46 +696,27 @@ export default function AdminRevenueDashboard({ user, token }: { user: any; toke
                     {typeof row.newFansChangePct === 'number' ? ` (${row.newFansChangePct >= 0 ? '+' : ''}${row.newFansChangePct.toFixed(1)}%)` : ''}
                   </div>
                 </td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.salesRevenue || 0)}</td>
+                <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.subscriptionRevenue || 0)}</td>
                 <td style={{ padding: "12px 10px", color: "#fff" }}>{formatCurrency(row.avgFanSpend || 0)}</td>
               </tr>
             ))}
             {(() => {
               const rows = creatorOverviewRows || [];
-              const count = rows.length || 1;
               const total = rows.reduce((acc: any, row: any) => ({
                 totalRevenue: acc.totalRevenue + (row.totalRevenue || 0),
-                ppvRevenue: acc.ppvRevenue + (row.ppvRevenue || 0),
+                salesRevenue: acc.salesRevenue + (row.salesRevenue || 0),
                 subscriptionRevenue: acc.subscriptionRevenue + (row.subscriptionRevenue || 0),
-                tipsRevenue: acc.tipsRevenue + (row.tipsRevenue || 0),
                 newFans: acc.newFans + (row.newFans || 0),
-                avgFanSpend: acc.avgFanSpend + (row.avgFanSpend || 0),
-              }), { totalRevenue: 0, ppvRevenue: 0, subscriptionRevenue: 0, tipsRevenue: 0, newFans: 0, avgFanSpend: 0 });
-              const avg = {
-                totalRevenue: total.totalRevenue / count,
-                ppvRevenue: total.ppvRevenue / count,
-                subscriptionRevenue: total.subscriptionRevenue / count,
-                tipsRevenue: total.tipsRevenue / count,
-                newFans: total.newFans / count,
-                avgFanSpend: total.avgFanSpend / count,
-              };
+              }), { totalRevenue: 0, salesRevenue: 0, subscriptionRevenue: 0, newFans: 0 });
               return (<>
                 <tr style={{ borderTop: "2px solid #333" }}>
-                  <td style={{ padding: "12px 10px", color: "#a0a0a0", fontWeight: 700 }}>Average</td>
-                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.totalRevenue)}</td>
-                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.ppvRevenue)}</td>
-                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.subscriptionRevenue)}</td>
-                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.tipsRevenue)}</td>
-                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{avg.newFans.toFixed(1)}</td>
-                  <td style={{ padding: "12px 10px", color: "#a0a0a0" }}>{formatCurrency(avg.avgFanSpend)}</td>
-                </tr>
-                <tr>
                   <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>Total</td>
                   <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.totalRevenue)}</td>
-                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.ppvRevenue)}</td>
-                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.subscriptionRevenue)}</td>
-                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.tipsRevenue)}</td>
                   <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{total.newFans.toLocaleString()}</td>
-                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.newFans > 0 ? total.totalRevenue / total.newFans : 0)}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.salesRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.subscriptionRevenue)}</td>
+                  <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>{formatCurrency(total.newFans > 0 ? total.salesRevenue / total.newFans : 0)}</td>
                 </tr>
               </>);
             })()}
