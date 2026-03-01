@@ -93,19 +93,22 @@ function KpiCard({ label, value, icon }: { label: string; value: string | number
   );
 }
 
-/* ─── IG Expandable Account Row ─── */
+/* ─── IG Expandable Account Row (Redesigned) ─── */
 function IgAccountRow({
   account,
   stats,
   token,
   dateRange,
+  colorIndex,
 }: {
   account: any;
   stats: any;
   token: string;
   dateRange: DateRange;
+  colorIndex: number;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [reelSort, setReelSort] = useState<"views" | "likes" | "comments" | "date">("views");
 
   const reels = useQuery(
     api.crm.igQueries.getIgReels,
@@ -113,7 +116,7 @@ function IgAccountRow({
       ? {
           token,
           igAccountId: account._id as Id<"crm_ig_accounts">,
-          sortBy: "views" as const,
+          sortBy: reelSort,
           order: "desc" as const,
           limit: 10,
           startDate: dateRange.start,
@@ -122,59 +125,131 @@ function IgAccountRow({
       : "skip"
   );
 
+  const followersDelta = stats?.followersDelta ?? 0;
+  const followerGrowth = account.followers > 0 ? ((followersDelta / account.followers) * 100).toFixed(1) : "0.0";
+
   return (
     <>
       <tr
         onClick={() => setExpanded(!expanded)}
-        style={{ borderBottom: "1px solid #242424", cursor: "pointer" }}
+        style={{ borderBottom: "1px solid #1C2A3A", cursor: "pointer", transition: "background 0.15s" }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = "#1a2535")}
+        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        <td style={{ padding: "12px 10px", color: "#fff", fontWeight: 600 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ color: "#666", fontSize: "10px" }}>{expanded ? "▼" : "▶"}</span>
+        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 600 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ color: "#666", fontSize: "10px", transition: "transform 0.2s", transform: expanded ? "rotate(90deg)" : "none" }}>▶</span>
+            <div style={{ width: "10px", height: "10px", borderRadius: "3px", background: CREATOR_COLORS[colorIndex % CREATOR_COLORS.length], flexShrink: 0 }} />
             @{account.username}
           </div>
         </td>
-        <td style={{ padding: "12px 10px", color: "#fff" }}>{(stats?.views ?? 0).toLocaleString()}</td>
-        <td style={{ padding: "12px 10px", color: "#fff" }}>{(stats?.likes ?? 0).toLocaleString()}</td>
-        <td style={{ padding: "12px 10px", color: "#fff" }}>{(stats?.comments ?? 0).toLocaleString()}</td>
-        <td style={{ padding: "12px 10px", color: "#fff" }}>{stats?.reelCount ?? 0}</td>
+        <td style={{ padding: "14px 12px" }}>
+          <span style={{ color: followersDelta >= 0 ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
+            {followersDelta >= 0 ? "+" : ""}{followersDelta.toLocaleString()}
+          </span>
+          <span style={{ color: "#666", fontSize: "11px", marginLeft: "6px" }}>({followerGrowth}%)</span>
+        </td>
+        <td style={{ padding: "14px 12px" }}>
+          <span style={{
+            background: "#22c55e20", color: "#22c55e", padding: "3px 10px",
+            borderRadius: "12px", fontSize: "11px", fontWeight: 600,
+          }}>Active</span>
+        </td>
+        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{(stats?.views ?? 0).toLocaleString()}</td>
+        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{(stats?.likes ?? 0).toLocaleString()}</td>
+        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{(stats?.comments ?? 0).toLocaleString()}</td>
+        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{stats?.reelCount ?? 0}</td>
       </tr>
       {expanded && (
-        <tr style={{ borderBottom: "1px solid #242424" }}>
-          <td colSpan={5} style={{ padding: "12px 10px", background: "#161616" }}>
+        <tr style={{ borderBottom: "1px solid #1C2A3A" }}>
+          <td colSpan={7} style={{ padding: "16px", background: "#0a1219" }}>
+            {/* Sort controls */}
+            <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "center" }}>
+              <span style={{ color: "#666", fontSize: "12px", marginRight: "4px" }}>Sort by:</span>
+              {(["views", "likes", "comments", "date"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={(e) => { e.stopPropagation(); setReelSort(s); }}
+                  style={{
+                    padding: "4px 12px", fontSize: "11px", fontWeight: 500,
+                    color: reelSort === s ? "#0F1923" : "#999",
+                    background: reelSort === s ? "#f1ae38" : "#1C2A3A",
+                    border: "none", borderRadius: "14px", cursor: "pointer",
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
             {!reels ? (
               <div style={{ color: "#666", fontSize: "12px" }}>Loading reels…</div>
             ) : reels.length === 0 ? (
               <div style={{ color: "#666", fontSize: "12px" }}>No reels in this period</div>
             ) : (
-              <div style={{ display: "flex", gap: "12px", overflowX: "auto", paddingBottom: "8px" }}>
-                {reels.map((reel: any) => (
-                  <div
-                    key={reel._id}
-                    style={{
-                      minWidth: "140px",
-                      background: "#1e1e1e",
-                      borderRadius: "10px",
-                      padding: "10px",
-                      border: "1px solid #2a2a2a",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <div style={{
-                      width: "100%", height: "80px", background: "#2a2a2a",
-                      borderRadius: "6px", marginBottom: "8px",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      color: "#555", fontSize: "20px",
-                    }}>
-                      🎬
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+                gap: "12px",
+              }}>
+                {reels.map((reel: any) => {
+                  const postedDate = reel.postedAt ? new Date(reel.postedAt) : null;
+                  const dateLabel = postedDate
+                    ? `${String(postedDate.getDate()).padStart(2, "0")}.${String(postedDate.getMonth() + 1).padStart(2, "0")}.`
+                    : "";
+                  return (
+                    <div
+                      key={reel._id}
+                      style={{
+                        background: "#1C2A3A",
+                        borderRadius: "10px",
+                        overflow: "hidden",
+                        border: "1px solid #253545",
+                      }}
+                    >
+                      {/* Thumbnail */}
+                      <div style={{
+                        width: "100%", height: "120px", background: "#253545",
+                        position: "relative", overflow: "hidden",
+                      }}>
+                        {reel.thumbnailUrl ? (
+                          <img
+                            src={reel.thumbnailUrl}
+                            alt=""
+                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          />
+                        ) : (
+                          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: "24px" }}>
+                            🎬
+                          </div>
+                        )}
+                        {/* Date overlay */}
+                        {dateLabel && (
+                          <div style={{
+                            position: "absolute", top: "6px", left: "6px",
+                            background: "rgba(0,0,0,0.7)", color: "#fff",
+                            padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
+                          }}>
+                            {dateLabel}
+                          </div>
+                        )}
+                      </div>
+                      {/* Stats overlay */}
+                      <div style={{ padding: "10px", display: "flex", flexDirection: "column", gap: "3px" }}>
+                        <div style={{ fontSize: "11px", color: "#a0a0a0" }}>
+                          <span style={{ color: "#22c55e" }}>+{(reel.views || 0).toLocaleString()}</span> views
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#a0a0a0" }}>
+                          <span style={{ color: "#ef4444" }}>+{(reel.likes || 0).toLocaleString()}</span> likes
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#a0a0a0" }}>
+                          <span style={{ color: "#3b82f6" }}>+{(reel.comments || 0).toLocaleString()}</span> comments
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ fontSize: "11px", color: "#a0a0a0", lineHeight: "1.5" }}>
-                      <div>👁 {(reel.views || 0).toLocaleString()}</div>
-                      <div>❤️ {(reel.likes || 0).toLocaleString()}</div>
-                      <div>💬 {(reel.comments || 0).toLocaleString()}</div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </td>
@@ -184,7 +259,6 @@ function IgAccountRow({
   );
 }
 
-/* ─── Instagram Analytics Section ─── */
 /* ─── Donut Chart with Legend ─── */
 function DonutWithLegend({
   title,
@@ -200,7 +274,7 @@ function DonutWithLegend({
         {title}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-        <div style={{ width: "140px", height: "140px", flexShrink: 0 }}>
+        <div style={{ width: "160px", height: "160px", flexShrink: 0 }}>
           {total > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -210,8 +284,8 @@ function DonutWithLegend({
                   nameKey="name"
                   cx="50%"
                   cy="50%"
-                  innerRadius={40}
-                  outerRadius={65}
+                  innerRadius={45}
+                  outerRadius={72}
                   strokeWidth={0}
                 >
                   {data.filter(d => d.value > 0).map((entry, i) => (
@@ -220,7 +294,7 @@ function DonutWithLegend({
                 </Pie>
                 <Tooltip
                   formatter={(value) => formatNumber(Number(value ?? 0))}
-                  contentStyle={{ background: "#1e1e1e", border: "1px solid #333", borderRadius: "8px", fontSize: "12px", color: "#fff" }}
+                  contentStyle={{ background: "#1C2A3A", border: "1px solid #253545", borderRadius: "8px", fontSize: "12px", color: "#fff" }}
                   itemStyle={{ color: "#fff" }}
                 />
               </PieChart>
@@ -232,8 +306,8 @@ function DonutWithLegend({
           )}
         </div>
         <div style={{
-          flex: 1, maxHeight: "140px", overflowY: "auto",
-          display: "flex", flexDirection: "column", gap: "4px",
+          flex: 1, maxHeight: "160px", overflowY: "auto",
+          display: "flex", flexDirection: "column", gap: "6px",
           paddingRight: "4px",
         }}>
           {data.map((entry, i) => (
@@ -242,7 +316,10 @@ function DonutWithLegend({
               <span style={{ color: "#ccc", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {entry.name}
               </span>
-              <span style={{ color: "#a0a0a0", flexShrink: 0 }}>
+              <span style={{ color: "#f1ae38", fontWeight: 600, flexShrink: 0 }}>
+                {formatNumber(entry.value)}
+              </span>
+              <span style={{ color: "#666", flexShrink: 0, fontSize: "11px" }}>
                 {total > 0 ? Math.round((entry.value / total) * 100) : 0}%
               </span>
             </div>
@@ -253,6 +330,7 @@ function DonutWithLegend({
   );
 }
 
+/* ─── Instagram Analytics Section (Redesigned) ─── */
 function InstagramAnalyticsSection({ token, dateRange }: { token: string; dateRange: DateRange }) {
   const [selectedCreator, setSelectedCreator] = useState<string>("all");
   const [showAll, setShowAll] = useState(false);
@@ -318,6 +396,7 @@ function InstagramAnalyticsSection({ token, dateRange }: { token: string; dateRa
   const displayedAccounts = showAll ? sortedAccounts : sortedAccounts.slice(0, 30);
   const totals = igReelStats?.totals;
 
+  // Donut chart data: views and followers per account
   const pieChartData = useMemo(() => {
     if (!igReelStats?.byAccount || !igAccounts) return { viewsData: [], followersData: [] };
     const accountMap = new Map<string, any>(igAccounts.map((a: any) => [String(a._id), a]));
@@ -328,20 +407,19 @@ function InstagramAnalyticsSection({ token, dateRange }: { token: string; dateRa
       const name = account?.creatorName || account?.username || "Unknown";
       const color = CREATOR_COLORS[i % CREATOR_COLORS.length];
       viewsData.push({ name, value: stat.views, color });
-      followersData.push({ name, value: Math.max(0, account?.followers || 0), color });
+      followersData.push({ name, value: Math.max(0, stat.followersDelta || 0), color });
     });
     return { viewsData, followersData };
   }, [igReelStats, igAccounts]);
 
-
   return (
     <div>
       <div style={{
-        borderTop: "1px solid #2a2a2a", marginBottom: "28px", paddingTop: "28px",
+        borderTop: "1px solid #1C2A3A", marginBottom: "28px", paddingTop: "28px",
       }}>
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
-          flexWrap: "wrap", gap: "12px", marginBottom: "20px",
+          flexWrap: "wrap", gap: "12px", marginBottom: "24px",
         }}>
           <h2 style={{ fontSize: "20px", fontWeight: "700", color: "#fff", margin: 0 }}>
             📸 Instagram Analytics
@@ -350,7 +428,7 @@ function InstagramAnalyticsSection({ token, dateRange }: { token: string; dateRa
             value={selectedCreator}
             onChange={(e) => { setSelectedCreator(e.target.value); setShowAll(false); }}
             style={{
-              background: "#1e1e1e", color: "#fff", border: "1px solid #2a2a2a",
+              background: "#1C2A3A", color: "#fff", border: "1px solid #253545",
               borderRadius: "8px", padding: "8px 12px", fontSize: "13px",
               cursor: "pointer",
             }}
@@ -363,65 +441,92 @@ function InstagramAnalyticsSection({ token, dateRange }: { token: string; dateRa
         </div>
       </div>
 
+      {/* A. KPI Cards Row */}
       {totals && (
         <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: "16px", marginBottom: "24px",
+          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gap: "14px", marginBottom: "24px",
         }}>
-          <KpiCard icon="👁" label="All Views" value={totals.views} />
-          <KpiCard icon="❤️" label="All Likes" value={totals.likes} />
-          <KpiCard icon="🎬" label="Reels Posted" value={totals.reelCount} />
-          <KpiCard icon="💬" label="All Comments" value={totals.comments} />
+          {[
+            { label: "All Views", value: totals.views, icon: "👁" },
+            { label: "All Likes", value: totals.likes, icon: "❤️" },
+            { label: "New Followers", value: totals.followersDelta ?? 0, icon: "👥", prefix: (totals.followersDelta ?? 0) >= 0 ? "+" : "" },
+            { label: "All Shares", value: totals.shares, icon: "🔗" },
+            { label: "Reels Posted", value: totals.reelCount, icon: "🎬" },
+            { label: "All Comments", value: totals.comments, icon: "💬" },
+          ].map((kpi) => (
+            <div key={kpi.label} style={{
+              background: "#1C2A3A", borderRadius: "14px", padding: "20px",
+              border: "1px solid #253545",
+            }}>
+              <div style={{
+                fontSize: "11px", color: "#a0a0a0", fontWeight: 500,
+                textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px",
+              }}>
+                {kpi.icon} {kpi.label}
+              </div>
+              <div style={{ fontSize: "24px", fontWeight: 700, color: "#f1ae38" }}>
+                {kpi.prefix || ""}{typeof kpi.value === "number" ? formatNumber(kpi.value) : kpi.value}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Pie Charts: Views & Followers Comparison */}
+      {/* B. Donut Charts Row */}
       {(pieChartData.viewsData.length > 0 || pieChartData.followersData.length > 0) && (
-        <Card style={{ marginBottom: "24px" }}>
-          <div style={{ display: "flex", gap: "24px", flexWrap: "wrap" }}>
+        <div style={{
+          background: "#1C2A3A", borderRadius: "14px", padding: "24px",
+          border: "1px solid #253545", marginBottom: "24px",
+        }}>
+          <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
             <DonutWithLegend title="All Views Comparison" data={pieChartData.viewsData} />
-            <DonutWithLegend title="Followers Comparison" data={pieChartData.followersData} />
+            <DonutWithLegend title="New Followers Comparison" data={pieChartData.followersData} />
           </div>
-        </Card>
+        </div>
       )}
 
-
-      <Card style={{ overflowX: "auto" }}>
+      {/* C. Accounts Table */}
+      <div style={{
+        background: "#1C2A3A", borderRadius: "14px", padding: "24px",
+        border: "1px solid #253545", overflowX: "auto",
+      }}>
         <div style={{
           fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
           textTransform: "uppercase", letterSpacing: "0.5px",
         }}>
           Accounts (by views)
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "500px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "700px" }}>
           <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {["Username", "Views", "Likes", "Comments", "Reels Posted"].map((h) => (
-                <th key={h} style={{ padding: "12px 10px", fontSize: "12px", color: "#a0a0a0", fontWeight: 600 }}>{h}</th>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid #253545" }}>
+              {["Username", "New Followers", "Status", "Views", "Likes", "Comments", "Reels Posted"].map((h) => (
+                <th key={h} style={{ padding: "12px 12px", fontSize: "11px", color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {!igAccounts ? (
               <tr>
-                <td colSpan={5} style={{ padding: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
+                <td colSpan={7} style={{ padding: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
                   Loading…
                 </td>
               </tr>
             ) : displayedAccounts.length === 0 ? (
               <tr>
-                <td colSpan={5} style={{ padding: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
+                <td colSpan={7} style={{ padding: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
                   No accounts found
                 </td>
               </tr>
             ) : (
-              displayedAccounts.map((account: any) => (
+              displayedAccounts.map((account: any, i: number) => (
                 <IgAccountRow
                   key={account._id}
                   account={account}
                   stats={statsMap.get(String(account._id))}
                   token={token}
                   dateRange={dateRange}
+                  colorIndex={i}
                 />
               ))
             )}
@@ -432,16 +537,16 @@ function InstagramAnalyticsSection({ token, dateRange }: { token: string; dateRa
             <button
               onClick={() => setShowAll(true)}
               style={{
-                background: "transparent", color: "#3b82f6", border: "1px solid #3b82f6",
+                background: "transparent", color: "#f1ae38", border: "1px solid #f1ae38",
                 borderRadius: "8px", padding: "8px 20px", fontSize: "13px",
                 cursor: "pointer", fontWeight: 600,
               }}
             >
-              Show more ({sortedAccounts.length - 30} remaining)
+              Show all ({sortedAccounts.length - 30} remaining)
             </button>
           </div>
         )}
-      </Card>
+      </div>
     </div>
   );
 }

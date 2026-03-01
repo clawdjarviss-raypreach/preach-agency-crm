@@ -41,6 +41,22 @@ function daysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate();
 }
 
+/* ─── useIsMobile hook ─── */
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    function check() {
+      setIsMobile(window.innerWidth < breakpoint);
+    }
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+
+  return isMobile;
+}
+
 /* ─── preset definitions ─── */
 type PresetKey =
   | "today" | "yesterday" | "thisWeek" | "lastWeek"
@@ -117,13 +133,14 @@ const PRESETS: Preset[] = [
 /* ─── CalendarMonth ─── */
 function CalendarMonth({
   year, month, rangeStart, rangeEnd, hoverDate,
-  onSelect, onHover,
+  onSelect, onHover, isMobile,
 }: {
   year: number; month: number;
   rangeStart: string | null; rangeEnd: string | null;
   hoverDate: string | null;
   onSelect: (d: string) => void;
   onHover: (d: string | null) => void;
+  isMobile: boolean;
 }) {
   const totalDays = daysInMonth(year, month);
   const firstDay = new Date(year, month, 1).getDay();
@@ -149,17 +166,26 @@ function CalendarMonth({
   const dayHeaders = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
   const todayStr = fmt(new Date());
 
+  const cellSize = isMobile ? "44px" : undefined;
+
   return (
-    <div style={{ minWidth: "260px" }}>
-      <div style={{ textAlign: "center", fontSize: "13px", fontWeight: 600, color: "#fff", marginBottom: "12px" }}>
-        {monthLabel}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "2px" }}>
+    <div style={{ minWidth: isMobile ? undefined : "260px", width: isMobile ? "100%" : undefined }}>
+      {!isMobile && (
+        <div style={{ textAlign: "center", fontSize: "13px", fontWeight: 600, color: "#fff", marginBottom: "12px" }}>
+          {monthLabel}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: isMobile ? "1px" : "2px" }}>
         {dayHeaders.map((h) => (
-          <div key={h} style={{ textAlign: "center", fontSize: "11px", color: "#666", padding: "4px 0", fontWeight: 500 }}>{h}</div>
+          <div key={h} style={{
+            textAlign: "center", fontSize: isMobile ? "13px" : "11px", color: "#666",
+            padding: isMobile ? "8px 0" : "4px 0", fontWeight: 500,
+            minHeight: isMobile ? "44px" : undefined,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>{h}</div>
         ))}
         {weeks.flat().map((ds, i) => {
-          if (!ds) return <div key={`e${i}`} />;
+          if (!ds) return <div key={`e${i}`} style={{ minHeight: cellSize }} />;
           const isStart = rangeStart ? sameDay(ds, rangeStart) : false;
           const isEnd = (rangeEnd ? sameDay(ds, rangeEnd) : false) || (!rangeEnd && hoverDate ? sameDay(ds, hoverDate) : false);
           const inRange = !!(lo && hi && ds >= lo && ds <= hi);
@@ -190,10 +216,15 @@ function CalendarMonth({
               onClick={() => onSelect(ds)}
               onMouseEnter={() => onHover(ds)}
               style={{
-                textAlign: "center", padding: "6px 0", fontSize: "12px",
+                textAlign: "center",
+                padding: isMobile ? "0" : "6px 0",
+                fontSize: isMobile ? "14px" : "12px",
                 cursor: "pointer", background: bg, color, fontWeight,
                 borderRadius, transition: "all 0.15s",
                 border: isToday && !isStart && !isEnd ? "1px solid #555" : "1px solid transparent",
+                minHeight: cellSize,
+                minWidth: cellSize,
+                display: "flex", alignItems: "center", justifyContent: "center",
               }}
             >
               {new Date(ds + "T12:00:00").getDate()}
@@ -212,31 +243,83 @@ export default function DateRangePicker({ value, onChange }: Props) {
   const [selectingStart, setSelectingStart] = useState<string | null>(null);
   const [hoverDate, setHoverDate] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
+  // Month navigation
   const now = useMemo(() => new Date(), []);
+  const [mobileMonthOffset, setMobileMonthOffset] = useState(0);
+  const [desktopMonthOffset, setDesktopMonthOffset] = useState(0);
+
   const viewYear = now.getFullYear();
   const viewMonth = now.getMonth();
-  const nextMonth = viewMonth === 11 ? 0 : viewMonth + 1;
-  const nextYear = viewMonth === 11 ? viewYear + 1 : viewYear;
+
+  // Mobile calendar month (navigable)
+  const mobileDate = useMemo(() => {
+    const d = new Date(viewYear, viewMonth + mobileMonthOffset, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  }, [viewYear, viewMonth, mobileMonthOffset]);
+
+  // Desktop: dual calendar with navigation
+  const desktopLeft = useMemo(() => {
+    const d = new Date(viewYear, viewMonth + desktopMonthOffset, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  }, [viewYear, viewMonth, desktopMonthOffset]);
+
+  const desktopRight = useMemo(() => {
+    const d = new Date(viewYear, viewMonth + desktopMonthOffset + 1, 1);
+    return { year: d.getFullYear(), month: d.getMonth() };
+  }, [viewYear, viewMonth, desktopMonthOffset]);
+
+  const desktopLeftLabel = new Date(desktopLeft.year, desktopLeft.month, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const desktopRightLabel = new Date(desktopRight.year, desktopRight.month, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const canGoForward = desktopMonthOffset < 0;
+
+  // Pending range for mobile (applied on "Apply" tap)
+  const [pendingRange, setPendingRange] = useState<DateRange | null>(null);
+  const effectiveValue = pendingRange || value;
 
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setSelectingStart(null);
+    if (!isMobile) {
+      function handleClick(e: MouseEvent) {
+        if (ref.current && !ref.current.contains(e.target as Node)) {
+          setOpen(false);
+          setSelectingStart(null);
+        }
       }
+      if (open) document.addEventListener("mousedown", handleClick);
+      return () => document.removeEventListener("mousedown", handleClick);
     }
-    if (open) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  }, [open, isMobile]);
+
+  // Reset mobile state when opening
+  useEffect(() => {
+    if (open && isMobile) {
+      setMobileMonthOffset(0);
+      setPendingRange(null);
+    }
+  }, [open, isMobile]);
+
+  // Lock body scroll on mobile when open
+  useEffect(() => {
+    if (isMobile && open) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => { document.body.style.overflow = prev; };
+    }
+  }, [isMobile, open]);
 
   const handlePreset = useCallback((p: Preset) => {
     setActivePreset(p.key);
     const r = p.range();
-    onChange(r);
-    setSelectingStart(null);
-    setOpen(false);
-  }, [onChange]);
+    if (isMobile) {
+      setPendingRange(r);
+      setSelectingStart(null);
+    } else {
+      onChange(r);
+      setSelectingStart(null);
+      setOpen(false);
+    }
+  }, [onChange, isMobile]);
 
   const handleDaySelect = useCallback((ds: string) => {
     if (!selectingStart) {
@@ -245,12 +328,32 @@ export default function DateRangePicker({ value, onChange }: Props) {
     } else {
       const lo = selectingStart < ds ? selectingStart : ds;
       const hi = selectingStart > ds ? selectingStart : ds;
-      onChange({ start: lo, end: hi });
+      const newRange = { start: lo, end: hi };
       setSelectingStart(null);
       setActivePreset(null);
-      setOpen(false);
+      if (isMobile) {
+        setPendingRange(newRange);
+      } else {
+        onChange(newRange);
+        setOpen(false);
+      }
     }
-  }, [selectingStart, onChange]);
+  }, [selectingStart, onChange, isMobile]);
+
+  const handleApply = useCallback(() => {
+    if (pendingRange) {
+      onChange(pendingRange);
+    }
+    setPendingRange(null);
+    setSelectingStart(null);
+    setOpen(false);
+  }, [pendingRange, onChange]);
+
+  const handleClose = useCallback(() => {
+    setPendingRange(null);
+    setSelectingStart(null);
+    setOpen(false);
+  }, []);
 
   const displayLabel = `${label(value.start)} – ${label(value.end)}`;
 
@@ -271,7 +374,130 @@ export default function DateRangePicker({ value, onChange }: Props) {
         <span style={{ fontSize: "10px", color: "#666", marginLeft: "4px" }}>▼</span>
       </button>
 
-      {open && (
+      {open && isMobile && (
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={handleClose}
+            style={{
+              position: "fixed", inset: 0, zIndex: 999,
+              background: "rgba(0,0,0,0.5)",
+            }}
+          />
+          {/* Bottom sheet */}
+          <div style={{
+            position: "fixed", bottom: 0, left: 0, right: 0,
+            zIndex: 1000,
+            background: "#1a1a1a", border: "1px solid #333",
+            borderRadius: "16px 16px 0 0",
+            boxShadow: "0 -12px 40px rgba(0,0,0,0.6)",
+            maxHeight: "85vh", overflowY: "auto",
+            display: "flex", flexDirection: "column",
+          }}>
+            {/* Handle bar */}
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+              <div style={{ width: "36px", height: "4px", borderRadius: "2px", background: "#444" }} />
+            </div>
+
+            {/* Horizontal scrollable presets */}
+            <div style={{
+              display: "flex", gap: "6px", padding: "8px 16px",
+              overflowX: "auto", flexShrink: 0,
+              WebkitOverflowScrolling: "touch",
+            }}>
+              {PRESETS.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => handlePreset(p)}
+                  style={{
+                    padding: "6px 14px", fontSize: "12px", fontWeight: 500,
+                    color: activePreset === p.key ? "#1a1a1a" : "#ccc",
+                    background: activePreset === p.key ? "#f1ae38" : "#2a2a2a",
+                    border: "none", borderRadius: "20px", cursor: "pointer",
+                    whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Month navigation */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "8px 20px 0",
+            }}>
+              <button
+                onClick={() => setMobileMonthOffset((o) => o - 1)}
+                style={{
+                  background: "none", border: "none", color: "#ccc", fontSize: "20px",
+                  cursor: "pointer", padding: "8px 12px", minHeight: "44px", minWidth: "44px",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                ‹
+              </button>
+              <span style={{ color: "#fff", fontWeight: 600, fontSize: "15px" }}>
+                {new Date(mobileDate.year, mobileDate.month, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+              </span>
+              <button
+                onClick={() => setMobileMonthOffset((o) => o + 1)}
+                style={{
+                  background: "none", border: "none", color: "#ccc", fontSize: "20px",
+                  cursor: "pointer", padding: "8px 12px", minHeight: "44px", minWidth: "44px",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                ›
+              </button>
+            </div>
+
+            {/* Single calendar */}
+            <div style={{ padding: "8px 16px 16px" }}>
+              <CalendarMonth
+                year={mobileDate.year} month={mobileDate.month}
+                rangeStart={selectingStart || effectiveValue.start}
+                rangeEnd={selectingStart ? null : effectiveValue.end}
+                hoverDate={selectingStart ? hoverDate : null}
+                onSelect={handleDaySelect}
+                onHover={setHoverDate}
+                isMobile
+              />
+            </div>
+
+            {/* Apply / Cancel buttons */}
+            <div style={{
+              display: "flex", gap: "10px", padding: "12px 16px 20px",
+              borderTop: "1px solid #2a2a2a",
+            }}>
+              <button
+                onClick={handleClose}
+                style={{
+                  flex: 1, padding: "14px", fontSize: "14px", fontWeight: 600,
+                  color: "#ccc", background: "#2a2a2a", border: "none",
+                  borderRadius: "10px", cursor: "pointer",
+                  minHeight: "48px",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleApply}
+                style={{
+                  flex: 1, padding: "14px", fontSize: "14px", fontWeight: 600,
+                  color: "#1a1a1a", background: "#f1ae38", border: "none",
+                  borderRadius: "10px", cursor: "pointer",
+                  minHeight: "48px",
+                }}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {open && !isMobile && (
         <div style={{
           position: "absolute", top: "calc(100% + 6px)", right: 0,
           zIndex: 1000, display: "flex",
@@ -302,23 +528,61 @@ export default function DateRangePicker({ value, onChange }: Props) {
             ))}
           </div>
 
-          <div style={{ padding: "16px 20px", display: "flex", gap: "24px" }}>
-            <CalendarMonth
-              year={viewYear} month={viewMonth}
-              rangeStart={selectingStart || value.start}
-              rangeEnd={selectingStart ? null : value.end}
-              hoverDate={selectingStart ? hoverDate : null}
-              onSelect={handleDaySelect}
-              onHover={setHoverDate}
-            />
-            <CalendarMonth
-              year={nextYear} month={nextMonth}
-              rangeStart={selectingStart || value.start}
-              rangeEnd={selectingStart ? null : value.end}
-              hoverDate={selectingStart ? hoverDate : null}
-              onSelect={handleDaySelect}
-              onHover={setHoverDate}
-            />
+          <div style={{ padding: "16px 20px" }}>
+            {/* Desktop month navigation */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              marginBottom: "12px", padding: "0 4px",
+            }}>
+              <button
+                onClick={() => setDesktopMonthOffset((o) => o - 1)}
+                style={{
+                  background: "none", border: "none", color: "#ccc", fontSize: "18px",
+                  cursor: "pointer", padding: "4px 8px", borderRadius: "6px",
+                  transition: "background 0.15s",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#2a2a2a")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+              >
+                ‹
+              </button>
+              <span style={{ color: "#fff", fontSize: "13px", fontWeight: 600 }}>
+                {desktopLeftLabel} &nbsp;|&nbsp; {desktopRightLabel}
+              </span>
+              <button
+                onClick={() => canGoForward && setDesktopMonthOffset((o) => o + 1)}
+                style={{
+                  background: "none", border: "none",
+                  color: canGoForward ? "#ccc" : "#444", fontSize: "18px",
+                  cursor: canGoForward ? "pointer" : "default", padding: "4px 8px",
+                  borderRadius: "6px", transition: "background 0.15s",
+                }}
+                onMouseEnter={(e) => canGoForward && (e.currentTarget.style.background = "#2a2a2a")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+              >
+                ›
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: "24px" }}>
+              <CalendarMonth
+                year={desktopLeft.year} month={desktopLeft.month}
+                rangeStart={selectingStart || value.start}
+                rangeEnd={selectingStart ? null : value.end}
+                hoverDate={selectingStart ? hoverDate : null}
+                onSelect={handleDaySelect}
+                onHover={setHoverDate}
+                isMobile={false}
+              />
+              <CalendarMonth
+                year={desktopRight.year} month={desktopRight.month}
+                rangeStart={selectingStart || value.start}
+                rangeEnd={selectingStart ? null : value.end}
+                hoverDate={selectingStart ? hoverDate : null}
+                onSelect={handleDaySelect}
+                onHover={setHoverDate}
+                isMobile={false}
+              />
+            </div>
           </div>
         </div>
       )}
