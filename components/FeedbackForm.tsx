@@ -2,9 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 export type FeedbackType = "praise" | "constructive" | "observation" | "warning";
 export type FeedbackVisibility = "private" | "shared" | "team";
@@ -234,8 +232,6 @@ export default function FeedbackForm({
   initialTitle?: string;
   initialContent?: string;
 }) {
-  const createFeedback = useMutation(api.crm.coaching.createFeedback);
-
   const chatterOptions = useMemo(() => {
     const onlyChatters = chatters.filter((c) => (c.role ? c.role === "chatter" : true));
     return onlyChatters.length ? onlyChatters : chatters;
@@ -302,22 +298,21 @@ export default function FeedbackForm({
 
     setSaving(true);
     try {
-      const feedbackId = await createFeedback({
-        token,
-        chatterId: chatterId as Id<"crm_chatters">,
+      const { data, error: insertError } = await supabase.from("crm_coaching_feedback").insert({
+        chatter_id: chatterId,
         type,
-        title: t ? t : undefined,
+        title: t ? t : null,
         content: finalContent,
-        category: (category.trim() ? (category as FeedbackCategory) : undefined) as any,
+        category: category.trim() ? category : null,
         visibility,
-        feedbackDate: ts,
-        relatedMeetingId: relatedMeetingId.trim()
-          ? (relatedMeetingId.trim() as Id<"crm_coaching_meetings">)
-          : undefined,
-      } as any);
+        feedback_date: ts ?? null,
+        related_meeting_id: relatedMeetingId.trim() ? relatedMeetingId.trim() : null,
+      }).select("id").single();
+
+      if (insertError) throw new Error(insertError.message);
 
       setSuccess("Feedback submitted.");
-      onSaved?.(String(feedbackId));
+      onSaved?.(String(data?.id));
     } catch (e: any) {
       setError(e?.message ?? "Failed to submit feedback");
     } finally {
@@ -602,7 +597,7 @@ export default function FeedbackForm({
               value={relatedMeetingId}
               onChange={(e) => setRelatedMeetingId(e.target.value)}
               disabled={saving}
-              placeholder="Paste meeting id (Convex Id)"
+              placeholder="Paste meeting id"
               style={{
                 padding: "10px 10px",
                 borderRadius: 10,
@@ -630,7 +625,7 @@ export default function FeedbackForm({
         </div>
 
         <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-          Tip: If visibility is “Shared”, the chatter will be able to acknowledge the feedback.
+          Tip: If visibility is "Shared", the chatter will be able to acknowledge the feedback.
         </div>
       </div>
     </div>

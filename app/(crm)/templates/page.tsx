@@ -1,9 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
-import { Id } from "../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import {
   SuggestionsBar,
   SuggestionPreview,
@@ -35,24 +33,23 @@ function TemplateModal({
   template,
   onClose,
   token,
+  onSaved,
 }: {
   template?: {
-    _id: Id<"crm_reply_templates">;
+    id: string;
     name: string;
     text: string;
     category?: string;
   } | null;
   onClose: () => void;
   token: string;
+  onSaved: () => void;
 }) {
   const [name, setName] = useState(template?.name || "");
   const [text, setText] = useState(template?.text || "");
   const [category, setCategory] = useState(template?.category || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  const createTemplate = useMutation(api.crm.templates.create);
-  const updateTemplate = useMutation(api.crm.templates.update);
 
   const handleSave = async () => {
     if (!name.trim() || !text.trim()) {
@@ -65,21 +62,28 @@ function TemplateModal({
 
     try {
       if (template) {
-        await updateTemplate({
-          token,
-          templateId: template._id,
-          name: name.trim(),
-          text: text.trim(),
-          category: category.trim() || undefined,
-        });
+        const { error: updateError } = await supabase
+          .from("crm_reply_templates")
+          .update({
+            name: name.trim(),
+            text: text.trim(),
+            category: category.trim() || null,
+          })
+          .eq("id", template.id);
+        if (updateError) throw updateError;
       } else {
-        await createTemplate({
-          token,
-          name: name.trim(),
-          text: text.trim(),
-          category: category.trim() || undefined,
-        });
+        const { error: insertError } = await supabase
+          .from("crm_reply_templates")
+          .insert({
+            name: name.trim(),
+            text: text.trim(),
+            category: category.trim() || null,
+            is_active: true,
+            usage_count: 0,
+          });
+        if (insertError) throw insertError;
       }
+      onSaved();
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to save template");
@@ -296,7 +300,7 @@ export default function TemplatesPage() {
   // Modal state
   const [showModal, setShowModal] = useState(false);
   const [editTemplate, setEditTemplate] = useState<{
-    _id: Id<"crm_reply_templates">;
+    id: string;
     name: string;
     text: string;
     category?: string;
@@ -304,6 +308,10 @@ export default function TemplatesPage() {
 
   // Category filter
   const [categoryFilter, setCategoryFilter] = useState("");
+
+  // Data state
+  const [templates, setTemplates] = useState<any[] | null>(null);
+  const [suggestions, setSuggestions] = useState<any[] | undefined>(undefined);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -313,22 +321,63 @@ export default function TemplatesPage() {
   }, []);
 
   // Fetch templates
-  const templates = useQuery(
-    api.crm.templates.list,
-    token ? { token, onlyActive: true, category: categoryFilter || undefined } : "skip"
-  );
+  const fetchTemplates = useCallback(async () => {
+    if (!token) return;
+
+    let query = supabase
+      .from("crm_reply_templates")
+      .select("*")
+      .eq("is_active", true);
+
+    if (categoryFilter) {
+      query = query.eq("category", categoryFilter);
+    }
+
+    const { data } = await query;
+    setTemplates(data ?? []);
+  }, [token, categoryFilter]);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
 
   // Fetch suggestions based on search
-  const suggestions = useQuery(
-    api.crm.templates.getSuggestions,
-    token && debouncedQuery.length > 0
-      ? { token, query: debouncedQuery, limit: 8 }
-      : "skip"
-  );
+  useEffect(() => {
+    if (!token || debouncedQuery.length === 0) {
+      setSuggestions(undefined);
+      return;
+    }
 
-  // Mutations
-  const recordUsage = useMutation(api.crm.templates.recordUsage);
-  const deleteTemplate = useMutation(api.crm.templates.deleteTemplate);
+    const fetchSuggestions = async () => {
+      setSuggestions(undefined);
+      const { data } = await supabase
+        .from("crm_reply_templates")
+        .select("*")
+        .eq("is_active", true)
+        .ilike("text", `%${debouncedQuery}%`)
+        .limit(8);
+
+      if (data) {
+        const items = data.map((t: any) => ({
+          template: {
+            id: t.id,
+            name: t.name,
+            text: t.text,
+            category: t.category ?? null,
+          },
+          score: t.usage_count ?? 0,
+          matchedKeywords: [],
+          contextBoost: 0,
+          baseScore: t.usage_count ?? 0,
+        }));
+        setSuggestions(items);
+      } else {
+        setSuggestions([]);
+      }
+    };
+
+    fetchSuggestions();
+  }, [token, debouncedQuery]);
 
   // Transform suggestions to the expected format
   const suggestionItems: SuggestionItem[] = useMemo(() => {
@@ -350,10 +399,10 @@ export default function TemplatesPage() {
   // Selected template for preview
   const selectedTemplate: SuggestionTemplate | null = useMemo(() => {
     if (!selectedTemplateId) return null;
-    const found = templates?.find((t) => t._id === selectedTemplateId);
+    const found = templates?.find((t) => t.id === selectedTemplateId);
     if (found) {
       return {
-        id: found._id,
+        id: found.id,
         name: found.name,
         text: found.text,
         category: found.category ?? null,
@@ -364,6 +413,26 @@ export default function TemplatesPage() {
     );
     return fromSuggestions?.template ?? null;
   }, [selectedTemplateId, templates, suggestionItems]);
+
+  const recordUsage = useCallback(async (templateId: string) => {
+    if (!templateId) return;
+    await supabase.rpc("increment_template_usage", { template_id: templateId }).catch(() => {
+      // Fallback: manual increment
+      supabase
+        .from("crm_reply_templates")
+        .select("usage_count")
+        .eq("id", templateId)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            supabase
+              .from("crm_reply_templates")
+              .update({ usage_count: (data.usage_count ?? 0) + 1 })
+              .eq("id", templateId);
+          }
+        });
+    });
+  }, []);
 
   const handleApply = useCallback(
     async (template: SuggestionTemplate) => {
@@ -383,7 +452,7 @@ export default function TemplatesPage() {
       // Record usage
       if (token) {
         try {
-          await recordUsage({ token, templateId: template.id as Id<"crm_reply_templates"> });
+          await recordUsage(template.id);
         } catch {
           // ignore usage tracking errors
         }
@@ -395,10 +464,15 @@ export default function TemplatesPage() {
     [token, recordUsage]
   );
 
-  const handleDelete = async (templateId: Id<"crm_reply_templates">) => {
+  const handleDelete = async (templateId: string) => {
     if (!confirm("Are you sure you want to delete this template?")) return;
     try {
-      await deleteTemplate({ token, templateId });
+      const { error } = await supabase
+        .from("crm_reply_templates")
+        .delete()
+        .eq("id", templateId);
+      if (error) throw error;
+      await fetchTemplates();
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Failed to delete template");
     }
@@ -491,10 +565,7 @@ export default function TemplatesPage() {
               onApply={handleApply}
               onCopy={() => {
                 if (token && selectedTemplate) {
-                  recordUsage({
-                    token,
-                    templateId: selectedTemplate.id as Id<"crm_reply_templates">,
-                  }).catch(() => {});
+                  recordUsage(selectedTemplate.id).catch(() => {});
                 }
               }}
             />
@@ -592,7 +663,7 @@ export default function TemplatesPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             {templates.map((template) => (
               <div
-                key={template._id}
+                key={template.id}
                 style={{
                   padding: "16px",
                   background: "var(--bg)",
@@ -642,7 +713,7 @@ export default function TemplatesPage() {
                         color: "var(--text-muted)",
                       }}
                     >
-                      {template.usageCount} uses
+                      {template.usage_count} uses
                     </span>
                   </div>
                   <p
@@ -663,7 +734,7 @@ export default function TemplatesPage() {
                     type="button"
                     onClick={() =>
                       handleApply({
-                        id: template._id,
+                        id: template.id,
                         name: template.name,
                         text: template.text,
                         category: template.category ?? null,
@@ -686,7 +757,7 @@ export default function TemplatesPage() {
                     type="button"
                     onClick={() => {
                       setEditTemplate({
-                        _id: template._id,
+                        id: template.id,
                         name: template.name,
                         text: template.text,
                         category: template.category,
@@ -707,7 +778,7 @@ export default function TemplatesPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDelete(template._id)}
+                    onClick={() => handleDelete(template.id)}
                     style={{
                       padding: "6px 10px",
                       borderRadius: "8px",
@@ -732,6 +803,7 @@ export default function TemplatesPage() {
         <TemplateModal
           template={editTemplate}
           token={token}
+          onSaved={fetchTemplates}
           onClose={() => {
             setShowModal(false);
             setEditTemplate(null);

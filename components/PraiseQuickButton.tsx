@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 export type PraiseQuickChatterOption = {
   id: string;
@@ -67,8 +65,6 @@ export default function PraiseQuickButton({
   buttonLabel?: string;
   onSent?: (feedbackId: string) => void;
 }) {
-  const createFeedback = useMutation(api.crm.coaching.createFeedback);
-
   const chatterOptions = useMemo(() => {
     const onlyChatters = chatters.filter((c) => (c.role ? c.role === "chatter" : true));
     return onlyChatters.length ? onlyChatters : chatters;
@@ -125,18 +121,19 @@ export default function PraiseQuickButton({
 
     setSending(true);
     try {
-      const feedbackId = await createFeedback({
-        token,
-        chatterId: chatterId as Id<"crm_chatters">,
+      const { data, error: insertError } = await supabase.from("crm_coaching_feedback").insert({
+        chatter_id: chatterId,
         type: "praise",
-        title: title ? title : undefined,
+        title: title ? title : null,
         content,
         visibility: defaultVisibility,
-        feedbackDate: Date.now(),
-      } as any);
+        feedback_date: Date.now(),
+      }).select("id").single();
+
+      if (insertError) throw new Error(insertError.message);
 
       setSuccess("Praise sent.");
-      onSent?.(String(feedbackId));
+      onSent?.(String(data?.id));
 
       // Reset and close.
       setCustomMessage("");

@@ -2,15 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 type FanSegmentUI = "vip" | "whale" | "core" | "casual" | "new";
 type MessageTypeUI = "dm" | "tip" | "ppv_unlock" | "subscription" | "custom_request";
 
 type CreatorListItem = {
-  id: Id<"crm_creators">;
+  id: string;
   name: string;
   onlyFansHandle?: string;
   status?: string;
@@ -93,22 +91,37 @@ export default function QuickLogModal({
   defaultCreatorId?: string;
   onClose: () => void;
 }) {
-  const creatorsRaw = useQuery(
-    api.crm.creators.list,
-    open && token ? { token, includeArchived: false } : "skip"
-  );
-  const logMessage = useMutation(api.crm.queue.logMessage);
-  const markResponded = useMutation(api.crm.queue.markResponded);
+  const [creatorsRaw, setCreatorsRaw] = useState<CreatorListItem[]>([]);
+
+  useEffect(() => {
+    if (!open || !token) return;
+
+    async function fetchCreators() {
+      const { data, error } = await supabase
+        .from("crm_creators")
+        .select("*")
+        .eq("status", "active");
+
+      if (error) {
+        console.error("Failed to fetch creators:", error.message);
+        setCreatorsRaw([]);
+        return;
+      }
+      setCreatorsRaw(data ?? []);
+    }
+
+    fetchCreators();
+  }, [open, token]);
 
   const creators = useMemo<CreatorListItem[]>(() => {
-    const list = (creatorsRaw ?? []) as CreatorListItem[];
+    const list = creatorsRaw;
     if (!assignedCreatorIds || assignedCreatorIds.length === 0) return list;
     const allowed = new Set(assignedCreatorIds);
     const filtered = list.filter((c) => allowed.has(String(c.id)));
     return filtered.length > 0 ? filtered : list;
   }, [creatorsRaw, assignedCreatorIds]);
 
-  const [creatorId, setCreatorId] = useState<Id<"crm_creators"> | "">("");
+  const [creatorId, setCreatorId] = useState<string>("");
   const [fanIdentifier, setFanIdentifier] = useState<string>("");
   const [fanSegment, setFanSegment] = useState<FanSegmentUI>("new");
   const [messageType, setMessageType] = useState<MessageTypeUI>("dm");
@@ -148,17 +161,17 @@ export default function QuickLogModal({
     const validIds = new Set(creators.map((c) => String(c.id)));
 
     if (defaultCreatorId && validIds.has(defaultCreatorId)) {
-      setCreatorId(defaultCreatorId as Id<"crm_creators">);
+      setCreatorId(defaultCreatorId);
       return;
     }
 
     if (assignedCreatorIds.length === 1 && validIds.has(assignedCreatorIds[0])) {
-      setCreatorId(assignedCreatorIds[0] as Id<"crm_creators">);
+      setCreatorId(assignedCreatorIds[0]);
       return;
     }
 
     if (creators.length === 1) {
-      setCreatorId(creators[0].id);
+      setCreatorId(String(creators[0].id));
     }
   }, [open, creatorId, creators, defaultCreatorId, assignedCreatorIds]);
 
@@ -224,27 +237,40 @@ export default function QuickLogModal({
         return;
       }
 
+      if (!token) return;
+
       setSubmitting(true);
       setToast(null);
 
       try {
-        const res = await logMessage({
-          token,
-          creatorId: safeCreatorId,
-          fanUsername: parsed.fanUsername,
-          fanDisplayName: parsed.fanDisplayName,
-          fanSegment,
-          messageType,
-          notes: notes.trim() || undefined,
-          source: "manual",
-        });
+        const { data: logData, error: logError } = await supabase
+          .from("crm_message_queue")
+          .insert({
+            creator_id: safeCreatorId,
+            fan_username: parsed.fanUsername,
+            fan_display_name: parsed.fanDisplayName,
+            fan_segment: fanSegment,
+            message_type: messageType,
+            notes: notes.trim() || undefined,
+            source: "manual",
+          })
+          .select("id")
+          .single();
+
+        if (logError) throw new Error(logError.message);
+
+        const queueId = logData.id;
 
         if (markAsResponded) {
-          await markResponded({
-            token,
-            queueId: res.queueId as Id<"crm_message_queue">,
-            notes: notes.trim() || undefined,
-          });
+          const { error: respondError } = await supabase
+            .from("crm_message_queue")
+            .update({
+              status: "responded",
+              notes: notes.trim() || undefined,
+            })
+            .eq("id", queueId);
+
+          if (respondError) throw new Error(respondError.message);
         }
 
         setToast({
@@ -272,8 +298,6 @@ export default function QuickLogModal({
       fanSegment,
       messageType,
       notes,
-      logMessage,
-      markResponded,
       resetForNext,
       closeAndReset,
     ]
@@ -371,7 +395,7 @@ export default function QuickLogModal({
               </label>
               <select
                 value={creatorId}
-                onChange={(e) => setCreatorId(e.target.value as Id<"crm_creators">)}
+                onChange={(e) => setCreatorId(e.target.value)}
                 disabled={submitting || creators.length <= 1}
                 style={{
                   width: "100%",

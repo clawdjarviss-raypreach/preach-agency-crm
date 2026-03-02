@@ -1,15 +1,13 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
-import { Id } from "../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 type ModalType = "add" | "edit" | null;
 
 interface Target {
-  id: Id<"crm_weekly_targets">;
-  creatorId: Id<"crm_creators">;
+  id: string;
+  creatorId: string;
   creatorName: string;
   creatorAvatarUrl?: string;
   weekStart: string;
@@ -21,12 +19,12 @@ interface Target {
 }
 
 interface CreatorWithStatus {
-  id: Id<"crm_creators">;
+  id: string;
   name: string;
   avatarUrl?: string;
   hasTarget: boolean;
   target: {
-    id: Id<"crm_weekly_targets">;
+    id: string;
     responseTimeTarget: number;
     ppvUnlockTarget: number;
     ppvMinSent: number;
@@ -68,6 +66,11 @@ export default function TargetsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // Data state
+  const [targets, setTargets] = useState<Target[] | undefined>(undefined);
+  const [creatorsWithStatus, setCreatorsWithStatus] = useState<CreatorWithStatus[] | undefined>(undefined);
+  const [allProgress, setAllProgress] = useState<any[] | undefined>(undefined);
+
   // Form state
   const [formResponseTime, setFormResponseTime] = useState("90");
   const [formPpvUnlock, setFormPpvUnlock] = useState("70");
@@ -81,27 +84,113 @@ export default function TargetsPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const targets = useQuery(
-    api.crm.targets.getWeeklyTargets,
-    token ? { token, weekStart: selectedWeek } : "skip"
-  );
+  // Fetch weekly targets
+  useEffect(() => {
+    if (!token) return;
 
-  const creatorsWithStatus = useQuery(
-    api.crm.targets.listCreatorsWithTargetStatus,
-    token ? { token, weekStart: selectedWeek } : "skip"
-  );
+    async function fetchTargets() {
+      const { data, error } = await supabase
+        .from("crm_weekly_targets")
+        .select("*, creator:crm_creators(name, avatar_url)")
+        .eq("week_start", selectedWeek);
 
-  const allProgress = useQuery(
-    api.crm.targets.getAllTargetProgress,
-    token && ["admin", "manager", "supervisor"].includes(user?.role)
-      ? { token, weekStart: selectedWeek }
-      : "skip"
-  );
+      if (error) {
+        console.error("Failed to load targets:", error);
+        setTargets([]);
+        return;
+      }
 
-  const upsertTarget = useMutation(api.crm.targets.upsertWeeklyTarget);
-  const deleteTarget = useMutation(api.crm.targets.deleteWeeklyTarget);
-  const toggleActive = useMutation(api.crm.targets.toggleTargetActive);
-  const copyFromPrevious = useMutation(api.crm.targets.copyTargetsFromPreviousWeek);
+      const normalized: Target[] = (data || []).map((row: any) => ({
+        id: String(row.id),
+        creatorId: String(row.creator_id),
+        creatorName: row.creator?.name ?? "",
+        creatorAvatarUrl: row.creator?.avatar_url ?? undefined,
+        weekStart: row.week_start,
+        responseTimeTarget: row.response_time_target,
+        ppvUnlockTarget: row.ppv_unlock_target,
+        ppvMinSent: row.ppv_min_sent,
+        weeklyBonusAmount: row.weekly_bonus_amount,
+        isActive: row.is_active,
+      }));
+
+      setTargets(normalized);
+    }
+
+    fetchTargets();
+  }, [token, selectedWeek]);
+
+  // Fetch creators with target status
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchCreatorsWithStatus() {
+      const [creatorsRes, targetsRes] = await Promise.all([
+        supabase.from("crm_creators").select("id, name, avatar_url"),
+        supabase
+          .from("crm_weekly_targets")
+          .select("id, creator_id, response_time_target, ppv_unlock_target, ppv_min_sent, weekly_bonus_amount, is_active")
+          .eq("week_start", selectedWeek),
+      ]);
+
+      if (creatorsRes.error) {
+        console.error("Failed to load creators:", creatorsRes.error);
+        setCreatorsWithStatus([]);
+        return;
+      }
+
+      const targetsMap = new Map<string, any>();
+      for (const t of targetsRes.data || []) {
+        targetsMap.set(String(t.creator_id), t);
+      }
+
+      const result: CreatorWithStatus[] = (creatorsRes.data || []).map((c: any) => {
+        const t = targetsMap.get(String(c.id));
+        return {
+          id: String(c.id),
+          name: c.name ?? "",
+          avatarUrl: c.avatar_url ?? undefined,
+          hasTarget: !!t,
+          target: t
+            ? {
+                id: String(t.id),
+                responseTimeTarget: t.response_time_target,
+                ppvUnlockTarget: t.ppv_unlock_target,
+                ppvMinSent: t.ppv_min_sent,
+                weeklyBonusAmount: t.weekly_bonus_amount,
+                isActive: t.is_active,
+              }
+            : null,
+        };
+      });
+
+      setCreatorsWithStatus(result);
+    }
+
+    fetchCreatorsWithStatus();
+  }, [token, selectedWeek]);
+
+  // Fetch all target progress (admins/managers/supervisors only)
+  useEffect(() => {
+    if (!token) return;
+    if (!user || !["admin", "manager", "supervisor"].includes(user?.role)) return;
+
+    async function fetchProgress() {
+      const { data, error } = await supabase
+        .from("crm_target_progress")
+        .select("*")
+        .eq("week_start", selectedWeek);
+
+      if (error) {
+        console.error("Failed to load progress:", error);
+        setAllProgress([]);
+        return;
+      }
+
+      setAllProgress(data || []);
+    }
+
+    fetchProgress();
+  }, [token, selectedWeek, user]);
 
   // Week navigation
   const goToPreviousWeek = () => {
@@ -167,6 +256,69 @@ export default function TargetsPage() {
     setModal("edit");
   };
 
+  const refreshData = async () => {
+    // Re-trigger effects by nudging state (effects depend on token + selectedWeek which haven't changed,
+    // so we refetch manually here)
+    if (!token) return;
+
+    const [targetsRes, creatorsRes, targetsForStatusRes] = await Promise.all([
+      supabase
+        .from("crm_weekly_targets")
+        .select("*, creator:crm_creators(name, avatar_url)")
+        .eq("week_start", selectedWeek),
+      supabase.from("crm_creators").select("id, name, avatar_url"),
+      supabase
+        .from("crm_weekly_targets")
+        .select("id, creator_id, response_time_target, ppv_unlock_target, ppv_min_sent, weekly_bonus_amount, is_active")
+        .eq("week_start", selectedWeek),
+    ]);
+
+    if (!targetsRes.error) {
+      setTargets(
+        (targetsRes.data || []).map((row: any) => ({
+          id: String(row.id),
+          creatorId: String(row.creator_id),
+          creatorName: row.creator?.name ?? "",
+          creatorAvatarUrl: row.creator?.avatar_url ?? undefined,
+          weekStart: row.week_start,
+          responseTimeTarget: row.response_time_target,
+          ppvUnlockTarget: row.ppv_unlock_target,
+          ppvMinSent: row.ppv_min_sent,
+          weeklyBonusAmount: row.weekly_bonus_amount,
+          isActive: row.is_active,
+        }))
+      );
+    }
+
+    if (!creatorsRes.error && !targetsForStatusRes.error) {
+      const targetsMap = new Map<string, any>();
+      for (const t of targetsForStatusRes.data || []) {
+        targetsMap.set(String(t.creator_id), t);
+      }
+      setCreatorsWithStatus(
+        (creatorsRes.data || []).map((c: any) => {
+          const t = targetsMap.get(String(c.id));
+          return {
+            id: String(c.id),
+            name: c.name ?? "",
+            avatarUrl: c.avatar_url ?? undefined,
+            hasTarget: !!t,
+            target: t
+              ? {
+                  id: String(t.id),
+                  responseTimeTarget: t.response_time_target,
+                  ppvUnlockTarget: t.ppv_unlock_target,
+                  ppvMinSent: t.ppv_min_sent,
+                  weeklyBonusAmount: t.weekly_bonus_amount,
+                  isActive: t.is_active,
+                }
+              : null,
+          };
+        })
+      );
+    }
+  };
+
   const handleSave = async () => {
     const creatorId = modal === "add" ? selectedCreator?.id : selectedTarget?.creatorId;
     if (!creatorId) return;
@@ -175,17 +327,24 @@ export default function TargetsPage() {
     setError("");
 
     try {
-      await upsertTarget({
-        token,
-        creatorId,
-        weekStart: selectedWeek,
-        responseTimeTarget: parseInt(formResponseTime),
-        ppvUnlockTarget: parseInt(formPpvUnlock),
-        ppvMinSent: parseInt(formPpvMinSent),
-        weeklyBonusAmount: parseInt(formBonusAmount),
-      });
+      const payload: any = {
+        creator_id: creatorId,
+        week_start: selectedWeek,
+        response_time_target: parseInt(formResponseTime),
+        ppv_unlock_target: parseInt(formPpvUnlock),
+        ppv_min_sent: parseInt(formPpvMinSent),
+        weekly_bonus_amount: parseInt(formBonusAmount),
+      };
+
+      const { error: upsertError } = await supabase
+        .from("crm_weekly_targets")
+        .upsert(payload, { onConflict: "creator_id,week_start" });
+
+      if (upsertError) throw upsertError;
+
       setSuccess(modal === "add" ? "Target created!" : "Target updated!");
       setModal(null);
+      await refreshData();
     } catch (err: any) {
       setError(err.message || "Failed to save target");
     } finally {
@@ -193,19 +352,36 @@ export default function TargetsPage() {
     }
   };
 
-  const handleDelete = async (targetId: Id<"crm_weekly_targets">) => {
+  const handleDelete = async (targetId: string) => {
     if (!confirm("Delete this target?")) return;
     try {
-      await deleteTarget({ token, targetId });
+      const { error: deleteError } = await supabase
+        .from("crm_weekly_targets")
+        .delete()
+        .eq("id", targetId);
+
+      if (deleteError) throw deleteError;
+
       setSuccess("Target deleted!");
+      await refreshData();
     } catch (err: any) {
       setError(err.message || "Failed to delete target");
     }
   };
 
-  const handleToggleActive = async (targetId: Id<"crm_weekly_targets">) => {
+  const handleToggleActive = async (targetId: string) => {
     try {
-      await toggleActive({ token, targetId });
+      const current = targets?.find((t) => t.id === targetId);
+      if (!current) return;
+
+      const { error: updateError } = await supabase
+        .from("crm_weekly_targets")
+        .update({ is_active: !current.isActive })
+        .eq("id", targetId);
+
+      if (updateError) throw updateError;
+
+      await refreshData();
     } catch (err: any) {
       setError(err.message || "Failed to toggle target");
     }
@@ -214,8 +390,55 @@ export default function TargetsPage() {
   const handleCopyFromPrevious = async () => {
     if (!confirm("Copy all active targets from last week?")) return;
     try {
-      const result = await copyFromPrevious({ token, targetWeekStart: selectedWeek });
-      setSuccess(`Copied ${result.copied} targets (${result.skipped} skipped)`);
+      const prevWeekDate = new Date(selectedWeek);
+      prevWeekDate.setDate(prevWeekDate.getDate() - 7);
+      const prevWeek = prevWeekDate.toISOString().split("T")[0];
+
+      const { data: prevTargets, error: fetchError } = await supabase
+        .from("crm_weekly_targets")
+        .select("*")
+        .eq("week_start", prevWeek)
+        .eq("is_active", true);
+
+      if (fetchError) throw fetchError;
+
+      if (!prevTargets || prevTargets.length === 0) {
+        setSuccess("No active targets found from last week.");
+        return;
+      }
+
+      // Get existing targets for the current week to skip duplicates
+      const { data: existingTargets } = await supabase
+        .from("crm_weekly_targets")
+        .select("creator_id")
+        .eq("week_start", selectedWeek);
+
+      const existingCreatorIds = new Set((existingTargets || []).map((t: any) => String(t.creator_id)));
+
+      const toInsert = prevTargets
+        .filter((t: any) => !existingCreatorIds.has(String(t.creator_id)))
+        .map((t: any) => ({
+          creator_id: t.creator_id,
+          week_start: selectedWeek,
+          response_time_target: t.response_time_target,
+          ppv_unlock_target: t.ppv_unlock_target,
+          ppv_min_sent: t.ppv_min_sent,
+          weekly_bonus_amount: t.weekly_bonus_amount,
+          is_active: true,
+        }));
+
+      const skipped = prevTargets.length - toInsert.length;
+
+      if (toInsert.length > 0) {
+        const { error: insertError } = await supabase
+          .from("crm_weekly_targets")
+          .insert(toInsert);
+
+        if (insertError) throw insertError;
+      }
+
+      setSuccess(`Copied ${toInsert.length} targets (${skipped} skipped)`);
+      await refreshData();
     } catch (err: any) {
       setError(err.message || "Failed to copy targets");
     }

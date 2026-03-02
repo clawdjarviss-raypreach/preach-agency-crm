@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface SegmentationDashboardProps {
   token: string;
@@ -69,15 +69,57 @@ function formatTime(seconds: number): string {
 }
 
 export default function SegmentationDashboard({ token }: SegmentationDashboardProps) {
-  const segmentation = useQuery(
-    api.crm.insights.getSegmentation,
-    token ? { token } : "skip"
-  );
+  const [segmentation, setSegmentation] = useState<SegmentStats[] | null>(null);
+  const [segmentedChatters, setSegmentedChatters] = useState<SegmentedChatter[] | null>(null);
 
-  const segmentedChatters = useQuery(
-    api.crm.insights.getSegmentedChatters,
-    token ? { token } : "skip"
-  );
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchData() {
+      const { data: segData, error: segError } = await supabase
+        .from("crm_chatter_segmentation")
+        .select("*");
+
+      if (!segError && segData) {
+        const mapped: SegmentStats[] = segData.map((row: any) => ({
+          segment: row.segment as Segment,
+          count: row.count ?? 0,
+          avgLTV: row.avg_ltv ?? 0,
+          avgResponseTime: row.avg_response_time ?? 0,
+          churnRate: row.churn_rate ?? 0,
+        }));
+        setSegmentation(mapped);
+      }
+
+      const { data: chattersData, error: chattersError } = await supabase
+        .from("crm_chatters")
+        .select("id, name, avatar_emoji, profile_picture_url, ltv_90d, last_activity_at, report_count, segment, percentile")
+        .not("segment", "is", null)
+        .order("ltv_90d", { ascending: false });
+
+      if (!chattersError && chattersData) {
+        const now = Date.now();
+        const mapped: SegmentedChatter[] = chattersData.map((row: any) => {
+          const lastActivity = row.last_activity_at ? new Date(row.last_activity_at).getTime() : now;
+          const daysSince = Math.floor((now - lastActivity) / (1000 * 60 * 60 * 24));
+          return {
+            chatterId: row.id,
+            name: row.name ?? "",
+            avatarEmoji: row.avatar_emoji ?? "👤",
+            profilePictureUrl: row.profile_picture_url ?? undefined,
+            ltv90d: row.ltv_90d ?? 0,
+            daysSinceLastActivity: daysSince,
+            reportCount: row.report_count ?? 0,
+            segment: row.segment as Segment,
+            percentile: row.percentile ?? 0,
+          };
+        });
+        setSegmentedChatters(mapped);
+      }
+    }
+
+    fetchData();
+  }, [token]);
 
   if (!segmentation || !segmentedChatters) {
     return (
@@ -104,7 +146,7 @@ export default function SegmentationDashboard({ token }: SegmentationDashboardPr
         {(["vip", "whale", "core", "casual"] as Segment[]).map((segmentKey) => {
           const stats = segmentation.find((s: SegmentStats) => s.segment === segmentKey);
           const config = SEGMENT_CONFIG[segmentKey];
-          
+
           if (!stats) return null;
 
           const pct = totalChatters > 0 ? (stats.count / totalChatters) * 100 : 0;
@@ -195,7 +237,7 @@ export default function SegmentationDashboard({ token }: SegmentationDashboardPr
         <h4 style={{ fontSize: "14px", fontWeight: "600", color: "var(--text)", marginBottom: "12px" }}>
           Top Performers by Segment
         </h4>
-        
+
         <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "300px", overflowY: "auto" }}>
           {segmentedChatters.slice(0, 15).map((chatter: SegmentedChatter, i: number) => {
             const config = SEGMENT_CONFIG[chatter.segment];

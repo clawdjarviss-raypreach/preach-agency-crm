@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo, Fragment } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useState, useEffect, useMemo, Fragment } from "react";
+import { supabase } from "@/lib/supabase";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -32,18 +31,31 @@ function SparkTooltip({ active, payload, label }: any) {
   );
 }
 
-function LinkSparkline({ token, linkId }: { token: string; linkId: any }) {
-  const history = useQuery(
-    api.crm.trackingLinks.getTrackingLinkHistory,
-    { token, trackingLinkId: linkId, days: 30 }
-  );
+function LinkSparkline({ token, linkId }: { token: string; linkId: string }) {
+  const [history, setHistory] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    if (!token || !linkId) return;
+
+    const fetchHistory = async () => {
+      const { data } = await supabase
+        .from("crm_tracking_link_snapshots")
+        .select("*")
+        .eq("tracking_link_id", linkId)
+        .order("snapshot_at", { ascending: true })
+        .limit(30);
+      setHistory(data ?? []);
+    };
+
+    fetchHistory();
+  }, [token, linkId]);
 
   const chartData = useMemo(() => {
     if (!history || history.length === 0) return [];
     return [...history]
-      .sort((a: any, b: any) => a.snapshotAt - b.snapshotAt)
+      .sort((a: any, b: any) => new Date(a.snapshot_at).getTime() - new Date(b.snapshot_at).getTime())
       .map((s: any) => ({
-        date: new Date(s.snapshotAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        date: new Date(s.snapshot_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         clicks: s.clicks ?? 0,
         subs: s.subscribers ?? 0,
       }));
@@ -87,15 +99,27 @@ const COL_STYLES = {
 
 export default function TrackingLinksCard({ token, isAdmin }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [links, setLinks] = useState<any[] | null>(null);
 
-  const links = useQuery(api.crm.trackingLinks.getMyTrackingLinks, token ? { token } : "skip");
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchLinks = async () => {
+      const { data } = await supabase
+        .from("crm_tracking_links")
+        .select("*, creator:crm_creators(name)");
+      setLinks(data ?? []);
+    };
+
+    fetchLinks();
+  }, [token]);
 
   // Group by creator
   const grouped = useMemo(() => {
     if (!links || links.length === 0) return [];
     const map = new Map<string, any[]>();
     for (const link of links) {
-      const creator = (link as any).creatorName || "Unknown";
+      const creator = link.creator?.name || (link as any).creatorName || "Unknown";
       if (!map.has(creator)) map.set(creator, []);
       map.get(creator)!.push(link);
     }
@@ -157,7 +181,7 @@ export default function TrackingLinksCard({ token, isAdmin }: Props) {
                     </tr>
                   )}
                   {creatorLinks.map((link: any) => {
-                    const id = link._id?.toString() || link.linkId;
+                    const id = link.id?.toString() || link.linkId;
                     const clicks = link.clicks ?? link.totalClicks ?? 0;
                     const subs = link.subscribers ?? link.totalSubscribers ?? 0;
                     const convRate = clicks > 0 ? ((subs / clicks) * 100).toFixed(1) + "%" : "—";
@@ -191,7 +215,7 @@ export default function TrackingLinksCard({ token, isAdmin }: Props) {
                             </div>
                           </td>
                           <td style={{ ...COL_STYLES.creator, color: "#a0a0a0", fontSize: "13px", transition: "background 0.15s" }}>
-                            {(link as any).creatorName || creator}
+                            {link.creator?.name || (link as any).creatorName || creator}
                           </td>
                           <td style={{ ...COL_STYLES.clicks, color: "#fff", fontWeight: 600, fontVariantNumeric: "tabular-nums", transition: "background 0.15s" }}>
                             {clicks.toLocaleString()}
@@ -215,7 +239,7 @@ export default function TrackingLinksCard({ token, isAdmin }: Props) {
                               <div style={{ fontSize: "11px", color: "#666", marginBottom: "8px", textTransform: "uppercase" }}>
                                 30-Day Trend
                               </div>
-                              <LinkSparkline token={token} linkId={link._id} />
+                              <LinkSparkline token={token} linkId={link.id} />
                             </td>
                           </tr>
                         )}

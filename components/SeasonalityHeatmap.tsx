@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface SeasonalityHeatmapProps {
   token: string;
@@ -24,7 +24,7 @@ const HOUR_LABELS = [
 function getHeatColor(value: number, max: number): string {
   if (max === 0 || value === 0) return "var(--bg)";
   const intensity = value / max;
-  
+
   // Color gradient: light gray → yellow → orange → red
   if (intensity < 0.25) {
     return `rgba(196, 149, 106, ${0.1 + intensity * 0.3})`;
@@ -38,10 +38,27 @@ function getHeatColor(value: number, max: number): string {
 }
 
 export default function SeasonalityHeatmap({ token }: SeasonalityHeatmapProps) {
-  const seasonality = useQuery(
-    api.crm.insights.getSeasonality,
-    token ? { token } : "skip"
-  );
+  const [seasonality, setSeasonality] = useState<SeasonalityCell[] | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchSeasonality() {
+      const { data, error } = await supabase
+        .from("crm_seasonality")
+        .select("*");
+
+      if (error) {
+        console.error("Failed to fetch seasonality data:", error.message);
+        setSeasonality([]);
+        return;
+      }
+
+      setSeasonality(data ?? []);
+    }
+
+    fetchSeasonality();
+  }, [token]);
 
   if (!seasonality) {
     return (
@@ -57,7 +74,7 @@ export default function SeasonalityHeatmap({ token }: SeasonalityHeatmapProps) {
   // Build 7x24 matrix
   const matrix: number[][] = Array(7).fill(null).map(() => Array(24).fill(0));
   let maxValue = 0;
-  
+
   for (const cell of seasonality) {
     matrix[cell.dayOfWeek][cell.hour] = cell.avgMessages;
     if (cell.avgMessages > maxValue) maxValue = cell.avgMessages;
@@ -65,7 +82,7 @@ export default function SeasonalityHeatmap({ token }: SeasonalityHeatmapProps) {
 
   // Find peak times
   const peaks = seasonality.filter((c: SeasonalityCell) => c.peakFlag);
-  const peakDescriptions = peaks.slice(0, 5).map((p: SeasonalityCell) => 
+  const peakDescriptions = peaks.slice(0, 5).map((p: SeasonalityCell) =>
     `${DAY_LABELS[p.dayOfWeek]} ${HOUR_LABELS[p.hour]}`
   );
 
@@ -74,12 +91,12 @@ export default function SeasonalityHeatmap({ token }: SeasonalityHeatmapProps) {
   const avgPerSlot = totalActivity / (7 * 24);
 
   // Find busiest day and hour
-  const dayTotals = DAY_LABELS.map((_, i) => 
+  const dayTotals = DAY_LABELS.map((_, i) =>
     matrix[i].reduce((sum, v) => sum + v, 0)
   );
   const busiestDayIndex = dayTotals.indexOf(Math.max(...dayTotals));
-  
-  const hourTotals = HOUR_LABELS.map((_, h) => 
+
+  const hourTotals = HOUR_LABELS.map((_, h) =>
     matrix.reduce((sum, day) => sum + day[h], 0)
   );
   const busiestHourIndex = hourTotals.indexOf(Math.max(...hourTotals));

@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 type ChatterOption = {
   id: string;
@@ -46,8 +44,6 @@ export default function MeetingScheduler({
   defaultChatterId?: string;
   onScheduled?: () => void;
 }) {
-  const createMeeting = useMutation(api.crm.coaching.createMeeting);
-
   const chatterOptions = useMemo(() => {
     // Most deployments treat 1:1 attendees as chatters.
     const opts = chatters.filter((c) => (c.role ? c.role === "chatter" : true));
@@ -119,16 +115,16 @@ export default function MeetingScheduler({
     try {
       for (let i = 0; i < count; i++) {
         const ts = baseTs + i * stepDays * 24 * 60 * 60 * 1000;
-        await createMeeting({
-          token,
-          chatterId: chatterId as Id<"crm_chatters">,
-          meetingDate: ts,
-          meetingType,
+        const { error: insertError } = await supabase.from("crm_coaching_meetings").insert({
+          chatter_id: chatterId,
+          meeting_date: ts,
+          meeting_type: meetingType,
           duration: durationNum,
-          location: location.trim() ? location.trim() : undefined,
-          agenda: agenda.trim() ? agenda.trim() : undefined,
+          location: location.trim() ? location.trim() : null,
+          agenda: agenda.trim() ? agenda.trim() : null,
           notes: "", // Notes can be filled in after the meeting.
         });
+        if (insertError) throw new Error(insertError.message);
       }
 
       setSuccess(count === 1 ? "Meeting scheduled." : `Scheduled ${count} meetings.`);

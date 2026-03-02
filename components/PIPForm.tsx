@@ -1,9 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 export type PIPFormChatterOption = {
   id: string;
@@ -49,8 +47,6 @@ export default function PIPForm({
   onCancel: () => void;
   onSaved: (pipId: string) => void;
 }) {
-  const createPip = useMutation(api.crm.coaching.createPip);
-
   const chatterOptions = useMemo(() => {
     return (chatters || []).filter((c) => c.role === "chatter" || !c.role);
   }, [chatters]);
@@ -132,19 +128,24 @@ export default function PIPForm({
 
     setBusy(true);
     try {
-      const pipId = await createPip({
-        token,
-        chatterId: chatterId as Id<"crm_chatters">,
-        title: t,
-        reason: r,
-        startDate: startTs,
-        endDate: endTs,
-        requirements: cleanedRequirements,
-        milestones: cleanedMilestones,
-        visibility,
-      } as any);
+      const { data, error: insertError } = await supabase
+        .from("crm_coaching_pips")
+        .insert({
+          chatter_id: chatterId,
+          title: t,
+          reason: r,
+          start_date: startTs,
+          end_date: endTs,
+          requirements: cleanedRequirements,
+          milestones: cleanedMilestones,
+          visibility,
+        })
+        .select("id")
+        .single();
 
-      onSaved(String(pipId));
+      if (insertError) throw new Error(insertError.message);
+
+      onSaved(String(data.id));
     } catch (e: any) {
       console.error(e);
       setError(e?.message ? String(e.message) : "Failed to create PIP.");

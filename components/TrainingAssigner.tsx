@@ -1,9 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 export type TrainingAssignerMaterialOption = {
   id: string;
@@ -46,8 +44,6 @@ export default function TrainingAssigner({
   onClose: () => void;
   onAssigned?: () => void;
 }) {
-  const assignTraining = useMutation(api.crm.coaching.assignTraining);
-
   const chatterOptions = useMemo(() => {
     return (chatters || []).filter((c) => c.role === "chatter" || !c.role);
   }, [chatters]);
@@ -96,14 +92,14 @@ export default function TrainingAssigner({
         for (const chatterId of effectiveChatterIds) {
           done += 1;
           setProgress(`Assigning ${done}/${totalOps}…`);
-          await assignTraining({
-            token,
-            chatterId: chatterId as Id<"crm_chatters">,
-            materialId: materialId as Id<"crm_training_materials">,
+          const { error: insertError } = await supabase.from("crm_training_assignments").insert({
+            chatter_id: chatterId,
+            material_id: materialId,
             priority,
-            dueDate: dueTs,
-            reason: reason.trim() ? reason.trim() : undefined,
-          } as any);
+            due_date: dueTs ?? null,
+            reason: reason.trim() ? reason.trim() : null,
+          });
+          if (insertError) throw new Error(insertError.message);
         }
       }
 

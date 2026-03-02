@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface LTVProjectionProps {
   token: string;
@@ -45,10 +45,27 @@ const confidenceLabels: Record<Confidence, string> = {
 };
 
 export default function LTVProjection({ token }: LTVProjectionProps) {
-  const projections = useQuery(
-    api.crm.insights.getLTVProjections,
-    token ? { token } : "skip"
-  );
+  const [projections, setProjections] = useState<Projection[] | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchProjections() {
+      const { data, error } = await supabase
+        .from("crm_ltv_projections")
+        .select("*");
+
+      if (error) {
+        console.error("Failed to fetch LTV projections:", error.message);
+        setProjections([]);
+        return;
+      }
+
+      setProjections(data ?? []);
+    }
+
+    fetchProjections();
+  }, [token]);
 
   if (!projections) {
     return (
@@ -137,7 +154,7 @@ export default function LTVProjection({ token }: LTVProjectionProps) {
                   >
                     {i + 1}.
                   </div>
-                  
+
                   {/* Avatar + Name */}
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", width: "120px" }}>
                     {p.profilePictureUrl ? (

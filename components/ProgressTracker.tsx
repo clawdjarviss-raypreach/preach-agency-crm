@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 export type GoalStatus = "active" | "achieved" | "missed" | "cancelled";
 
@@ -72,8 +70,6 @@ export default function ProgressTracker({
   allowEdit: boolean;
   chatterNameById?: (id: string) => string | undefined;
 }) {
-  const updateGoalProgress = useMutation(api.crm.coaching.updateGoalProgress);
-
   const [note, setNote] = useState<string>("");
   const [customValue, setCustomValue] = useState<string>("");
 
@@ -114,12 +110,27 @@ export default function ProgressTracker({
 
     setSaving(true);
     try {
-      await updateGoalProgress({
-        token,
-        goalId: goal.id as Id<"crm_coaching_goals">,
-        currentValue: nextValue,
-        note: note.trim() ? note.trim() : undefined,
+      const updatePayload: Record<string, any> = {};
+      if (nextValue !== undefined) {
+        updatePayload.current_value = nextValue;
+      }
+
+      if (Object.keys(updatePayload).length > 0) {
+        const { error: updateError } = await supabase
+          .from("crm_coaching_goals")
+          .update(updatePayload)
+          .eq("id", goal.id);
+        if (updateError) throw new Error(updateError.message);
+      }
+
+      const { error: checkInError } = await supabase.from("crm_goal_checkins").insert({
+        goal_id: goal.id,
+        value: nextValue ?? null,
+        note: note.trim() ? note.trim() : null,
+        checked_in_at: Date.now(),
       });
+      if (checkInError) throw new Error(checkInError.message);
+
       setSuccess(label);
       setNote("");
       setCustomValue("");

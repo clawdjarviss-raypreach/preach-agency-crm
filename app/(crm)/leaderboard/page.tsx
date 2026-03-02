@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 // ─── TYPES ─────────────────────────────────────────────────
 
@@ -89,38 +88,106 @@ export default function LeaderboardPage() {
   const [showBadgeModal, setShowBadgeModal] = useState(false);
   const [currentBadge, setCurrentBadge] = useState<any>(null);
 
+  // Data state
+  const [leaderboard, setLeaderboard] = useState<any>(null);
+  const [extendedLeaderboard, setExtendedLeaderboard] = useState<any>(null);
+  const [achievements, setAchievements] = useState<any>(null);
+  const [streak, setStreak] = useState<any>(null);
+  const [unnotifiedBadges, setUnnotifiedBadges] = useState<any[]>([]);
+
   useEffect(() => {
     setToken(localStorage.getItem("crm_token"));
   }, []);
 
-  // Classic leaderboard query
-  const leaderboard = useQuery(
-    api.crm.leaderboard.getLeaderboard,
-    token && viewMode === "classic" ? { token, category, period } : "skip"
-  );
+  // Classic leaderboard fetch
+  useEffect(() => {
+    if (!token) return;
+    if (viewMode !== "classic") return;
 
-  // Extended leaderboard query
-  const extendedLeaderboard = useQuery(
-    api.crm.leaderboard.getExtendedLeaderboard,
-    token && viewMode === "extended" ? { token, period: extendedPeriod, sortBy: sortMetric } : "skip"
-  );
+    setLeaderboard(null);
 
-  const achievements = useQuery(
-    api.crm.achievements.getAchievements,
-    token ? { token } : "skip"
-  );
+    const fetchLeaderboard = async () => {
+      const res = await fetch(
+        `/api/leaderboard?token=${encodeURIComponent(token)}&category=${category}&period=${period}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboard(data);
+      }
+    };
 
-  const streak = useQuery(
-    api.crm.streaks.getMyStreak,
-    token ? { token } : "skip"
-  );
+    fetchLeaderboard();
+  }, [token, viewMode, category, period]);
 
-  const unnotifiedBadges = useQuery(
-    api.crm.achievements.getUnnotifiedBadges,
-    token ? { token } : "skip"
-  );
+  // Extended leaderboard fetch
+  useEffect(() => {
+    if (!token) return;
+    if (viewMode !== "extended") return;
 
-  const markNotified = useMutation(api.crm.achievements.markBadgeNotified);
+    setExtendedLeaderboard(null);
+
+    const fetchExtendedLeaderboard = async () => {
+      const res = await fetch(
+        `/api/leaderboard?token=${encodeURIComponent(token)}&mode=extended&period=${extendedPeriod}&sortBy=${sortMetric}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setExtendedLeaderboard(data);
+      }
+    };
+
+    fetchExtendedLeaderboard();
+  }, [token, viewMode, extendedPeriod, sortMetric]);
+
+  // Achievements fetch
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchAchievements = async () => {
+      const { data, error } = await supabase
+        .from("crm_achievements")
+        .select("*");
+      if (!error && data) {
+        setAchievements(data);
+      }
+    };
+
+    fetchAchievements();
+  }, [token]);
+
+  // Streak fetch
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchStreak = async () => {
+      const res = await fetch(
+        `/api/leaderboard?token=${encodeURIComponent(token)}&mode=streak`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setStreak(data);
+      }
+    };
+
+    fetchStreak();
+  }, [token]);
+
+  // Unnotified badges fetch
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchUnnotifiedBadges = async () => {
+      const { data, error } = await supabase
+        .from("crm_chatter_achievements")
+        .select("*")
+        .eq("notified", false);
+      if (!error && data) {
+        setUnnotifiedBadges(data);
+      }
+    };
+
+    fetchUnnotifiedBadges();
+  }, [token]);
 
   // Show badge modal for unnotified badges
   useEffect(() => {
@@ -133,14 +200,17 @@ export default function LeaderboardPage() {
   const dismissBadge = useCallback(async () => {
     if (currentBadge && token) {
       try {
-        await markNotified({ token, chatterAchievementId: currentBadge.id });
+        await supabase
+          .from("crm_chatter_achievements")
+          .update({ notified: true })
+          .eq("id", currentBadge.id);
       } catch (e) {
         // ignore
       }
     }
     setShowBadgeModal(false);
     setCurrentBadge(null);
-  }, [currentBadge, token, markNotified]);
+  }, [currentBadge, token]);
 
   if (!token) {
     return (

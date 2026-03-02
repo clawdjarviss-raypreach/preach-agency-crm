@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 export type GoalMetric =
   | "response_time"
@@ -214,9 +212,6 @@ export default function GoalForm({
   onSaved?: (goalId: string) => void;
   onCancel?: () => void;
 }) {
-  const createGoal = useMutation(api.crm.coaching.createGoal);
-  const updateGoal = useMutation(api.crm.coaching.updateGoal);
-
   const chatterOptions = useMemo(() => {
     const onlyChatters = chatters.filter((c) => (c.role ? c.role === "chatter" : true));
     return onlyChatters.length ? onlyChatters : chatters;
@@ -331,41 +326,49 @@ export default function GoalForm({
     setSaving(true);
     try {
       if (initialGoal) {
-        await updateGoal({
-          token,
-          goalId: initialGoal.id as Id<"crm_coaching_goals">,
-          chatterId: undefined as never, // (not patchable)
-          title: t,
-          description: desc,
-          metric,
-          unit: unit.trim() ? unit.trim() : undefined,
-          targetValue: target,
-          currentValue: current,
-          startValue: baseline,
-          periodStart: startTs,
-          periodEnd: endTs,
-          visibility,
-        } as any);
+        const { error: updateError } = await supabase
+          .from("crm_coaching_goals")
+          .update({
+            title: t,
+            description: desc,
+            metric,
+            unit: unit.trim() ? unit.trim() : undefined,
+            target_value: target,
+            current_value: current,
+            start_value: baseline,
+            period_start: startTs,
+            period_end: endTs,
+            visibility,
+          })
+          .eq("id", initialGoal.id);
+
+        if (updateError) throw new Error(updateError.message);
 
         setSuccess("Saved.");
         onSaved?.(initialGoal.id);
       } else {
-        const goalId = await createGoal({
-          token,
-          chatterId: chatterId as Id<"crm_chatters">,
-          title: t,
-          description: desc,
-          metric,
-          unit: unit.trim() ? unit.trim() : undefined,
-          targetValue: target,
-          currentValue: current,
-          startValue: baseline,
-          periodStart: startTs,
-          periodEnd: endTs,
-          visibility,
-        });
+        const { data, error: insertError } = await supabase
+          .from("crm_coaching_goals")
+          .insert({
+            chatter_id: chatterId,
+            title: t,
+            description: desc,
+            metric,
+            unit: unit.trim() ? unit.trim() : undefined,
+            target_value: target,
+            current_value: current,
+            start_value: baseline,
+            period_start: startTs,
+            period_end: endTs,
+            visibility,
+          })
+          .select("id")
+          .single();
+
+        if (insertError) throw new Error(insertError.message);
+
         setSuccess("Goal created.");
-        onSaved?.(String(goalId));
+        onSaved?.(String(data.id));
       }
     } catch (e: any) {
       setError(e?.message ?? "Failed to save goal");

@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 type VipStrategy = "top_performer" | "round_robin" | "specific_chatters";
 
@@ -41,14 +40,42 @@ export default function RoutingConfigPanel() {
 
   const canAdmin = !!user && ["admin", "manager"].includes(user.role);
 
-  const creatorsRaw = useQuery(
-    api.crm.creators.list,
-    token ? { token, includeArchived: false } : "skip"
-  ) as any[] | undefined;
+  const [creatorsRaw, setCreatorsRaw] = useState<any[] | undefined>(undefined);
+  const [chattersRaw, setChattersRaw] = useState<any[] | undefined>(undefined);
 
-  const chattersRaw = useQuery(api.crm.chatters.list, token ? { token } : "skip") as
-    | any[]
-    | undefined;
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchCreators() {
+      const { data, error } = await supabase
+        .from("crm_creators")
+        .select("*")
+        .eq("status", "active");
+
+      if (error) {
+        console.error("Failed to fetch creators:", error.message);
+        setCreatorsRaw([]);
+        return;
+      }
+      setCreatorsRaw(data ?? []);
+    }
+
+    async function fetchChatters() {
+      const { data, error } = await supabase
+        .from("crm_chatters")
+        .select("*");
+
+      if (error) {
+        console.error("Failed to fetch chatters:", error.message);
+        setChattersRaw([]);
+        return;
+      }
+      setChattersRaw(data ?? []);
+    }
+
+    fetchCreators();
+    fetchChatters();
+  }, [token]);
 
   const creatorOptions = useMemo(() => {
     return (creatorsRaw || []).map((c) => ({ id: normalizeId(c.id), name: c.name as string }));
@@ -62,19 +89,48 @@ export default function RoutingConfigPanel() {
 
   const [creatorId, setCreatorId] = useState<string>("");
 
-  const routingDoc = useQuery(
-    api.crm.queue_routing.getRoutingConfig,
-    token && creatorId ? { token, creatorId: creatorId as any } : "skip"
-  ) as
+  const [routingDoc, setRoutingDoc] = useState<
     | {
         exists: boolean;
         config: any;
         updatedAt: number | null;
         updatedBy: string | null;
       }
-    | undefined;
+    | undefined
+  >(undefined);
 
-  const updateRoutingConfig = useMutation(api.crm.queue_routing.updateRoutingConfig);
+  useEffect(() => {
+    if (!token || !creatorId) return;
+
+    async function fetchRoutingConfig() {
+      const { data, error } = await supabase
+        .from("crm_routing_configs")
+        .select("*")
+        .eq("creator_id", creatorId)
+        .single();
+
+      if (error && error.code !== "PGRST116") {
+        // PGRST116 = no rows found, which is fine
+        console.error("Failed to fetch routing config:", error.message);
+        setRoutingDoc({ exists: false, config: null, updatedAt: null, updatedBy: null });
+        return;
+      }
+
+      if (!data) {
+        setRoutingDoc({ exists: false, config: null, updatedAt: null, updatedBy: null });
+        return;
+      }
+
+      setRoutingDoc({
+        exists: true,
+        config: data,
+        updatedAt: data.updated_at ? new Date(data.updated_at).getTime() : null,
+        updatedBy: data.updated_by ?? null,
+      });
+    }
+
+    fetchRoutingConfig();
+  }, [token, creatorId]);
 
   const [local, setLocal] = useState<RoutingConfigState>(() => ({
     autoRoutingEnabled: false,
@@ -107,18 +163,21 @@ export default function RoutingConfigPanel() {
     setSaving(true);
     setSaveError(null);
     try {
-      await updateRoutingConfig({
-        token,
-        creatorId: creatorId as any,
+      const { error } = await supabase.from("crm_routing_configs").upsert({
+        creator_id: creatorId,
         autoRoutingEnabled: local.autoRoutingEnabled,
         vipAssignmentStrategy: local.vipAssignmentStrategy,
         vipSpecificChatterIds:
           local.vipAssignmentStrategy === "specific_chatters"
-            ? (local.vipSpecificChatterIds as any)
-            : ([] as any),
+            ? local.vipSpecificChatterIds
+            : [],
         whalePriorityBoostEnabled: local.whalePriorityBoostEnabled,
         workloadBalancingThreshold: local.workloadBalancingThreshold,
+        updated_at: new Date().toISOString(),
       });
+
+      if (error) throw new Error(error.message);
+
       setSaveOkAt(Date.now());
     } catch (e: any) {
       setSaveError(e?.message || "Failed to save");
@@ -312,7 +371,7 @@ export default function RoutingConfigPanel() {
         <div>
           <div style={labelStyle}>Specific VIP chatters</div>
           <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 8 }}>
-            Used only when strategy is “Specific chatters”.
+            Used only when strategy is "Specific chatters".
           </div>
 
           <div
