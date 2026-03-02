@@ -44,7 +44,6 @@ const idMap = new Map<string, string>();
 
 function toSnakeKey(key: string): string {
   return key
-    .replace(/^_creationTime$/, 'created_at')
     .replace(/([A-Z])/g, '_$1')
     .toLowerCase();
 }
@@ -71,6 +70,10 @@ function transformRow(row: Json, config: TableConfig): Json {
   for (const [key, value] of Object.entries(row)) {
     if (key === '_id') {
       out.id = mapId(value);
+      continue;
+    }
+
+    if (key === '_creationTime') {
       continue;
     }
 

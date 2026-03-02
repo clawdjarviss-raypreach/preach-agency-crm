@@ -39,7 +39,7 @@ create table if not exists crm_chatters (
   status text not null default 'active' check (status in ('pending','active','inactive','trial','invited')),
   invite_token_id uuid,
   assigned_creators text[] not null default '{}',
-  hourly_rate integer,
+  hourly_rate numeric(10,2),
   commission_pct numeric(5,2),
   joined_at timestamptz not null default now(),
   avatar_emoji text,

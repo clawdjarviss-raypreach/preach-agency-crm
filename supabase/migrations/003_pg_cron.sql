@@ -22,7 +22,7 @@ CREATE OR REPLACE FUNCTION public.crm_schedule_edge_job(
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
-AS $$
+AS $body$
 DECLARE
   v_url TEXT;
   v_jwt TEXT;
@@ -44,24 +44,24 @@ BEGIN
   WHERE jobname = p_job_name;
 
   v_sql := format(
-    $$
+    $sql$
     SELECT net.http_post(
       url := %L,
       headers := jsonb_build_object(
-        'Authorization', 'Bearer %s',
+        'Authorization', %L,
         'Content-Type', 'application/json'
       ),
       body := %L::jsonb
     );
-    $$,
+    $sql$,
     v_url || '/functions/v1/' || p_function_name,
-    v_jwt,
+    'Bearer ' || v_jwt,
     p_payload::text
   );
 
   PERFORM cron.schedule(p_job_name, p_cron, v_sql);
 END;
-$$;
+$body$;
 
 -- 01 evaluate-streaks
 SELECT public.crm_schedule_edge_job(
@@ -202,13 +202,13 @@ SELECT public.crm_schedule_edge_job(
 -- 18 om-aggregate-recompute
 SELECT public.crm_schedule_edge_job(
   'crm-om-aggregate-recompute',
-  '2/30 * * * *',
+  '2,32 * * * *',
   'analytics',
   jsonb_build_object('job', 'om_aggregate_recompute')
 );
 
 -- SQL-only maintenance: expire invite tokens
-PERFORM cron.unschedule(jobid)
+SELECT cron.unschedule(jobid)
 FROM cron.job
 WHERE jobname = 'crm-expire-invite-tokens';
 
