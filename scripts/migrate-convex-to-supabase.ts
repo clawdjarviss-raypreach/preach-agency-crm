@@ -95,7 +95,7 @@ async function exportConvexTable(table: string): Promise<Json[]> {
   while (true) {
     const page = (await (convex as any).query('migration:exportTable', {
       table,
-      cursor,
+      cursor: cursor ?? undefined,
       limit: 1000,
     })) as { rows: Json[]; nextCursor?: string | null };
 
