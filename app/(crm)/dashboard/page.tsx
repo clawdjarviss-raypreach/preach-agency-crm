@@ -1,18 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 import AdminRevenueDashboard from "./AdminRevenueDashboard";
 
 function SupervisorDashboard({ user, token, now }: { user: any; token: string; now: number }) {
-  const activeShifts = useQuery(api.crm.shifts.getAllActive, token ? { token } : "skip");
-  const pendingRequests = useQuery(
-    api.crm.schedule.getPendingRequests,
-    token ? { token } : "skip"
-  );
-  const teamStats = useQuery(api.crm.analytics.getSupervisorTeamStats, token ? { token } : "skip");
+  const [activeShifts, setActiveShifts] = useState<any[] | null>(null);
+  const [pendingRequests, setPendingRequests] = useState<any[] | null>(null);
+  const [teamStats, setTeamStats] = useState<any[] | null>(null);
+  const [weekSchedule, setWeekSchedule] = useState<any[] | null>(null);
 
   const today = new Date().toISOString().split("T")[0];
   const weekStart = (() => {
@@ -26,10 +23,68 @@ function SupervisorDashboard({ user, token, now }: { user: any; token: string; n
     return d.toISOString().split("T")[0];
   })();
 
-  const weekSchedule = useQuery(
-    api.crm.schedule.listByDateRange,
-    token ? { token, startDate: weekStart, endDate: weekEnd } : "skip"
-  );
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchData() {
+      // Active shifts with creator name
+      const { data: shifts } = await supabase
+        .from("crm_shifts")
+        .select("*, creator:crm_creators(name)")
+        .is("clock_out", null);
+      setActiveShifts(shifts || []);
+
+      // Pending day-off requests
+      const { data: pending } = await supabase
+        .from("crm_schedules")
+        .select("*, chatter:crm_chatters(name, avatar_emoji)")
+        .eq("status", "off_requested");
+      setPendingRequests(
+        (pending || []).map((r: any) => ({
+          ...r,
+          chatterName: r.chatter?.name || "Unknown",
+          chatterEmoji: r.chatter?.avatar_emoji || "👤",
+        }))
+      );
+
+      // Week schedule with chatter + creator info
+      const { data: schedule } = await supabase
+        .from("crm_schedules")
+        .select("*, chatter:crm_chatters(name, avatar_emoji), creator:crm_creators(name)")
+        .gte("date", weekStart)
+        .lte("date", weekEnd);
+      setWeekSchedule(
+        (schedule || []).map((s: any) => ({
+          ...s,
+          chatterName: s.chatter?.name || "Unknown",
+          chatterEmoji: s.chatter?.avatar_emoji || "👤",
+          creatorName: s.creator?.name || null,
+        }))
+      );
+
+      // TODO: Implement getSupervisorTeamStats aggregation from shifts + reports
+      // Best effort: get chatters assigned to this supervisor's creators and their active shifts
+      const { data: chatters } = await supabase
+        .from("crm_chatters")
+        .select("id, name, avatar_emoji, profile_picture_url");
+
+      const chatterStats = (chatters || []).map((c: any) => {
+        const activeShift = (shifts || []).find((s: any) => s.chatter_id === c.id);
+        return {
+          chatterId: c.id,
+          chatterName: c.name,
+          avatarEmoji: c.avatar_emoji,
+          profilePictureUrl: c.profile_picture_url,
+          activeShift: !!activeShift,
+          todayWorkMinutes: 0, // TODO: aggregate from today's shifts
+          pendingReports: false, // TODO: check pending reports
+        };
+      });
+      setTeamStats(chatterStats);
+    }
+
+    fetchData();
+  }, [token, weekStart, weekEnd]);
 
   return (
     <div style={{ maxWidth: "1000px" }}>
@@ -198,10 +253,31 @@ function SupervisorDashboard({ user, token, now }: { user: any; token: string; n
 }
 
 function ChatterDashboard({ user, token, now }: { user: any; token: string; now: number }) {
-  const recentReports = useQuery(
-    api.crm.salesReports.listByChatter,
-    token ? { token, limit: 5 } : "skip"
-  );
+  const [recentReports, setRecentReports] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    if (!token || !user?.id) return;
+
+    async function fetchReports() {
+      const { data } = await supabase
+        .from("crm_sales_reports")
+        .select("*")
+        .eq("chatter_id", user.id)
+        .order("date", { ascending: false })
+        .limit(5);
+
+      setRecentReports(
+        (data || []).map((r: any) => ({
+          ...r,
+          busynessRating: r.busyness_rating,
+          spenderCount: r.spender_count,
+          totalSales: r.total_sales,
+        }))
+      );
+    }
+
+    fetchReports();
+  }, [token, user?.id]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -336,20 +412,79 @@ function ClockInOutCard({ user, token, now, compact }: { user: any; token: strin
   const [clockingIn, setClockingIn] = useState(false);
   const [clockingOut, setClockingOut] = useState(false);
   const [togglingBreak, setTogglingBreak] = useState(false);
+  const [activeShift, setActiveShift] = useState<any>(null);
+  const [creators, setCreators] = useState<any[] | null>(null);
 
-  const activeShift = useQuery(api.crm.shifts.getActive, token ? { token } : "skip");
-  const creators = useQuery(api.crm.creators.list, token ? { token } : "skip");
+  useEffect(() => {
+    if (!token || !user?.id) return;
 
-  const clockIn = useMutation(api.crm.shifts.clockIn);
-  const clockOut = useMutation(api.crm.shifts.clockOut);
-  const startBreak = useMutation(api.crm.shifts.startBreak);
-  const endBreak = useMutation(api.crm.shifts.endBreak);
+    async function fetchData() {
+      // Fetch active shift for current user
+      const { data: shifts } = await supabase
+        .from("crm_shifts")
+        .select("*, creator:crm_creators(name)")
+        .eq("chatter_id", user.id)
+        .is("clock_out", null)
+        .limit(1);
+
+      if (shifts && shifts.length > 0) {
+        const shift = shifts[0];
+        const breaks = shift.breaks || [];
+        const onBreak = breaks.length > 0 && !breaks[breaks.length - 1].end;
+        const currentBreakStart = onBreak ? new Date(breaks[breaks.length - 1].start).getTime() : null;
+
+        setActiveShift({
+          ...shift,
+          clockIn: new Date(shift.clock_in).getTime(),
+          creatorName: shift.creator?.name || "Unknown",
+          onBreak,
+          currentBreakStart,
+          totalBreakMinutes: shift.total_break_minutes || 0,
+        });
+      } else {
+        setActiveShift(null);
+      }
+
+      // Fetch creators list
+      const { data: creatorsList } = await supabase.from("crm_creators").select("id, name");
+      setCreators(creatorsList || []);
+    }
+
+    fetchData();
+    const interval = setInterval(fetchData, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
+  }, [token, user?.id]);
 
   const handleClockIn = async () => {
     if (!selectedCreator || !token) return;
     setClockingIn(true);
     try {
-      await clockIn({ token, creatorId: selectedCreator as any });
+      const today = new Date().toISOString().split("T")[0];
+      const { error } = await supabase.from("crm_shifts").insert({
+        chatter_id: user.id,
+        creator_id: selectedCreator,
+        clock_in: new Date().toISOString(),
+        date: today,
+      });
+      if (error) throw new Error(error.message);
+      // Refresh shift data
+      const { data: shifts } = await supabase
+        .from("crm_shifts")
+        .select("*, creator:crm_creators(name)")
+        .eq("chatter_id", user.id)
+        .is("clock_out", null)
+        .limit(1);
+      if (shifts && shifts.length > 0) {
+        const shift = shifts[0];
+        setActiveShift({
+          ...shift,
+          clockIn: new Date(shift.clock_in).getTime(),
+          creatorName: shift.creator?.name || "Unknown",
+          onBreak: false,
+          currentBreakStart: null,
+          totalBreakMinutes: 0,
+        });
+      }
     } catch (err: any) {
       alert(err.message || "Failed to clock in");
     } finally {
@@ -358,10 +493,15 @@ function ClockInOutCard({ user, token, now, compact }: { user: any; token: strin
   };
 
   const handleClockOut = async () => {
-    if (!token) return;
+    if (!token || !activeShift) return;
     setClockingOut(true);
     try {
-      await clockOut({ token });
+      const { error } = await supabase
+        .from("crm_shifts")
+        .update({ clock_out: new Date().toISOString() })
+        .eq("id", activeShift.id);
+      if (error) throw new Error(error.message);
+      setActiveShift(null);
     } catch (err: any) {
       alert(err.message || "Failed to clock out");
     } finally {
@@ -370,13 +510,44 @@ function ClockInOutCard({ user, token, now, compact }: { user: any; token: strin
   };
 
   const handleToggleBreak = async () => {
-    if (!token) return;
+    if (!token || !activeShift) return;
     setTogglingBreak(true);
     try {
-      if (activeShift?.onBreak) {
-        await endBreak({ token });
+      const breaks = activeShift.breaks || [];
+      if (activeShift.onBreak) {
+        // End break
+        const lastBreak = breaks[breaks.length - 1];
+        lastBreak.end = new Date().toISOString();
+        const breakMinutes = Math.floor((new Date(lastBreak.end).getTime() - new Date(lastBreak.start).getTime()) / 60000);
+        const { error } = await supabase
+          .from("crm_shifts")
+          .update({
+            breaks,
+            total_break_minutes: (activeShift.totalBreakMinutes || 0) + breakMinutes,
+          })
+          .eq("id", activeShift.id);
+        if (error) throw new Error(error.message);
+        setActiveShift({
+          ...activeShift,
+          breaks,
+          onBreak: false,
+          currentBreakStart: null,
+          totalBreakMinutes: (activeShift.totalBreakMinutes || 0) + breakMinutes,
+        });
       } else {
-        await startBreak({ token });
+        // Start break
+        breaks.push({ start: new Date().toISOString() });
+        const { error } = await supabase
+          .from("crm_shifts")
+          .update({ breaks })
+          .eq("id", activeShift.id);
+        if (error) throw new Error(error.message);
+        setActiveShift({
+          ...activeShift,
+          breaks,
+          onBreak: true,
+          currentBreakStart: Date.now(),
+        });
       }
     } catch (err: any) {
       alert(err.message || "Failed to toggle break");

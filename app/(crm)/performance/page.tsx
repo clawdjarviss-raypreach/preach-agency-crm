@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 // ── Period Helpers ──
 
@@ -51,6 +50,8 @@ export default function PerformancePage() {
   const [customEnd, setCustomEnd] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("totalSales");
   const [sortAsc, setSortAsc] = useState(false);
+  const [performance, setPerformance] = useState<any[] | null>(null);
+  const [dailySales, setDailySales] = useState<any[] | null>(null);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -69,19 +70,98 @@ export default function PerformancePage() {
     return p ? { start: p.start, end: p.end } : { start: "", end: "" };
   }, [periodKey, customStart, customEnd]);
 
-  const performance = useQuery(
-    api.crm.analytics.getPerformanceByPeriod,
-    token && dateRange.start && dateRange.end
-      ? { token, startDate: dateRange.start, endDate: dateRange.end }
-      : "skip"
-  );
+  // Fetch performance data
+  useEffect(() => {
+    if (!token || !dateRange.start || !dateRange.end) return;
 
-  const dailySales = useQuery(
-    api.crm.analytics.getSalesByPeriod,
-    token && dateRange.start && dateRange.end
-      ? { token, startDate: dateRange.start, endDate: dateRange.end }
-      : "skip"
-  );
+    async function fetchPerformance() {
+      // TODO: Implement full performance aggregation server-side
+      // Best effort: query crm_shifts and crm_sales_reports for period, aggregate client-side
+
+      // Get all chatters
+      const { data: chatters } = await supabase
+        .from("crm_chatters")
+        .select("id, name, avatar_emoji, profile_picture_url");
+
+      // Get shifts in range
+      const { data: shifts } = await supabase
+        .from("crm_shifts")
+        .select("*")
+        .gte("date", dateRange.start)
+        .lte("date", dateRange.end);
+
+      // Get sales reports in range
+      const { data: reports } = await supabase
+        .from("crm_sales_reports")
+        .select("*")
+        .gte("date", dateRange.start)
+        .lte("date", dateRange.end);
+
+      // Count scheduled days for attendance
+      const { data: schedules } = await supabase
+        .from("crm_schedules")
+        .select("chatter_id, date")
+        .gte("date", dateRange.start)
+        .lte("date", dateRange.end);
+
+      const perfData = (chatters || []).map((c: any) => {
+        const chatterShifts = (shifts || []).filter((s: any) => s.chatter_id === c.id);
+        const chatterReports = (reports || []).filter((r: any) => r.chatter_id === c.id);
+        const scheduledDays = (schedules || []).filter((s: any) => s.chatter_id === c.id).length;
+
+        const totalMinutes = chatterShifts.reduce((s: number, sh: any) => s + (sh.total_minutes || 0), 0);
+        const totalBreakMinutes = chatterShifts.reduce((s: number, sh: any) => s + (sh.total_break_minutes || 0), 0);
+        const totalHours = parseFloat((totalMinutes / 60).toFixed(1));
+        const totalBreakHours = parseFloat((totalBreakMinutes / 60).toFixed(1));
+        const netWorkHours = parseFloat(((totalMinutes - totalBreakMinutes) / 60).toFixed(1));
+        const totalSales = chatterReports.reduce((s: number, r: any) => s + (r.total_sales || 0), 0);
+        const salesPerHour = netWorkHours > 0 ? parseFloat((totalSales / netWorkHours).toFixed(2)) : 0;
+        const workedDays = new Set(chatterShifts.map((s: any) => s.date)).size;
+        const attendanceRate = scheduledDays > 0 ? Math.round((workedDays / scheduledDays) * 100) : 0;
+
+        return {
+          chatterId: c.id,
+          chatterName: c.name,
+          avatarEmoji: c.avatar_emoji,
+          profilePictureUrl: c.profile_picture_url,
+          shiftCount: chatterShifts.length,
+          totalHours,
+          totalBreakHours,
+          netWorkHours,
+          reportCount: chatterReports.length,
+          totalSales,
+          salesPerHour,
+          attendanceRate,
+        };
+      }).filter((p: any) => p.shiftCount > 0 || p.reportCount > 0);
+
+      setPerformance(perfData);
+    }
+
+    async function fetchDailySales() {
+      const { data: reports } = await supabase
+        .from("crm_sales_reports")
+        .select("date, total_sales")
+        .gte("date", dateRange.start)
+        .lte("date", dateRange.end)
+        .order("date");
+
+      // Aggregate by date
+      const dateMap = new Map<string, number>();
+      for (const r of (reports || [])) {
+        dateMap.set(r.date, (dateMap.get(r.date) || 0) + (r.total_sales || 0));
+      }
+
+      setDailySales(
+        Array.from(dateMap.entries())
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([date, sales]) => ({ date, sales }))
+      );
+    }
+
+    fetchPerformance();
+    fetchDailySales();
+  }, [token, dateRange.start, dateRange.end]);
 
   // Sort performance data
   const sortedPerformance = useMemo(() => {

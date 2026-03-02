@@ -1,33 +1,49 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 
 export default function CreatorsPage() {
   const [token, setToken] = useState<string | null>(null);
+  const [creators, setCreators] = useState<any[] | null>(null);
+  const [activeShifts, setActiveShifts] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const userToken = localStorage.getItem("crm_token");
     if (userToken) setToken(userToken);
   }, []);
 
-  const allCreators = useQuery(
-    api.crm.creators.list,
-    token ? { token } : "skip"
-  );
+  useEffect(() => {
+    if (!token) return;
 
-  // Only show creators with OF API accounts
-  const creators = allCreators?.filter((c: any) => !!c.accountId);
+    async function fetchData() {
+      setLoading(true);
+      const [creatorsRes, shiftsRes] = await Promise.all([
+        supabase.from("crm_creators").select("*"),
+        supabase.from("crm_shifts").select("*").is("clock_out", null),
+      ]);
 
-  const activeShifts = useQuery(
-    api.crm.shifts.getAllActive,
-    token ? { token } : "skip"
-  );
+      // Only show creators with OF API accounts
+      const allCreators = creatorsRes.data || [];
+      // Look up which creators have OF accounts
+      const { data: accounts } = await supabase
+        .from("crm_of_accounts")
+        .select("creator_id, account_id");
+      const accountMap = new Map((accounts || []).map((a) => [a.creator_id, a.account_id]));
+      const filtered = allCreators.filter((c: any) => !!accountMap.get(c.id) || !!c.platform_account_id);
+
+      setCreators(filtered);
+      setActiveShifts(shiftsRes.data || []);
+      setLoading(false);
+    }
+
+    fetchData();
+  }, [token]);
 
   const getActiveChatterCount = (creatorId: string) => {
     if (!activeShifts) return 0;
-    return activeShifts.filter((s: any) => s.creatorId === creatorId).length;
+    return activeShifts.filter((s: any) => s.creator_id === creatorId).length;
   };
 
   const formatExpiry = (expiry: string) => {
@@ -50,7 +66,7 @@ export default function CreatorsPage() {
         </p>
       </div>
 
-      {!creators ? (
+      {!creators || loading ? (
         <div style={{ background: "var(--surface)", borderRadius: "24px", padding: "48px 24px", textAlign: "center" }}>
           <p style={{ color: "var(--text-muted)" }}>Loading creators...</p>
         </div>
@@ -58,7 +74,7 @@ export default function CreatorsPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "24px" }}>
           {creators.map((creator: any) => {
             const activeChatters = getActiveChatterCount(creator.id);
-            const expiry = creator.subscriptionExpiry ? formatExpiry(creator.subscriptionExpiry) : null;
+            const expiry = creator.subscription_expiry ? formatExpiry(creator.subscription_expiry) : null;
 
             return (
               <div
@@ -73,9 +89,9 @@ export default function CreatorsPage() {
               >
                 {/* Header with avatar */}
                 <div style={{ padding: "24px 24px 16px", display: "flex", alignItems: "center", gap: "16px" }}>
-                  {creator.avatarUrl ? (
+                  {creator.avatar_url ? (
                     <img
-                      src={creator.avatarUrl}
+                      src={creator.avatar_url}
                       alt={creator.name}
                       style={{
                         width: "64px",
@@ -109,12 +125,12 @@ export default function CreatorsPage() {
                       {creator.name}
                     </h3>
                     <a
-                      href={`https://onlyfans.com/${creator.onlyFansHandle}`}
+                      href={`https://onlyfans.com/${creator.only_fans_handle}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{ fontSize: "14px", color: "var(--accent)", fontWeight: "500", textDecoration: "none" }}
                     >
-                      @{creator.onlyFansHandle}
+                      @{creator.only_fans_handle}
                     </a>
                   </div>
 
@@ -151,7 +167,7 @@ export default function CreatorsPage() {
                       Sub Price
                     </div>
                     <div style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)" }}>
-                      ${creator.subscribePrice ?? "—"}
+                      ${creator.subscribe_price ?? "—"}
                     </div>
                   </div>
 
@@ -169,7 +185,7 @@ export default function CreatorsPage() {
                       OM ID
                     </div>
                     <div style={{ fontSize: "16px", fontWeight: "700", color: "var(--text)" }}>
-                      {creator.onlyMonsterId ?? "—"}
+                      {creator.only_monster_id ?? "—"}
                     </div>
                   </div>
                 </div>

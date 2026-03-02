@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 import MeetingScheduler from "../../../../components/MeetingScheduler";
 import MeetingCard, {
   type MeetingCardChatter,
@@ -37,6 +35,10 @@ export default function MeetingsPage() {
   const [endDate, setEndDate] = useState<string>("");
   const [showScheduler, setShowScheduler] = useState(false);
 
+  const [chatters, setChatters] = useState<any[] | undefined>(undefined);
+  const [upcoming, setUpcoming] = useState<any[] | undefined>(undefined);
+  const [meetingsForChatter, setMeetingsForChatter] = useState<any[] | undefined>(undefined);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -46,24 +48,67 @@ export default function MeetingsPage() {
 
   const canManage = isSupervisorRole(user?.role);
 
-  const chatters = useQuery(api.crm.chatters.list, token && canManage ? { token } : "skip");
+  const loadChatters = useCallback(async () => {
+    if (!token || !canManage) return;
+    try {
+      const { data, error } = await supabase.from("crm_chatters").select("*");
+      if (error) throw error;
+      setChatters(data ?? []);
+    } catch (e) {
+      console.error("Failed to load chatters:", e);
+      setChatters([]);
+    }
+  }, [token, canManage]);
 
-  const upcoming = useQuery(
-    api.crm.coaching.getUpcomingMeetings,
-    token && canManage ? { token, limit: 100 } : "skip"
-  ) as any[] | undefined;
+  const loadUpcoming = useCallback(async () => {
+    if (!token || !canManage) return;
+    try {
+      const { data, error } = await supabase
+        .from("crm_coaching_meetings")
+        .select("*")
+        .gte("meeting_date", new Date().toISOString())
+        .order("meeting_date", { ascending: true })
+        .limit(100);
+      if (error) throw error;
+      setUpcoming(data ?? []);
+    } catch (e) {
+      console.error("Failed to load upcoming meetings:", e);
+      setUpcoming([]);
+    }
+  }, [token, canManage]);
 
-  // Meeting history is shown for a selected chatter.
-  const meetingsForChatter = useQuery(
-    api.crm.coaching.getMeetingsByChatter,
-    token && (selectedChatterId || !canManage)
-      ? {
-          token,
-          chatterId: (selectedChatterId || user?.id) as Id<"crm_chatters">,
-          limit: 200,
-        }
-      : "skip"
-  ) as any[] | undefined;
+  const loadMeetingsForChatter = useCallback(async () => {
+    const chatterId = selectedChatterId || (!canManage ? user?.id : "");
+    if (!token || !chatterId) return;
+    try {
+      const { data, error } = await supabase
+        .from("crm_coaching_meetings")
+        .select("*")
+        .eq("chatter_id", chatterId)
+        .order("meeting_date", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      setMeetingsForChatter(data ?? []);
+    } catch (e) {
+      console.error("Failed to load chatter meetings:", e);
+      setMeetingsForChatter([]);
+    }
+  }, [token, selectedChatterId, canManage, user?.id]);
+
+  const loadData = useCallback(async () => {
+    await Promise.all([loadChatters(), loadUpcoming(), loadMeetingsForChatter()]);
+  }, [loadChatters, loadUpcoming, loadMeetingsForChatter]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadChatters();
+    loadUpcoming();
+  }, [token, loadChatters, loadUpcoming]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadMeetingsForChatter();
+  }, [token, loadMeetingsForChatter]);
 
   // Default chatter selection for supervisors.
   useEffect(() => {
@@ -79,8 +124,8 @@ export default function MeetingsPage() {
       map[c.id] = {
         id: c.id,
         name: c.name,
-        avatarEmoji: c.avatarEmoji,
-        profilePictureUrl: c.profilePictureUrl,
+        avatarEmoji: c.avatar_emoji,
+        profilePictureUrl: c.profile_picture_url,
       };
     });
     return map;
@@ -90,7 +135,7 @@ export default function MeetingsPage() {
     const s = inputDateToRange(startDate, "start");
     const e = inputDateToRange(endDate, "end");
     return (upcoming || [])
-      .map((m: any) => ({ ...m, id: m._id }))
+      .map((m: any) => ({ ...m, meetingDate: new Date(m.meeting_date).getTime(), chatterId: m.chatter_id, meetingType: m.meeting_type, actionItems: m.action_items, followUpDate: m.follow_up_date ? new Date(m.follow_up_date).getTime() : undefined, followUpCompleted: m.follow_up_completed, followUpNotes: m.follow_up_notes, privateNotes: m.private_notes }))
       .filter((m: any) => {
         if (selectedChatterId && m.chatterId !== selectedChatterId) return false;
         if (s !== undefined && m.meetingDate < s) return false;
@@ -106,7 +151,7 @@ export default function MeetingsPage() {
     const now = Date.now();
 
     const list = (meetingsForChatter || [])
-      .map((m: any) => ({ ...m, id: m.id ?? m._id }))
+      .map((m: any) => ({ ...m, meetingDate: new Date(m.meeting_date).getTime(), chatterId: m.chatter_id, meetingType: m.meeting_type, actionItems: m.action_items, followUpDate: m.follow_up_date ? new Date(m.follow_up_date).getTime() : undefined, followUpCompleted: m.follow_up_completed, followUpNotes: m.follow_up_notes, privateNotes: m.private_notes }))
       .filter((m: any) => {
         if (s !== undefined && m.meetingDate < s) return false;
         if (e !== undefined && m.meetingDate > e) return false;
@@ -187,7 +232,7 @@ export default function MeetingsPage() {
                 .filter((c: any) => c.role === "chatter")
                 .map((c: any) => (
                   <option key={c.id} value={c.id}>
-                    {c.avatarEmoji ? `${c.avatarEmoji} ` : ""}{c.name}
+                    {c.avatar_emoji ? `${c.avatar_emoji} ` : ""}{c.name}
                   </option>
                 ))}
             </select>
@@ -302,7 +347,7 @@ export default function MeetingsPage() {
         chatters={(chatters || []) as any}
         defaultChatterId={selectedChatterId || undefined}
         onScheduled={() => {
-          // Convex queries will re-run automatically; no-op.
+          loadData();
         }}
       />
     </div>

@@ -1,20 +1,37 @@
 "use client";
 
-import React, { useState, useCallback, useMemo } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
-import { Id } from "../convex/_generated/dataModel";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 import PaymentMethodIcon, { getPaymentMethodLabel } from "./PaymentMethodIcon";
 
 interface BatchPaymentModalProps {
   token: string;
-  payRunId?: Id<"crm_pay_runs">;
+  payRunId?: string;
   selectedItemIds?: string[];
   onClose: () => void;
   onSuccess: (count: number) => void;
 }
 
 type TabMode = "mark-paid" | "export" | "import";
+
+interface ExportItem {
+  itemId: string;
+  chatterName: string;
+  netPay: number;
+  netPayFormatted: string;
+  paymentMethod: string;
+  paymentAddress: string;
+  paymentStatus: string;
+  periodStartDate: string;
+  periodEndDate: string;
+}
+
+function formatCents(cents: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
 
 export default function BatchPaymentModal({
   token,
@@ -38,15 +55,51 @@ export default function BatchPaymentModal({
     errors: string[];
   } | null>(null);
 
-  const itemsForExport = useQuery(
-    api.crm.payroll.getItemsForExport,
-    token && payRunId ? { token, payRunId } : "skip"
-  );
+  const [itemsForExport, setItemsForExport] = useState<ExportItem[] | null>(null);
 
-  const batchMarkPaid = useMutation(api.crm.payroll.batchMarkPaid);
-  const importConfirmations = useMutation(
-    api.crm.payroll.importPaymentConfirmations
-  );
+  // Fetch items for export
+  useEffect(() => {
+    if (!token || !payRunId) return;
+
+    async function fetchItems() {
+      try {
+        const { data: items, error: itemsError } = await supabase
+          .from("crm_pay_run_items")
+          .select("id, chatter_name, net_pay, payment_method, payment_status, pay_run_id")
+          .eq("pay_run_id", payRunId);
+
+        if (itemsError) throw itemsError;
+
+        // Get pay run period info
+        const { data: payRun } = await supabase
+          .from("crm_pay_runs")
+          .select("period_start, period_end")
+          .eq("id", payRunId)
+          .single();
+
+        // Get payment addresses
+        const chatterIds = [...new Set((items || []).map((i) => i.chatter_name))];
+
+        const exportItems: ExportItem[] = (items || []).map((item) => ({
+          itemId: item.id,
+          chatterName: item.chatter_name,
+          netPay: item.net_pay,
+          netPayFormatted: formatCents(item.net_pay),
+          paymentMethod: item.payment_method || "unknown",
+          paymentAddress: "",
+          paymentStatus: item.payment_status,
+          periodStartDate: payRun?.period_start || "",
+          periodEndDate: payRun?.period_end || "",
+        }));
+
+        setItemsForExport(exportItems);
+      } catch (err) {
+        console.error("Failed to fetch items for export:", err);
+      }
+    }
+
+    fetchItems();
+  }, [token, payRunId]);
 
   const pendingItems = useMemo(() => {
     if (!itemsForExport) return [];
@@ -62,13 +115,20 @@ export default function BatchPaymentModal({
     setLoading(true);
     setError("");
     try {
-      await batchMarkPaid({
-        token,
-        itemIds: selectedItemIds as Id<"crm_pay_run_items">[],
-        paymentRef: paymentRef || undefined,
-        paymentDate: paymentDate || undefined,
-        paymentNotes: paymentNotes || undefined,
-      });
+      const updateData: Record<string, any> = {
+        payment_status: "paid",
+        paid_at: new Date().toISOString(),
+      };
+      if (paymentRef) updateData.payment_ref = paymentRef;
+      if (paymentDate) updateData.payment_date = paymentDate;
+      if (paymentNotes) updateData.payment_notes = paymentNotes;
+
+      const { error: updateError } = await supabase
+        .from("crm_pay_run_items")
+        .update(updateData)
+        .in("id", selectedItemIds);
+
+      if (updateError) throw updateError;
       onSuccess(selectedItemIds.length);
     } catch (err: any) {
       setError(err.message || "Failed to mark items as paid");
@@ -135,7 +195,7 @@ export default function BatchPaymentModal({
       // Parse CSV/JSON data
       const lines = importData.trim().split("\n");
       const confirmations: Array<{
-        itemId: Id<"crm_pay_run_items">;
+        itemId: string;
         paymentRef: string;
         paymentDate?: string;
         paymentNotes?: string;
@@ -160,16 +220,16 @@ export default function BatchPaymentModal({
           const cleanPart = (s: string) => s.replace(/^"|"$/g, "").trim();
 
           const itemId = cleanPart(parts[0]);
-          const paymentRef = cleanPart(parts[6] || "");
-          const paymentDate = cleanPart(parts[7] || "");
-          const paymentNotes = cleanPart(parts[8] || "");
+          const pRef = cleanPart(parts[6] || "");
+          const pDate = cleanPart(parts[7] || "");
+          const pNotes = cleanPart(parts[8] || "");
 
-          if (itemId && paymentRef) {
+          if (itemId && pRef) {
             confirmations.push({
-              itemId: itemId as Id<"crm_pay_run_items">,
-              paymentRef,
-              paymentDate: paymentDate || undefined,
-              paymentNotes: paymentNotes || undefined,
+              itemId,
+              paymentRef: pRef,
+              paymentDate: pDate || undefined,
+              paymentNotes: pNotes || undefined,
             });
           }
         }
@@ -201,11 +261,37 @@ export default function BatchPaymentModal({
         return;
       }
 
-      const result = await importConfirmations({
-        token,
-        confirmations,
-      });
+      // Process confirmations
+      let successCount = 0;
+      let skipCount = 0;
+      const errors: string[] = [];
 
+      for (const conf of confirmations) {
+        try {
+          const updateData: Record<string, any> = {
+            payment_status: "paid",
+            payment_ref: conf.paymentRef,
+            paid_at: new Date().toISOString(),
+          };
+          if (conf.paymentDate) updateData.payment_date = conf.paymentDate;
+          if (conf.paymentNotes) updateData.payment_notes = conf.paymentNotes;
+
+          const { error: updateError } = await supabase
+            .from("crm_pay_run_items")
+            .update(updateData)
+            .eq("id", conf.itemId);
+
+          if (updateError) {
+            errors.push(`${conf.itemId}: ${updateError.message}`);
+          } else {
+            successCount++;
+          }
+        } catch (err: any) {
+          errors.push(`${conf.itemId}: ${err.message}`);
+        }
+      }
+
+      const result = { successCount, skipCount, errors };
       setImportResult(result);
 
       if (result.successCount > 0) {

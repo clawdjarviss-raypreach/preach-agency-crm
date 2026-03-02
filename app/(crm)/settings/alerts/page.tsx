@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 export default function AlertConfigPage() {
   const [token, setToken] = useState("");
@@ -11,6 +10,7 @@ export default function AlertConfigPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [hasChanges, setHasChanges] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Form state
   const [responseTimeWarning, setResponseTimeWarning] = useState(90);
@@ -22,6 +22,9 @@ export default function AlertConfigPage() {
   const [enableVipQueue, setEnableVipQueue] = useState(true);
   const [enableQueueOverload, setEnableQueueOverload] = useState(true);
 
+  // Config metadata
+  const [configMeta, setConfigMeta] = useState<{ updated_at?: string; updated_by?: string } | null>(null);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -29,44 +32,61 @@ export default function AlertConfigPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const config = useQuery(
-    api.crm.alertConfig.get,
-    token ? { token } : "skip"
-  );
-  const updateConfig = useMutation(api.crm.alertConfig.update);
-  const resetToDefaults = useMutation(api.crm.alertConfig.resetToDefaults);
-
-  // Load config into form when data arrives
+  // Fetch config
   useEffect(() => {
-    if (config) {
-      setResponseTimeWarning(config.responseTimeWarning);
-      setResponseTimeCritical(config.responseTimeCritical);
-      setVipQueueThreshold(config.vipQueueThreshold);
-      setVipQueueMinutes(config.vipQueueMinutes);
-      setQueueOverloadThreshold(config.queueOverloadThreshold);
-      setEnableResponseTime(config.enableResponseTime);
-      setEnableVipQueue(config.enableVipQueue);
-      setEnableQueueOverload(config.enableQueueOverload);
-      setHasChanges(false);
-    }
-  }, [config]);
+    if (!token) return;
+    const fetchConfig = async () => {
+      setLoading(true);
+      try {
+        const { data, error: fetchError } = await supabase
+          .from("crm_alert_config")
+          .select("*")
+          .limit(1)
+          .maybeSingle();
+
+        if (fetchError) throw fetchError;
+
+        if (data) {
+          setResponseTimeWarning(data.response_time_warning);
+          setResponseTimeCritical(data.response_time_critical);
+          setVipQueueThreshold(data.vip_queue_threshold);
+          setVipQueueMinutes(data.vip_queue_minutes);
+          setQueueOverloadThreshold(data.queue_overload_threshold);
+          setEnableResponseTime(data.enable_response_time);
+          setEnableVipQueue(data.enable_vip_queue);
+          setEnableQueueOverload(data.enable_queue_overload);
+          setConfigMeta({ updated_at: data.updated_at, updated_by: data.updated_by });
+          setHasChanges(false);
+        }
+      } catch (err) {
+        console.error("Failed to fetch alert config:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchConfig();
+  }, [token]);
 
   const handleSave = async () => {
     setSaving(true);
     setError("");
     setSuccess("");
     try {
-      await updateConfig({
-        token,
-        responseTimeWarning,
-        responseTimeCritical,
-        vipQueueThreshold,
-        vipQueueMinutes,
-        queueOverloadThreshold,
-        enableResponseTime,
-        enableVipQueue,
-        enableQueueOverload,
-      });
+      const { error: upsertError } = await supabase
+        .from("crm_alert_config")
+        .upsert({
+          response_time_warning: responseTimeWarning,
+          response_time_critical: responseTimeCritical,
+          vip_queue_threshold: vipQueueThreshold,
+          vip_queue_minutes: vipQueueMinutes,
+          queue_overload_threshold: queueOverloadThreshold,
+          enable_response_time: enableResponseTime,
+          enable_vip_queue: enableVipQueue,
+          enable_queue_overload: enableQueueOverload,
+          updated_by: user?.id || null,
+          updated_at: new Date().toISOString(),
+        });
+      if (upsertError) throw upsertError;
       setSuccess("Alert thresholds saved successfully!");
       setHasChanges(false);
     } catch (err: any) {
@@ -82,7 +102,34 @@ export default function AlertConfigPage() {
     setError("");
     setSuccess("");
     try {
-      await resetToDefaults({ token });
+      // Delete existing config
+      await supabase.from("crm_alert_config").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+
+      // Insert defaults
+      const { error: insertError } = await supabase
+        .from("crm_alert_config")
+        .insert({
+          response_time_warning: 90,
+          response_time_critical: 180,
+          vip_queue_threshold: 5,
+          vip_queue_minutes: 10,
+          queue_overload_threshold: 20,
+          enable_response_time: true,
+          enable_vip_queue: true,
+          enable_queue_overload: true,
+          updated_by: user?.id || null,
+          updated_at: new Date().toISOString(),
+        });
+      if (insertError) throw insertError;
+
+      setResponseTimeWarning(90);
+      setResponseTimeCritical(180);
+      setVipQueueThreshold(5);
+      setVipQueueMinutes(10);
+      setQueueOverloadThreshold(20);
+      setEnableResponseTime(true);
+      setEnableVipQueue(true);
+      setEnableQueueOverload(true);
       setSuccess("Thresholds reset to defaults!");
       setHasChanges(false);
     } catch (err: any) {
@@ -137,11 +184,11 @@ export default function AlertConfigPage() {
       )}
 
       {/* Last Updated Info */}
-      {config?.updatedAt && (
-        <div style={{ 
-          padding: "12px 16px", 
-          background: "var(--bg)", 
-          borderRadius: "12px", 
+      {configMeta?.updated_at && (
+        <div style={{
+          padding: "12px 16px",
+          background: "var(--bg)",
+          borderRadius: "12px",
           marginBottom: "20px",
           fontSize: "13px",
           color: "var(--text-muted)",
@@ -151,7 +198,7 @@ export default function AlertConfigPage() {
         }}>
           <span>📝</span>
           <span>
-            Last updated {new Date(config.updatedAt).toLocaleString()} by <strong>{config.updatedBy || "Unknown"}</strong>
+            Last updated {new Date(configMeta.updated_at).toLocaleString()} by <strong>{configMeta.updated_by || "Unknown"}</strong>
           </span>
         </div>
       )}

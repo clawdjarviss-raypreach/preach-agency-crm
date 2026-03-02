@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "../../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import TrainingMaterialCard, {
   type TrainingMaterialCardMaterial,
   type TrainingMaterialCategory,
@@ -109,6 +108,10 @@ export default function TrainingLibraryPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
+  const [materialsRaw, setMaterialsRaw] = useState<any[] | undefined>(undefined);
+  const [chattersRaw, setChattersRaw] = useState<any[] | undefined>(undefined);
+  const [assignmentsRaw, setAssignmentsRaw] = useState<any[] | undefined>(undefined);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -119,63 +122,83 @@ export default function TrainingLibraryPage() {
   const canManage = isSupervisorRole(user?.role);
   const isAdmin = user?.role === "admin";
 
-  const coachingApi = (api as any).crm.coaching;
+  const loadData = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [materialsRes, chattersRes, assignmentsRes] = await Promise.all([
+        supabase.from("crm_training_materials").select("*").order("updated_at", { ascending: false }).limit(500),
+        canManage
+          ? supabase.from("crm_chatters").select("*")
+          : Promise.resolve({ data: [], error: null }),
+        canManage
+          ? supabase.from("crm_training_assignments").select("*")
+          : Promise.resolve({ data: [], error: null }),
+      ]);
 
-  const materialsRaw = useQuery(
-    coachingApi.getTrainingMaterials,
-    token
-      ? {
-          token,
-          includeStats: canManage,
-          includeInactive: canManage,
-          limit: 500,
-        }
-      : "skip"
-  ) as any[] | undefined;
+      if (materialsRes.error) throw materialsRes.error;
+      setMaterialsRaw(materialsRes.data ?? []);
 
-  const createTrainingMaterial = useMutation(api.crm.coaching.createTrainingMaterial);
+      if (chattersRes.error) throw chattersRes.error;
+      setChattersRaw(chattersRes.data ?? []);
 
-  const chattersRaw = useQuery(
-    api.crm.chatters.list,
-    token && canManage ? { token } : "skip"
-  ) as any[] | undefined;
+      if (assignmentsRes.error) throw assignmentsRes.error;
+      setAssignmentsRaw(assignmentsRes.data ?? []);
+    } catch (e) {
+      console.error("Failed to load training data:", e);
+      setMaterialsRaw([]);
+      setChattersRaw([]);
+      setAssignmentsRaw([]);
+    }
+  }, [token, canManage]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadData();
+  }, [token, loadData]);
 
   const chatterOptions = useMemo((): TrainingAssignerChatterOption[] => {
     return (chattersRaw || []).map((c: any) => ({
       id: String(c.id),
       name: String(c.name ?? c.username ?? c.id),
       role: c.role,
-      avatarEmoji: c.avatarEmoji,
+      avatarEmoji: c.avatar_emoji,
     }));
   }, [chattersRaw]);
+
+  const assignmentCountsByMaterial = useMemo(() => {
+    const assigned: Record<string, number> = {};
+    const completed: Record<string, number> = {};
+    (assignmentsRaw || []).forEach((a: any) => {
+      const mid = a.material_id;
+      assigned[mid] = (assigned[mid] || 0) + 1;
+      if (a.status === "completed") {
+        completed[mid] = (completed[mid] || 0) + 1;
+      }
+    });
+    return { assigned, completed };
+  }, [assignmentsRaw]);
 
   const materialsWithCounts = useMemo((): MaterialRow[] => {
     const list = (materialsRaw || []).map((m: any) => {
       const material: TrainingMaterialCardMaterial = {
-        id: String(m.id ?? m._id),
+        id: String(m.id),
         title: String(m.title ?? ""),
         description: m.description ?? undefined,
         type: m.type as TrainingMaterialType,
         category: m.category as TrainingMaterialCategory,
         url: m.url ?? undefined,
-        estimatedMinutes: m.estimatedMinutes ?? undefined,
-        isActive: m.isActive ?? true,
+        estimatedMinutes: m.estimated_minutes ?? undefined,
+        isActive: m.is_active ?? true,
       };
       return {
         material,
-        assignedCount: m.assignedCount ?? undefined,
-        completedCount: m.completedCount ?? undefined,
+        assignedCount: assignmentCountsByMaterial.assigned[m.id] ?? undefined,
+        completedCount: assignmentCountsByMaterial.completed[m.id] ?? undefined,
       };
     });
 
-    list.sort((a, b) => {
-      const au = Number((materialsRaw || []).find((x: any) => String(x.id ?? x._id) === a.material.id)?.updatedAt ?? 0);
-      const bu = Number((materialsRaw || []).find((x: any) => String(x.id ?? x._id) === b.material.id)?.updatedAt ?? 0);
-      return bu - au;
-    });
-
     return list;
-  }, [materialsRaw]);
+  }, [materialsRaw, assignmentCountsByMaterial]);
 
   const filteredMaterials = useMemo(() => {
     return materialsWithCounts.filter((row) => {
@@ -224,21 +247,28 @@ export default function TrainingLibraryPage() {
 
     setCreating(true);
     try {
-      const id = await createTrainingMaterial({
-        token,
-        title,
-        description: newDescription.trim() ? newDescription.trim() : undefined,
-        type: newType,
-        category: newCategory,
-        url: newUrl.trim() ? newUrl.trim() : undefined,
-        content: newContent.trim() ? newContent.trim() : undefined,
-        estimatedMinutes: minutes,
-        tags: parseTags(newTags),
-      } as any);
+      const { data, error } = await supabase
+        .from("crm_training_materials")
+        .insert({
+          title,
+          description: newDescription.trim() || null,
+          type: newType,
+          category: newCategory,
+          url: newUrl.trim() || null,
+          content: newContent.trim() || null,
+          estimated_minutes: minutes ?? null,
+          tags: parseTags(newTags) ?? null,
+          created_by: user?.id ?? null,
+          is_active: true,
+        })
+        .select("id")
+        .single();
+
+      if (error) throw error;
 
       setShowCreate(false);
       resetCreate();
-      router.push(`/coaching/training/${String(id)}`);
+      router.push(`/coaching/training/${String(data.id)}`);
     } catch (e: any) {
       setCreateError(e?.message ? String(e.message) : "Failed to create material.");
     } finally {
@@ -396,7 +426,7 @@ export default function TrainingLibraryPage() {
         chatters={chatterOptions}
         onClose={() => setShowAssigner(false)}
         onAssigned={() => {
-          // Reactive queries update automatically.
+          loadData();
         }}
       />
 

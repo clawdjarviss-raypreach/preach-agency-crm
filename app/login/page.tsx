@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,8 +10,6 @@ export default function LoginPage() {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  
-  const login = useMutation(api.crm.auth.login);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,22 +17,72 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const result = await login({ username, pin });
-      
-      // Store token and user data
-      localStorage.setItem("crm_token", result.token);
-      localStorage.setItem("crm_user", JSON.stringify({
-        _id: result.chatter.id,
-        name: result.chatter.name,
-        username: result.chatter.username,
-        role: result.chatter.role,
-        avatarEmoji: result.chatter.avatarEmoji,
-        profilePictureUrl: result.chatter.profilePictureUrl,
-        assignedCreators: result.chatter.assignedCreators,
-      }));
-      
-      // Role-based redirect
-      router.push(result.chatter.role === "marketing_manager" ? "/manager-dashboard" : "/dashboard");
+      // 1. Look up the chatter by username
+      const { data: chatter, error: lookupError } = await supabase
+        .from("crm_chatters")
+        .select("*")
+        .eq("username", username)
+        .single();
+
+      if (lookupError || !chatter) {
+        throw new Error("Invalid username or PIN");
+      }
+
+      // 2. Verify PIN
+      // TODO: PIN verification should happen server-side in an edge function.
+      // For now we hash client-side and compare. This is NOT secure for production.
+      const encoder = new TextEncoder();
+      const data = encoder.encode(pin);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const pinHash = hashArray
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      if (pinHash !== chatter.pin_hash) {
+        throw new Error("Invalid username or PIN");
+      }
+
+      // 3. Create a session
+      const sessionToken = crypto.randomUUID();
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 30);
+
+      const { data: session, error: sessionError } = await supabase
+        .from("crm_sessions")
+        .insert({
+          chatter_id: chatter.id,
+          token: sessionToken,
+          expires_at: expiresAt.toISOString(),
+        })
+        .select()
+        .single();
+
+      if (sessionError) {
+        throw new Error("Failed to create session");
+      }
+
+      // 4. Store token and user data
+      localStorage.setItem("crm_token", sessionToken);
+      localStorage.setItem(
+        "crm_user",
+        JSON.stringify({
+          id: chatter.id,
+          name: chatter.name,
+          username: chatter.username,
+          role: chatter.role,
+          avatarEmoji: chatter.avatar_emoji,
+          profilePictureUrl: chatter.profile_picture_url,
+          assignedCreators: chatter.assigned_creators,
+        })
+      );
+
+      // 5. Role-based redirect
+      router.push(
+        chatter.role === "marketing_manager"
+          ? "/manager-dashboard"
+          : "/dashboard"
+      );
     } catch (err: any) {
       setError(err.message || "Login failed. Please try again.");
       setLoading(false);
@@ -181,7 +228,9 @@ export default function LoginPage() {
                 fontSize: "16px",
                 fontWeight: "600",
                 color: "#1a1a1a",
-                background: loading ? "var(--mc-text-muted)" : "var(--mc-accent)",
+                background: loading
+                  ? "var(--mc-text-muted)"
+                  : "var(--mc-accent)",
                 border: "none",
                 borderRadius: "12px",
                 cursor: loading ? "not-allowed" : "pointer",

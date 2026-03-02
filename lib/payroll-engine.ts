@@ -1,7 +1,7 @@
 /**
  * Payroll Aggregation Engine (Phase 7A) - Client-Side Utilities
  *
- * Previously re-exported from convex/crm/payrollEngine.ts.
+ * Previously re-exported from legacy backend payroll engine.
  * Now provides standalone types and pure calculation logic.
  */
 

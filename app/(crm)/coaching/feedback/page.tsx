@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useQueries, useQuery, useMutation } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import FeedbackCard, { type FeedbackCardFeedback, type FeedbackType, type FeedbackVisibility } from "../../../../components/FeedbackCard";
 import PraiseQuickButton from "../../../../components/PraiseQuickButton";
 
@@ -22,22 +20,22 @@ function isSupervisorRole(role?: string) {
 
 function normalizeFeedback(raw: any): FeedbackCardFeedback {
   return {
-    id: String(raw.id ?? raw._id),
-    chatterId: String(raw.chatterId),
-    givenBy: String(raw.givenBy),
+    id: String(raw.id),
+    chatterId: String(raw.chatter_id),
+    givenBy: String(raw.given_by),
     type: raw.type as FeedbackType,
     title: raw.title ?? undefined,
     content: String(raw.content ?? ""),
     category: raw.category ?? undefined,
-    relatedCreatorId: raw.relatedCreatorId ? String(raw.relatedCreatorId) : undefined,
-    relatedMeetingId: raw.relatedMeetingId ? String(raw.relatedMeetingId) : undefined,
+    relatedCreatorId: raw.related_creator_id ? String(raw.related_creator_id) : undefined,
+    relatedMeetingId: raw.related_meeting_id ? String(raw.related_meeting_id) : undefined,
     visibility: raw.visibility as FeedbackVisibility,
     acknowledged: raw.acknowledged ?? undefined,
-    acknowledgedAt: raw.acknowledgedAt ?? undefined,
-    chatterResponse: raw.chatterResponse ?? undefined,
-    feedbackDate: Number(raw.feedbackDate ?? raw.createdAt ?? Date.now()),
-    createdAt: raw.createdAt ?? undefined,
-    updatedAt: raw.updatedAt ?? undefined,
+    acknowledgedAt: raw.acknowledged_at ?? undefined,
+    chatterResponse: raw.chatter_response ?? undefined,
+    feedbackDate: raw.feedback_date ? new Date(raw.feedback_date).getTime() : (raw.created_at ? new Date(raw.created_at).getTime() : Date.now()),
+    createdAt: raw.created_at ?? undefined,
+    updatedAt: raw.updated_at ?? undefined,
   };
 }
 
@@ -52,6 +50,11 @@ export default function FeedbackPage() {
   const [visibilityFilter, setVisibilityFilter] = useState<string>("");
 
   const [acknowledgingId, setAcknowledgingId] = useState<string>("");
+
+  const [chatters, setChatters] = useState<any[] | undefined>(undefined);
+  const [feedbackData, setFeedbackData] = useState<any[] | undefined>(undefined);
+  const [loadingFeedback, setLoadingFeedback] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<Error | null>(null);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -72,113 +75,96 @@ export default function FeedbackPage() {
     if (!canManage) setSelectedChatterId(user.id);
   }, [canManage, user?.id]);
 
-  const chatters = useQuery(api.crm.chatters.list, token && canManage ? { token } : "skip") as any[] | undefined;
+  const loadChatters = useCallback(async () => {
+    if (!token || !canManage) return;
+    try {
+      const { data, error } = await supabase.from("crm_chatters").select("*");
+      if (error) throw error;
+      setChatters(data ?? []);
+    } catch (e) {
+      console.error("Failed to load chatters:", e);
+      setChatters([]);
+    }
+  }, [token, canManage]);
 
-  // Default chatter selection for supervisors (optional): keep "All" by default unless URL preselects.
   useEffect(() => {
-    if (!canManage) return;
     if (!token) return;
-    if (selectedChatterId) return;
-    // Keep "All chatters" (empty) as the default.
-  }, [canManage, token, selectedChatterId]);
+    loadChatters();
+  }, [token, loadChatters]);
+
+  const loadFeedback = useCallback(async () => {
+    if (!token) return;
+    setLoadingFeedback(true);
+    setFeedbackError(null);
+    try {
+      let query = supabase.from("crm_coaching_feedback").select("*");
+
+      if (selectedChatterId) {
+        query = query.eq("chatter_id", selectedChatterId);
+      } else if (!canManage && user?.id) {
+        query = query.eq("chatter_id", user.id);
+      }
+
+      if (typeFilter) {
+        query = query.eq("type", typeFilter);
+      }
+      if (visibilityFilter) {
+        query = query.eq("visibility", visibilityFilter);
+      }
+
+      query = query.order("feedback_date", { ascending: false }).limit(200);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setFeedbackData(data ?? []);
+    } catch (e: any) {
+      console.error("Failed to load feedback:", e);
+      setFeedbackError(e);
+      setFeedbackData([]);
+    } finally {
+      setLoadingFeedback(false);
+    }
+  }, [token, selectedChatterId, canManage, user?.id, typeFilter, visibilityFilter]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadFeedback();
+  }, [token, loadFeedback]);
 
   const peopleById = useMemo(() => {
     const map: Record<string, { id: string; name: string; avatarEmoji?: string; profilePictureUrl?: string }> = {};
     (chatters || []).forEach((c: any) => {
-      const id = String(c.id ?? c._id);
+      const id = String(c.id);
       map[id] = {
         id,
         name: String(c.name ?? c.username ?? id),
-        avatarEmoji: c.avatarEmoji,
-        profilePictureUrl: c.profilePictureUrl,
+        avatarEmoji: c.avatar_emoji,
+        profilePictureUrl: c.profile_picture_url,
       };
     });
     return map;
   }, [chatters]);
 
-  const singleArgs = useMemo(() => {
-    if (!token) return "skip" as const;
-    if (!selectedChatterId) return "skip" as const;
-
-    return {
-      token,
-      chatterId: selectedChatterId as Id<"crm_chatters">,
-      type: (typeFilter ? (typeFilter as FeedbackType) : undefined) as any,
-      visibility: (visibilityFilter ? (visibilityFilter as FeedbackVisibility) : undefined) as any,
-      limit: 200,
-    };
-  }, [token, selectedChatterId, typeFilter, visibilityFilter]);
-
-  const singleFeedbackRaw = useQuery(api.crm.coaching.getFeedbackByChatter, singleArgs as any) as any[] | undefined;
-
-  const allQueries = useMemo(() => {
-    if (!token || !canManage) return {};
-    if (selectedChatterId) return {};
-
-    const onlyChatters = (chatters || []).filter((c: any) => c.role === "chatter");
-    const q: Record<string, { query: any; args: any }> = {};
-
-    for (const c of onlyChatters) {
-      const id = String(c.id ?? c._id);
-      q[id] = {
-        query: api.crm.coaching.getFeedbackByChatter,
-        args: {
-          token,
-          chatterId: id as Id<"crm_chatters">,
-          type: typeFilter ? (typeFilter as FeedbackType) : undefined,
-          visibility: visibilityFilter ? (visibilityFilter as FeedbackVisibility) : undefined,
-          limit: 80,
-        },
-      };
-    }
-
-    return q;
-  }, [token, canManage, selectedChatterId, chatters, typeFilter, visibilityFilter]);
-
-  const allResults = useQueries(allQueries as any) as Record<string, any[] | Error | undefined>;
-
   const allFeedback = useMemo(() => {
     if (!token) return [] as FeedbackCardFeedback[];
-
-    let list: any[] = [];
-
-    if (canManage && !selectedChatterId) {
-      for (const v of Object.values(allResults)) {
-        if (v instanceof Error) continue;
-        if (!v) continue;
-        list = list.concat(v);
-      }
-    } else {
-      list = singleFeedbackRaw ?? [];
-    }
-
-    const normalized = list.map(normalizeFeedback);
+    const normalized = (feedbackData || []).map(normalizeFeedback);
     normalized.sort((a, b) => b.feedbackDate - a.feedbackDate);
     return normalized;
-  }, [token, canManage, selectedChatterId, allResults, singleFeedbackRaw]);
-
-  const loadingAll = useMemo(() => {
-    if (!token || !canManage) return false;
-    if (selectedChatterId) return false;
-    const values = Object.values(allResults);
-    if (values.length === 0) return Boolean(chatters && chatters.length > 0); // queries not yet created
-    return values.some((v) => v === undefined);
-  }, [token, canManage, selectedChatterId, allResults, chatters]);
-
-  const allError = useMemo(() => {
-    for (const v of Object.values(allResults)) {
-      if (v instanceof Error) return v;
-    }
-    return null;
-  }, [allResults]);
-
-  const acknowledge = useMutation(api.crm.coaching.acknowledgeFeedback);
+  }, [token, feedbackData]);
 
   const onAcknowledge = async ({ feedbackId }: { feedbackId: string }) => {
     if (!token) return;
     setAcknowledgingId(feedbackId);
     try {
-      await acknowledge({ token, feedbackId: feedbackId as Id<"crm_coaching_feedback">, response: undefined });
+      const { error } = await supabase
+        .from("crm_coaching_feedback")
+        .update({
+          acknowledged: true,
+          acknowledged_at: new Date().toISOString(),
+        })
+        .eq("id", feedbackId);
+      if (error) throw error;
+      await loadFeedback();
     } finally {
       setAcknowledgingId("");
     }
@@ -188,10 +174,10 @@ export default function FeedbackPage() {
     return (chatters || [])
       .filter((c: any) => c.role === "chatter")
       .map((c: any) => ({
-        id: String(c.id ?? c._id),
+        id: String(c.id),
         name: String(c.name ?? c.username ?? c.id),
         role: c.role,
-        avatarEmoji: c.avatarEmoji,
+        avatarEmoji: c.avatar_emoji,
       }));
   }, [chatters]);
 
@@ -269,8 +255,8 @@ export default function FeedbackPage() {
               {(chatters || [])
                 .filter((c: any) => c.role === "chatter")
                 .map((c: any) => (
-                  <option key={String(c.id ?? c._id)} value={String(c.id ?? c._id)}>
-                    {c.avatarEmoji ? `${c.avatarEmoji} ` : ""}{c.name}
+                  <option key={String(c.id)} value={String(c.id)}>
+                    {c.avatar_emoji ? `${c.avatar_emoji} ` : ""}{c.name}
                   </option>
                 ))}
             </select>
@@ -324,7 +310,7 @@ export default function FeedbackPage() {
           </div>
         ) : canManage && chatters === undefined ? (
           <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>Loading chatters…</div>
-        ) : allError ? (
+        ) : feedbackError ? (
           <div
             style={{
               padding: 12,
@@ -335,13 +321,9 @@ export default function FeedbackPage() {
               fontSize: 13,
             }}
           >
-            {allError.message}
+            {feedbackError.message}
           </div>
-        ) : selectedChatterId && singleFeedbackRaw === undefined && !canManage ? (
-          <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>Loading…</div>
-        ) : selectedChatterId && singleFeedbackRaw === undefined && canManage ? (
-          <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>Loading…</div>
-        ) : loadingAll ? (
+        ) : loadingFeedback && feedbackData === undefined ? (
           <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>Loading feedback…</div>
         ) : allFeedback.length ? (
           <div style={{ display: "grid", gap: 12 }}>
@@ -361,7 +343,7 @@ export default function FeedbackPage() {
             <div style={{ fontWeight: 800 }}>No feedback found.</div>
             <div style={{ marginTop: 6, fontSize: 13, color: "var(--text-secondary)" }}>
               {canManage
-                ? "Use “Give Feedback” or “Quick Praise” to add a new entry."
+                ? "Use \u201cGive Feedback\u201d or \u201cQuick Praise\u201d to add a new entry."
                 : "Your supervisor will share feedback here."}
             </div>
           </div>

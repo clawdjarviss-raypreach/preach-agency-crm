@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 function MultiSelect({
   selected,
@@ -164,19 +163,24 @@ export default function AdminSocialsPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const creators = useQuery(
-    api.crm.creators.list,
-    token ? { token } : "skip"
-  );
-
-  const igAccounts = useQuery(
-    api.crm.igQueries.getIgAccounts,
-    token ? { token } : "skip"
-  );
-
-  const updateInstagram = useMutation(api.crm.teamManagement.updateCreatorInstagram);
-
+  const [creators, setCreators] = useState<any[] | null>(null);
+  const [igAccounts, setIgAccounts] = useState<any[] | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const [{ data: creatorsData }, { data: igData }] = await Promise.all([
+        supabase.from("crm_creators").select("id,name,avatar_url,only_fans_handle,instagram_username,instagram_usernames,platform_account_id"),
+        supabase.from("crm_ig_accounts").select("username"),
+      ]);
+      if (cancelled) return;
+      setCreators(creatorsData ?? []);
+      setIgAccounts(igData ?? []);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
   if (!user) return null;
   if (user.role !== "admin") {
@@ -187,21 +191,22 @@ export default function AdminSocialsPage() {
     );
   }
 
-  const igUsernames = (igAccounts as any[] || []).map((a: any) => a.username).filter(Boolean);
+  const igUsernames = (igAccounts || []).map((a: any) => a.username).filter(Boolean);
 
-  // Bug 2 fix: Only show OF API creators (those with accountId set)
-  const ofApiCreators = ((creators as any[]) || []).filter(
-    (c: any) => !!c.accountId
-  );
+  const ofApiCreators = (creators || []).filter((c: any) => !!c.platform_account_id);
 
-  const handleChange = async (creatorId: any, instagramUsernames: string[]) => {
+  const handleChange = async (creatorId: string, instagramUsernames: string[]) => {
     setSaving(creatorId);
     try {
-      await updateInstagram({
-        token,
-        creatorId,
-        instagramUsernames,
-      });
+      const { error } = await supabase
+        .from("crm_creators")
+        .update({ instagram_usernames: instagramUsernames, instagram_username: instagramUsernames[0] ?? null })
+        .eq("id", creatorId);
+      if (error) throw error;
+
+      setCreators((prev) => (prev || []).map((c: any) => c.id === creatorId
+        ? { ...c, instagram_usernames: instagramUsernames, instagram_username: instagramUsernames[0] ?? null }
+        : c));
     } catch (e) {
       console.error("Failed to update IG usernames", e);
     }
@@ -243,18 +248,18 @@ export default function AdminSocialsPage() {
             <tbody>
               {ofApiCreators.map((creator: any) => {
                 const currentUsernames: string[] =
-                  creator.instagramUsernames && creator.instagramUsernames.length > 0
-                    ? creator.instagramUsernames
-                    : creator.instagramUsername
-                      ? [creator.instagramUsername]
+                  creator.instagram_usernames && creator.instagram_usernames.length > 0
+                    ? creator.instagram_usernames
+                    : creator.instagram_username
+                      ? [creator.instagram_username]
                       : [];
 
                 return (
                   <tr key={creator.id} style={{ borderBottom: "1px solid #253545" }}>
                     <td style={{ padding: "14px 12px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        {creator.avatarUrl ? (
-                          <img src={creator.avatarUrl} alt="" style={{ width: "32px", height: "32px", borderRadius: "8px", objectFit: "cover" }} />
+                        {creator.avatar_url ? (
+                          <img src={creator.avatar_url} alt="" style={{ width: "32px", height: "32px", borderRadius: "8px", objectFit: "cover" }} />
                         ) : (
                           <div style={{ width: "32px", height: "32px", borderRadius: "8px", background: "#253545", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px" }}>
                             👤
@@ -264,7 +269,7 @@ export default function AdminSocialsPage() {
                       </div>
                     </td>
                     <td style={{ padding: "14px 12px", color: "#8899AA", fontSize: "13px" }}>
-                      {creator.onlyFansHandle || "—"}
+                      {creator.only_fans_handle || "—"}
                     </td>
                     <td style={{ padding: "14px 12px" }}>
                       <MultiSelect

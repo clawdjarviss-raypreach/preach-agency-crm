@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api } from "../../../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import FeedbackForm, { type FeedbackFormChatterOption } from "../../../../../components/FeedbackForm";
 
 type CrmUser = {
@@ -23,6 +22,8 @@ export default function NewFeedbackPage() {
 
   const [token, setToken] = useState("");
   const [user, setUser] = useState<CrmUser | null>(null);
+  const [chattersRaw, setChattersRaw] = useState<any[] | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -33,14 +34,37 @@ export default function NewFeedbackPage() {
 
   const canManage = isSupervisorRole(user?.role);
 
-  const chattersRaw = useQuery(api.crm.chatters.list, token && canManage ? { token } : "skip") as any[] | undefined;
+  const loadData = useCallback(async () => {
+    if (!token || !canManage) {
+      setLoading(false);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from("crm_chatters")
+        .select("*")
+        .eq("status", "active");
+      if (error) throw error;
+      setChattersRaw(data ?? []);
+    } catch (e) {
+      console.error("Failed to load chatters:", e);
+      setChattersRaw([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, canManage]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadData();
+  }, [token, loadData]);
 
   const chatterOptions = useMemo((): FeedbackFormChatterOption[] => {
     return (chattersRaw || []).map((c: any) => ({
-      id: String(c.id ?? c._id),
+      id: String(c.id),
       name: String(c.name ?? c.username ?? c.id),
       role: c.role,
-      avatarEmoji: c.avatarEmoji,
+      avatarEmoji: c.avatar_emoji,
     }));
   }, [chattersRaw]);
 
@@ -80,7 +104,7 @@ export default function NewFeedbackPage() {
           >
             Only supervisors can create feedback entries.
           </div>
-        ) : chattersRaw === undefined ? (
+        ) : loading || chattersRaw === undefined ? (
           <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>Loading…</div>
         ) : (
           <FeedbackForm

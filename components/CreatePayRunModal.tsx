@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 interface CreatePayRunModalProps {
   token: string;
@@ -10,15 +9,41 @@ interface CreatePayRunModalProps {
   onSuccess: (payRunId: string) => void;
 }
 
+interface PreviewItem {
+  chatterId: string;
+  chatterName: string;
+  hoursWorked: number;
+  basePay: number;
+  bonusTotal: number;
+  commissionTotal: number;
+  grossPay: number;
+  grossPayFormatted: string;
+}
+
+interface PreviewSummary {
+  totalGross: number;
+  totalGrossFormatted: string;
+  totalHours: number;
+  totalHoursFormatted: string;
+  totalBonuses: number;
+  totalBonusesFormatted: string;
+  totalCommissions: number;
+  totalCommissionsFormatted: string;
+}
+
+interface Preview {
+  summary: PreviewSummary;
+  items: PreviewItem[];
+}
+
 function getDefaultPeriod(): { start: string; end: string } {
   const now = new Date();
-  const dayOfWeek = now.getDay();
-  
+
   // Default to previous pay period (1st-15th or 16th-end of month)
   const day = now.getDate();
   let start: Date;
   let end: Date;
-  
+
   if (day <= 15) {
     // We're in first half, so default to previous month's second half
     const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 16);
@@ -29,7 +54,7 @@ function getDefaultPeriod(): { start: string; end: string } {
     start = new Date(now.getFullYear(), now.getMonth(), 1);
     end = new Date(now.getFullYear(), now.getMonth(), 15);
   }
-  
+
   return {
     start: start.toISOString().split("T")[0],
     end: end.toISOString().split("T")[0],
@@ -50,26 +75,130 @@ export default function CreatePayRunModal({ token, onClose, onSuccess }: CreateP
   const [notes, setNotes] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // Convert date strings to timestamps for preview
   const startTs = new Date(periodStart + "T00:00:00").getTime();
   const endTs = new Date(periodEnd + "T23:59:59").getTime();
 
-  const preview = useQuery(
-    api.crm.payroll.previewPayRun,
-    periodStart && periodEnd && startTs < endTs
-      ? { token, periodStart: startTs, periodEnd: endTs }
-      : "skip"
-  );
+  // Fetch preview data
+  useEffect(() => {
+    if (!periodStart || !periodEnd || startTs >= endTs || !token) {
+      setPreview(null);
+      return;
+    }
 
-  const createPayRun = useMutation(api.crm.payroll.createPayRun);
+    async function fetchPreview() {
+      setPreviewLoading(true);
+      try {
+        const startISO = new Date(periodStart + "T00:00:00").toISOString();
+        const endISO = new Date(periodEnd + "T23:59:59").toISOString();
+
+        // Get shifts in period
+        const { data: shifts } = await supabase
+          .from("crm_shifts")
+          .select("chatter_id, total_minutes")
+          .gte("date", periodStart)
+          .lte("date", periodEnd);
+
+        // Get chatters with hourly rates
+        const { data: chatters } = await supabase
+          .from("crm_chatters")
+          .select("id, name, hourly_rate, commission_pct")
+          .eq("status", "active");
+
+        // Get bonus records in period
+        const { data: bonuses } = await supabase
+          .from("crm_bonus_records")
+          .select("chatter_id, amount")
+          .eq("status", "approved")
+          .gte("period_start", startISO)
+          .lte("period_end", endISO);
+
+        const chatterMap = new Map<string, { name: string; hourlyRate: number; commissionPct: number }>();
+        for (const c of chatters || []) {
+          chatterMap.set(c.id, {
+            name: c.name,
+            hourlyRate: c.hourly_rate || 0,
+            commissionPct: c.commission_pct || 0,
+          });
+        }
+
+        // Aggregate hours per chatter
+        const hoursMap = new Map<string, number>();
+        for (const shift of shifts || []) {
+          const current = hoursMap.get(shift.chatter_id) || 0;
+          hoursMap.set(shift.chatter_id, current + (shift.total_minutes || 0) / 60);
+        }
+
+        // Aggregate bonuses per chatter
+        const bonusMap = new Map<string, number>();
+        for (const bonus of bonuses || []) {
+          const current = bonusMap.get(bonus.chatter_id) || 0;
+          bonusMap.set(bonus.chatter_id, current + (bonus.amount || 0));
+        }
+
+        // Build preview items
+        const allChatterIds = new Set([...hoursMap.keys(), ...bonusMap.keys()]);
+        const items: PreviewItem[] = [];
+
+        for (const cid of allChatterIds) {
+          const info = chatterMap.get(cid);
+          if (!info) continue;
+
+          const hours = hoursMap.get(cid) || 0;
+          const basePay = Math.round(hours * info.hourlyRate * 100);
+          const bonusTotal = bonusMap.get(cid) || 0;
+          const grossPay = basePay + bonusTotal;
+
+          items.push({
+            chatterId: cid,
+            chatterName: info.name,
+            hoursWorked: hours,
+            basePay,
+            bonusTotal,
+            commissionTotal: 0,
+            grossPay,
+            grossPayFormatted: formatCurrency(grossPay),
+          });
+        }
+
+        const totalGross = items.reduce((s, i) => s + i.grossPay, 0);
+        const totalHours = items.reduce((s, i) => s + i.hoursWorked, 0);
+        const totalBonuses = items.reduce((s, i) => s + i.bonusTotal, 0);
+        const totalCommissions = items.reduce((s, i) => s + i.commissionTotal, 0);
+
+        setPreview({
+          summary: {
+            totalGross,
+            totalGrossFormatted: formatCurrency(totalGross),
+            totalHours,
+            totalHoursFormatted: totalHours.toFixed(1),
+            totalBonuses,
+            totalBonusesFormatted: formatCurrency(totalBonuses),
+            totalCommissions,
+            totalCommissionsFormatted: formatCurrency(totalCommissions),
+          },
+          items,
+        });
+      } catch (err) {
+        console.error("Failed to fetch preview:", err);
+        setPreview(null);
+      } finally {
+        setPreviewLoading(false);
+      }
+    }
+
+    fetchPreview();
+  }, [token, periodStart, periodEnd, startTs, endTs]);
 
   const handleCreate = async () => {
     if (!periodStart || !periodEnd) {
       setError("Please select both start and end dates");
       return;
     }
-    
+
     if (startTs >= endTs) {
       setError("End date must be after start date");
       return;
@@ -79,13 +208,50 @@ export default function CreatePayRunModal({ token, onClose, onSuccess }: CreateP
     setError("");
 
     try {
-      const result = await createPayRun({
-        token,
-        periodStart: startTs,
-        periodEnd: endTs,
-        notes: notes || undefined,
-      });
-      onSuccess(result.payRunId);
+      const user = JSON.parse(localStorage.getItem("crm_user") || "{}");
+
+      // Create pay run
+      const { data: payRun, error: createError } = await supabase
+        .from("crm_pay_runs")
+        .insert({
+          period_start: new Date(periodStart + "T00:00:00").toISOString(),
+          period_end: new Date(periodEnd + "T23:59:59").toISOString(),
+          status: "draft",
+          total_gross: preview?.summary.totalGross || 0,
+          total_net: preview?.summary.totalGross || 0,
+          line_item_count: preview?.items.length || 0,
+          created_by: user.name || user.username || "unknown",
+          notes: notes || null,
+        })
+        .select("id")
+        .single();
+
+      if (createError) throw createError;
+
+      // Create pay run items
+      if (preview?.items.length) {
+        const items = preview.items.map((item) => ({
+          pay_run_id: payRun.id,
+          chatter_id: item.chatterId,
+          chatter_name: item.chatterName,
+          hours_worked: item.hoursWorked,
+          base_pay: item.basePay,
+          bonus_total: item.bonusTotal,
+          commission_total: item.commissionTotal,
+          deductions: 0,
+          gross_pay: item.grossPay,
+          net_pay: item.grossPay,
+          payment_status: "pending",
+        }));
+
+        const { error: itemsError } = await supabase
+          .from("crm_pay_run_items")
+          .insert(items);
+
+        if (itemsError) throw itemsError;
+      }
+
+      onSuccess(payRun.id);
     } catch (err: any) {
       setError(err.message || "Failed to create pay run");
     } finally {
@@ -173,7 +339,7 @@ export default function CreatePayRunModal({ token, onClose, onSuccess }: CreateP
             <div style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-secondary)", marginBottom: "12px", textTransform: "uppercase" }}>
               📊 Preview Summary
             </div>
-            
+
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "12px", marginBottom: "16px" }}>
               <div style={statBoxStyle}>
                 <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Total Gross</div>
@@ -229,7 +395,7 @@ export default function CreatePayRunModal({ token, onClose, onSuccess }: CreateP
           </div>
         )}
 
-        {preview === null && periodStart && periodEnd && startTs < endTs && (
+        {previewLoading && periodStart && periodEnd && startTs < endTs && (
           <div style={{
             background: "var(--bg)",
             borderRadius: "16px",

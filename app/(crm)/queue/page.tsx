@@ -1,9 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import QueueFilters, {
   type QueueFiltersState,
   type QueuePriorityFilter,
@@ -67,46 +65,32 @@ function endOfDayMs(yyyyMmDd: string): number | null {
 }
 
 function normalizeQueueItem(raw: any): QueueItemLike {
-  // Convex returns Id types; in UI we normalize them to strings.
   return {
     ...raw,
-    _id: String(raw._id),
-    creatorId: String(raw.creatorId),
-    chatterId: raw.chatterId ? String(raw.chatterId) : undefined,
-    originalChatterId: raw.originalChatterId ? String(raw.originalChatterId) : undefined,
-    escalatedTo: raw.escalatedTo ? String(raw.escalatedTo) : undefined,
+    _id: String(raw.id),
+    creatorId: String(raw.creator_id),
+    chatterId: raw.chatter_id ? String(raw.chatter_id) : undefined,
+    originalChatterId: raw.original_chatter_id ? String(raw.original_chatter_id) : undefined,
+    escalatedTo: raw.escalated_to ? String(raw.escalated_to) : undefined,
+    fanUsername: raw.fan_username,
+    fanDisplayName: raw.fan_display_name,
+    fanSegment: raw.fan_segment,
+    fanSpendTier: raw.fan_spend_tier,
+    messagePreview: raw.message_preview,
+    messageType: raw.message_type,
+    priority: raw.priority,
+    status: raw.status,
+    receivedAt: new Date(raw.received_at).getTime(),
+    firstViewedAt: raw.first_viewed_at ? new Date(raw.first_viewed_at).getTime() : undefined,
+    respondedAt: raw.responded_at ? new Date(raw.responded_at).getTime() : undefined,
+    waitTimeSec: raw.wait_time_sec,
+    handleTimeSec: raw.handle_time_sec,
+    escalatedAt: raw.escalated_at ? new Date(raw.escalated_at).getTime() : undefined,
+    escalationReason: raw.escalation_reason,
+    source: raw.source,
+    notes: raw.notes,
+    tags: raw.tags,
   } as QueueItemLike;
-}
-
-function QueueData({
-  token,
-  canLoadChatters,
-  children,
-}: {
-  token: string;
-  canLoadChatters: boolean;
-  children: (data: {
-    items: QueueItemLike[] | undefined;
-    creators: CreatorListItem[] | undefined;
-    chatters: ChatterListItem[] | undefined;
-  }) => React.ReactNode;
-}) {
-  const itemsRaw = useQuery(
-    api.crm.queue.getQueueItems,
-    token ? { token, includeClosed: true, limit: 200 } : "skip"
-  );
-  const creators = useQuery(
-    api.crm.creators.list,
-    token ? { token, includeArchived: false } : "skip"
-  );
-  const chatters = useQuery(api.crm.chatters.list, token && canLoadChatters ? { token } : "skip");
-
-  const items = useMemo(() => {
-    if (!itemsRaw) return itemsRaw;
-    return (itemsRaw as any[]).map(normalizeQueueItem);
-  }, [itemsRaw]);
-
-  return <>{children({ items, creators: creators as any, chatters: chatters as any })}</>;
 }
 
 export default function SupervisorQueuePage() {
@@ -138,6 +122,50 @@ export default function SupervisorQueuePage() {
   const [refreshKey, setRefreshKey] = useState(0);
   const lastRefreshAtRef = useRef<number>(Date.now());
 
+  // Data state
+  const [items, setItems] = useState<QueueItemLike[] | undefined>(undefined);
+  const [creators, setCreators] = useState<CreatorListItem[] | undefined>(undefined);
+  const [chatters, setChatters] = useState<ChatterListItem[] | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [queueRes, creatorsRes, chattersRes] = await Promise.all([
+        supabase
+          .from("crm_message_queue")
+          .select("*")
+          .order("received_at", { ascending: false })
+          .limit(200),
+        supabase
+          .from("crm_creators")
+          .select("*")
+          .eq("status", "active"),
+        isSupervisor
+          ? supabase.from("crm_chatters").select("*")
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (queueRes.data) {
+        setItems(queueRes.data.map(normalizeQueueItem));
+      }
+      if (creatorsRes.data) {
+        setCreators(creatorsRes.data.map((c: any) => ({ id: c.id, name: c.name })));
+      }
+      if (chattersRes.data) {
+        setChatters(chattersRes.data.map((c: any) => ({ id: c.id, name: c.name })));
+      }
+    } catch (err) {
+      console.error("Failed to fetch queue data:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, isSupervisor]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData, refreshKey]);
+
   const refreshNow = useCallback(() => {
     lastRefreshAtRef.current = Date.now();
     setRefreshKey((k) => k + 1);
@@ -164,10 +192,6 @@ export default function SupervisorQueuePage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const claimMessage = useMutation(api.crm.queue.claimMessage);
-  const escalateMessage = useMutation(api.crm.queue.escalateMessage);
-  const resolveMessage = useMutation(api.crm.queue.resolveMessage);
-
   const [busyIds, setBusyIds] = useState<Record<string, boolean>>({});
 
   const setBusy = useCallback((id: string, busy: boolean) => {
@@ -176,6 +200,38 @@ export default function SupervisorQueuePage() {
       return { ...prev, [id]: busy };
     });
   }, []);
+
+  const claimMessage = useCallback(async (queueId: string) => {
+    const { error } = await supabase
+      .from("crm_message_queue")
+      .update({ status: "in_progress", chatter_id: user?.id })
+      .eq("id", queueId);
+    if (error) throw error;
+    refreshNow();
+  }, [user?.id, refreshNow]);
+
+  const escalateMessage = useCallback(async (queueId: string, reason: string, escalateTo?: string) => {
+    const { error } = await supabase
+      .from("crm_message_queue")
+      .update({
+        status: "escalated",
+        escalation_reason: reason,
+        escalated_to: escalateTo || null,
+        escalated_at: new Date().toISOString(),
+      })
+      .eq("id", queueId);
+    if (error) throw error;
+    refreshNow();
+  }, [refreshNow]);
+
+  const resolveMessage = useCallback(async (queueId: string) => {
+    const { error } = await supabase
+      .from("crm_message_queue")
+      .update({ status: "responded", responded_at: new Date().toISOString() })
+      .eq("id", queueId);
+    if (error) throw error;
+    refreshNow();
+  }, [refreshNow]);
 
   const resetFilters = useCallback(() => {
     setFilters({
@@ -201,7 +257,7 @@ export default function SupervisorQueuePage() {
     for (const id of selectedIds) {
       setBusy(id, true);
       try {
-        await claimMessage({ token, queueId: id as any });
+        await claimMessage(id);
       } catch (err) {
         console.error(err);
       } finally {
@@ -217,17 +273,12 @@ export default function SupervisorQueuePage() {
     const reason = window.prompt("Escalation reason (applies to all selected items):", "Needs supervisor attention");
     if (!reason || !reason.trim()) return;
 
-    const escalateTo = user?.id ? (String(user.id) as Id<"crm_chatters">) : undefined;
+    const escalateTo = user?.id ? String(user.id) : undefined;
 
     for (const id of selectedIds) {
       setBusy(id, true);
       try {
-        await escalateMessage({
-          token,
-          queueId: id as any,
-          reason: reason.trim(),
-          escalateTo: escalateTo as any,
-        });
+        await escalateMessage(id, reason.trim(), escalateTo);
       } catch (err) {
         console.error(err);
       } finally {
@@ -245,7 +296,7 @@ export default function SupervisorQueuePage() {
     for (const id of selectedIds) {
       setBusy(id, true);
       try {
-        await resolveMessage({ token, queueId: id as any });
+        await resolveMessage(id);
       } catch (err) {
         console.error(err);
       } finally {
@@ -305,6 +356,73 @@ export default function SupervisorQueuePage() {
     );
   }
 
+  const creatorsList: CreatorListItem[] = creators ?? [];
+  const chattersList: ChatterListItem[] = chatters ?? [];
+
+  const creatorsById = creatorsList.reduce<Record<string, string>>((acc, c) => {
+    acc[c.id] = c.name;
+    return acc;
+  }, {});
+
+  const chattersById = chattersList.reduce<Record<string, string>>((acc, c) => {
+    acc[c.id] = c.name;
+    return acc;
+  }, {});
+
+  const all = (items ?? []) as QueueItemLike[];
+
+  const startMs = startOfDayMs(filters.startDate);
+  const endMs_ = endOfDayMs(filters.endDate);
+
+  const selectedStatuses = new Set<QueueStatusFilter>(filters.statuses);
+  const selectedPriorities = new Set<QueuePriorityFilter>(filters.priorities);
+
+  const filtered = all.filter((it) => {
+    const statusOk = selectedStatuses.size === 0 ? true : selectedStatuses.has(it.status as any);
+    if (!statusOk) return false;
+
+    const priOk = selectedPriorities.size === 0 ? true : selectedPriorities.has(it.priority as any);
+    if (!priOk) return false;
+
+    if (filters.creatorId !== "all" && String(it.creatorId) !== filters.creatorId) return false;
+    if (filters.chatterId !== "all" && String(it.chatterId ?? "") !== filters.chatterId) return false;
+
+    if (startMs !== null && it.receivedAt < startMs) return false;
+    if (endMs_ !== null && it.receivedAt > endMs_) return false;
+
+    return true;
+  });
+
+  const dir = sort.dir === "asc" ? 1 : -1;
+
+  const filteredSorted = [...filtered].sort((a, b) => {
+    if (sort.key === "priority") {
+      const d = (priorityRank(a.priority as any) - priorityRank(b.priority as any)) * dir;
+      if (d !== 0) return d;
+      const w = (computeWaitSec(a, nowMs) - computeWaitSec(b, nowMs)) * dir;
+      if (w !== 0) return w;
+      return (a.receivedAt - b.receivedAt) * dir;
+    }
+
+    if (sort.key === "received") {
+      const d = (a.receivedAt - b.receivedAt) * dir;
+      if (d !== 0) return d;
+      const w = (computeWaitSec(a, nowMs) - computeWaitSec(b, nowMs)) * dir;
+      if (w !== 0) return w;
+      return (priorityRank(a.priority as any) - priorityRank(b.priority as any)) * -dir;
+    }
+
+    // wait
+    const w = (computeWaitSec(a, nowMs) - computeWaitSec(b, nowMs)) * dir;
+    if (w !== 0) return w;
+    const p = (priorityRank(a.priority as any) - priorityRank(b.priority as any)) * -dir;
+    if (p !== 0) return p;
+    return (a.receivedAt - b.receivedAt) * dir;
+  });
+
+  const shownCount = filteredSorted.length;
+  const toolbarVisible = selectedIds.length > 0;
+
   return (
     <div style={{ maxWidth: 1400, padding: 24 }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -350,315 +468,227 @@ export default function SupervisorQueuePage() {
       </div>
 
       <div style={{ marginTop: 18 }}>
-        <QueueData key={refreshKey} token={token} canLoadChatters={isSupervisor}>
-          {({ items, creators, chatters }) => {
-            const creatorsList: CreatorListItem[] = (creators ?? []).map((c: any) => ({
-              id: String(c.id),
-              name: String(c.name),
-            }));
+        <div style={{ marginTop: 16 }}>
+          <QueueStatsBar items={filteredSorted as any} nowMs={nowMs} />
+        </div>
 
-            const chattersList: ChatterListItem[] = (chatters ?? []).map((c: any) => ({
-              id: String(c.id),
-              name: String(c.name),
-            }));
+        <div style={{ marginTop: 16 }}>
+          <QueueFilters
+            value={filters}
+            creators={creatorsList}
+            chatters={chattersList}
+            onChange={setFilters}
+            onReset={resetFilters}
+          />
+        </div>
 
-            const creatorsById = creatorsList.reduce<Record<string, string>>((acc, c) => {
-              acc[c.id] = c.name;
-              return acc;
-            }, {});
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 800 }}>
+            Showing <b style={{ color: "var(--text)" }}>{shownCount}</b> item(s)
+          </div>
 
-            const chattersById = chattersList.reduce<Record<string, string>>((acc, c) => {
-              acc[c.id] = c.name;
-              return acc;
-            }, {});
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 900 }}>Sort</div>
+            <select
+              value={sort.key}
+              onChange={(e) => setSort((s) => ({ ...s, key: e.target.value as SortKey }))}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--text)",
+                fontWeight: 900,
+              }}
+            >
+              <option value="wait">Wait time</option>
+              <option value="priority">Priority</option>
+              <option value="received">Received time</option>
+            </select>
 
-            const all = (items ?? []) as QueueItemLike[];
+            <button
+              onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text)",
+                cursor: "pointer",
+                fontWeight: 900,
+              }}
+              title="Toggle sort direction"
+            >
+              {sort.dir === "asc" ? "↑ Asc" : "↓ Desc"}
+            </button>
+          </div>
+        </div>
 
-            const startMs = startOfDayMs(filters.startDate);
-            const endMs = endOfDayMs(filters.endDate);
+        {toolbarVisible ? (
+          <div
+            style={{
+              marginTop: 14,
+              background: "rgba(59, 130, 246, 0.08)",
+              border: "1px solid rgba(59, 130, 246, 0.25)",
+              borderRadius: 16,
+              padding: 14,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 900 }}>
+              {selectedIds.length} selected
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => void bulkClaim()}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(59, 130, 246, 0.35)",
+                  background: "rgba(59, 130, 246, 0.10)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                Claim (C)
+              </button>
+              <button
+                onClick={() => void bulkEscalate()}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(245, 158, 11, 0.45)",
+                  background: "rgba(245, 158, 11, 0.10)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                Escalate (E)
+              </button>
+              <button
+                onClick={() => void bulkResolve()}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid rgba(34, 197, 94, 0.45)",
+                  background: "rgba(34, 197, 94, 0.10)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                Resolve
+              </button>
+              <button
+                onClick={clearSelection}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : null}
 
-            const selectedStatuses = new Set<QueueStatusFilter>(filters.statuses);
-            const selectedPriorities = new Set<QueuePriorityFilter>(filters.priorities);
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {!items ? (
+            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 24, padding: "42px 24px", textAlign: "center" }}>
+              <div style={{ fontSize: 42, marginBottom: 14 }}>📡</div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "var(--text)" }}>Loading queue…</div>
+              <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+                Fetching data from Supabase.
+              </div>
+            </div>
+          ) : filteredSorted.length === 0 ? (
+            <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 24, padding: "42px 24px", textAlign: "center" }}>
+              <div style={{ fontSize: 42, marginBottom: 14 }}>🪹</div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "var(--text)" }}>
+                No items match your filters
+              </div>
+              <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+                Try widening status/priority filters or clearing creator/chatter.
+              </div>
+              <button
+                onClick={resetFilters}
+                style={{
+                  marginTop: 14,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid var(--border)",
+                  background: "transparent",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontWeight: 900,
+                }}
+              >
+                Reset filters
+              </button>
+            </div>
+          ) : (
+            filteredSorted.map((it) => {
+              const id = String(it._id);
+              return (
+                <QueueItemCard
+                  key={id}
+                  item={it}
+                  nowMs={nowMs}
+                  creatorsById={creatorsById}
+                  chattersById={chattersById}
+                  selected={selectedIds.includes(id)}
+                  onToggleSelected={() => toggleSelected(id)}
+                  expanded={expandedId === id}
+                  onToggleExpanded={() => setExpandedId((cur) => (cur === id ? null : id))}
+                  loading={!!busyIds[id]}
+                  onClaim={async () => {
+                    if (!token) return;
+                    setBusy(id, true);
+                    try {
+                      await claimMessage(id);
+                    } finally {
+                      setBusy(id, false);
+                    }
+                  }}
+                  onEscalate={async () => {
+                    if (!token) return;
+                    const reason = window.prompt("Escalation reason:", it.escalationReason ?? "Needs supervisor attention");
+                    if (!reason || !reason.trim()) return;
 
-            const filtered = all.filter((it) => {
-              const statusOk = selectedStatuses.size === 0 ? true : selectedStatuses.has(it.status as any);
-              if (!statusOk) return false;
+                    setBusy(id, true);
+                    try {
+                      await escalateMessage(id, reason.trim(), user?.id ? String(user.id) : undefined);
+                    } finally {
+                      setBusy(id, false);
+                    }
+                  }}
+                  onResolve={async () => {
+                    if (!token) return;
+                    if (!window.confirm("Mark as resolved/responded?") ) return;
 
-              const priOk = selectedPriorities.size === 0 ? true : selectedPriorities.has(it.priority as any);
-              if (!priOk) return false;
-
-              if (filters.creatorId !== "all" && String(it.creatorId) !== filters.creatorId) return false;
-              if (filters.chatterId !== "all" && String(it.chatterId ?? "") !== filters.chatterId) return false;
-
-              if (startMs !== null && it.receivedAt < startMs) return false;
-              if (endMs !== null && it.receivedAt > endMs) return false;
-
-              return true;
-            });
-
-            const dir = sort.dir === "asc" ? 1 : -1;
-
-            const filteredSorted = [...filtered].sort((a, b) => {
-              if (sort.key === "priority") {
-                const d = (priorityRank(a.priority as any) - priorityRank(b.priority as any)) * dir;
-                if (d !== 0) return d;
-                const w = (computeWaitSec(a, nowMs) - computeWaitSec(b, nowMs)) * dir;
-                if (w !== 0) return w;
-                return (a.receivedAt - b.receivedAt) * dir;
-              }
-
-              if (sort.key === "received") {
-                const d = (a.receivedAt - b.receivedAt) * dir;
-                if (d !== 0) return d;
-                const w = (computeWaitSec(a, nowMs) - computeWaitSec(b, nowMs)) * dir;
-                if (w !== 0) return w;
-                return (priorityRank(a.priority as any) - priorityRank(b.priority as any)) * -dir;
-              }
-
-              // wait
-              const w = (computeWaitSec(a, nowMs) - computeWaitSec(b, nowMs)) * dir;
-              if (w !== 0) return w;
-              const p = (priorityRank(a.priority as any) - priorityRank(b.priority as any)) * -dir;
-              if (p !== 0) return p;
-              return (a.receivedAt - b.receivedAt) * dir;
-            });
-
-            const shownCount = filteredSorted.length;
-
-            const toolbarVisible = selectedIds.length > 0;
-
-            return (
-              <>
-                <div style={{ marginTop: 16 }}>
-                  <QueueStatsBar items={filteredSorted as any} nowMs={nowMs} />
-                </div>
-
-                <div style={{ marginTop: 16 }}>
-                  <QueueFilters
-                    value={filters}
-                    creators={creatorsList}
-                    chatters={chattersList}
-                    onChange={setFilters}
-                    onReset={resetFilters}
-                  />
-                </div>
-
-                <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                  <div style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 800 }}>
-                    Showing <b style={{ color: "var(--text)" }}>{shownCount}</b> item(s)
-                  </div>
-
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 900 }}>Sort</div>
-                    <select
-                      value={sort.key}
-                      onChange={(e) => setSort((s) => ({ ...s, key: e.target.value as SortKey }))}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: "1px solid var(--border)",
-                        background: "var(--surface)",
-                        color: "var(--text)",
-                        fontWeight: 900,
-                      }}
-                    >
-                      <option value="wait">Wait time</option>
-                      <option value="priority">Priority</option>
-                      <option value="received">Received time</option>
-                    </select>
-
-                    <button
-                      onClick={() => setSort((s) => ({ ...s, dir: s.dir === "asc" ? "desc" : "asc" }))}
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 12,
-                        border: "1px solid var(--border)",
-                        background: "transparent",
-                        color: "var(--text)",
-                        cursor: "pointer",
-                        fontWeight: 900,
-                      }}
-                      title="Toggle sort direction"
-                    >
-                      {sort.dir === "asc" ? "↑ Asc" : "↓ Desc"}
-                    </button>
-                  </div>
-                </div>
-
-                {toolbarVisible ? (
-                  <div
-                    style={{
-                      marginTop: 14,
-                      background: "rgba(59, 130, 246, 0.08)",
-                      border: "1px solid rgba(59, 130, 246, 0.25)",
-                      borderRadius: 16,
-                      padding: 14,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 900 }}>
-                      {selectedIds.length} selected
-                    </div>
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                      <button
-                        onClick={() => void bulkClaim()}
-                        style={{
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid rgba(59, 130, 246, 0.35)",
-                          background: "rgba(59, 130, 246, 0.10)",
-                          color: "var(--text)",
-                          cursor: "pointer",
-                          fontWeight: 900,
-                        }}
-                      >
-                        Claim (C)
-                      </button>
-                      <button
-                        onClick={() => void bulkEscalate()}
-                        style={{
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid rgba(245, 158, 11, 0.45)",
-                          background: "rgba(245, 158, 11, 0.10)",
-                          color: "var(--text)",
-                          cursor: "pointer",
-                          fontWeight: 900,
-                        }}
-                      >
-                        Escalate (E)
-                      </button>
-                      <button
-                        onClick={() => void bulkResolve()}
-                        style={{
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid rgba(34, 197, 94, 0.45)",
-                          background: "rgba(34, 197, 94, 0.10)",
-                          color: "var(--text)",
-                          cursor: "pointer",
-                          fontWeight: 900,
-                        }}
-                      >
-                        Resolve
-                      </button>
-                      <button
-                        onClick={clearSelection}
-                        style={{
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid var(--border)",
-                          background: "transparent",
-                          color: "var(--text)",
-                          cursor: "pointer",
-                          fontWeight: 900,
-                        }}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-
-                <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-                  {!items ? (
-                    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 24, padding: "42px 24px", textAlign: "center" }}>
-                      <div style={{ fontSize: 42, marginBottom: 14 }}>📡</div>
-                      <div style={{ fontSize: 16, fontWeight: 900, color: "var(--text)" }}>Loading queue…</div>
-                      <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-secondary)" }}>
-                        Connected to real-time updates.
-                      </div>
-                    </div>
-                  ) : filteredSorted.length === 0 ? (
-                    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 24, padding: "42px 24px", textAlign: "center" }}>
-                      <div style={{ fontSize: 42, marginBottom: 14 }}>🪹</div>
-                      <div style={{ fontSize: 16, fontWeight: 900, color: "var(--text)" }}>
-                        No items match your filters
-                      </div>
-                      <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-secondary)" }}>
-                        Try widening status/priority filters or clearing creator/chatter.
-                      </div>
-                      <button
-                        onClick={resetFilters}
-                        style={{
-                          marginTop: 14,
-                          padding: "10px 12px",
-                          borderRadius: 12,
-                          border: "1px solid var(--border)",
-                          background: "transparent",
-                          color: "var(--text)",
-                          cursor: "pointer",
-                          fontWeight: 900,
-                        }}
-                      >
-                        Reset filters
-                      </button>
-                    </div>
-                  ) : (
-                    filteredSorted.map((it) => {
-                      const id = String(it._id);
-                      return (
-                        <QueueItemCard
-                          key={id}
-                          item={it}
-                          nowMs={nowMs}
-                          creatorsById={creatorsById}
-                          chattersById={chattersById}
-                          selected={selectedIds.includes(id)}
-                          onToggleSelected={() => toggleSelected(id)}
-                          expanded={expandedId === id}
-                          onToggleExpanded={() => setExpandedId((cur) => (cur === id ? null : id))}
-                          loading={!!busyIds[id]}
-                          onClaim={async () => {
-                            if (!token) return;
-                            setBusy(id, true);
-                            try {
-                              await claimMessage({ token, queueId: it._id as any });
-                            } finally {
-                              setBusy(id, false);
-                            }
-                          }}
-                          onEscalate={async () => {
-                            if (!token) return;
-                            const reason = window.prompt("Escalation reason:", it.escalationReason ?? "Needs supervisor attention");
-                            if (!reason || !reason.trim()) return;
-
-                            setBusy(id, true);
-                            try {
-                              await escalateMessage({
-                                token,
-                                queueId: it._id as any,
-                                reason: reason.trim(),
-                                escalateTo: (user?.id ? String(user.id) : undefined) as any,
-                              });
-                            } finally {
-                              setBusy(id, false);
-                            }
-                          }}
-                          onResolve={async () => {
-                            if (!token) return;
-                            if (!window.confirm("Mark as resolved/responded?") ) return;
-
-                            setBusy(id, true);
-                            try {
-                              await resolveMessage({ token, queueId: it._id as any });
-                            } finally {
-                              setBusy(id, false);
-                            }
-                          }}
-                        />
-                      );
-                    })
-                  )}
-                </div>
-              </>
-            );
-          }}
-        </QueueData>
+                    setBusy(id, true);
+                    try {
+                      await resolveMessage(id);
+                    } finally {
+                      setBusy(id, false);
+                    }
+                  }}
+                />
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );

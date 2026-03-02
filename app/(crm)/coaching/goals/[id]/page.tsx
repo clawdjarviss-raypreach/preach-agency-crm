@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { api } from "../../../../../convex/_generated/api";
-import type { Id } from "../../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import GoalForm, {
   type GoalFormGoal,
   parseSmartDescription,
@@ -61,6 +59,9 @@ export default function GoalDetailPage() {
   const [editing, setEditing] = useState(false);
   const [confirmClose, setConfirmClose] = useState<"achieved" | "missed" | "cancelled" | null>(null);
 
+  const [goal, setGoal] = useState<any | null | undefined>(undefined);
+  const [chatters, setChatters] = useState<any[] | undefined>(undefined);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -70,14 +71,46 @@ export default function GoalDetailPage() {
 
   const canManage = isSupervisorRole(user?.role);
 
-  const goal = useQuery(
-    api.crm.coaching.getGoalById,
-    token && goalId ? { token, goalId: goalId as Id<"crm_coaching_goals"> } : "skip"
-  ) as any | undefined;
+  const loadGoal = useCallback(async () => {
+    if (!token || !goalId) return;
+    try {
+      const { data, error } = await supabase
+        .from("crm_coaching_goals")
+        .select("*")
+        .eq("id", goalId)
+        .single();
+      if (error) {
+        if (error.code === "PGRST116") {
+          setGoal(null);
+        } else {
+          throw error;
+        }
+      } else {
+        setGoal(data);
+      }
+    } catch (e) {
+      console.error("Failed to load goal:", e);
+      setGoal(null);
+    }
+  }, [token, goalId]);
 
-  const chatters = useQuery(api.crm.chatters.list, token && canManage ? { token } : "skip") as
-    | any[]
-    | undefined;
+  const loadChatters = useCallback(async () => {
+    if (!token || !canManage) return;
+    try {
+      const { data, error } = await supabase.from("crm_chatters").select("*");
+      if (error) throw error;
+      setChatters(data ?? []);
+    } catch (e) {
+      console.error("Failed to load chatters:", e);
+      setChatters([]);
+    }
+  }, [token, canManage]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadGoal();
+    loadChatters();
+  }, [token, loadGoal, loadChatters]);
 
   const chatterById = useMemo(() => {
     const map: Record<string, { id: string; name: string; avatarEmoji?: string }> = {};
@@ -85,7 +118,7 @@ export default function GoalDetailPage() {
       map[String(c.id)] = {
         id: String(c.id),
         name: String(c.name ?? c.username ?? c.id),
-        avatarEmoji: c.avatarEmoji,
+        avatarEmoji: c.avatar_emoji,
       };
     });
     return map;
@@ -96,21 +129,24 @@ export default function GoalDetailPage() {
       id: String(c.id),
       name: String(c.name ?? c.username ?? c.id),
       role: c.role,
-      avatarEmoji: c.avatarEmoji,
+      avatarEmoji: c.avatar_emoji,
     }));
   }, [chatters]);
-
-  const updateGoal = useMutation(api.crm.coaching.updateGoal);
 
   const closeGoal = async (newStatus: "achieved" | "missed" | "cancelled") => {
     if (!token || !goal) return;
     try {
-      await updateGoal({
-        token,
-        goalId: goal._id as Id<"crm_coaching_goals">,
-        status: newStatus,
-      } as any);
+      const updateData: any = { status: newStatus };
+      if (newStatus === "achieved") {
+        updateData.achieved_at = new Date().toISOString();
+      }
+      const { error } = await supabase
+        .from("crm_coaching_goals")
+        .update(updateData)
+        .eq("id", goal.id);
+      if (error) throw error;
       setConfirmClose(null);
+      await loadGoal();
     } catch (e) {
       console.error(e);
     }
@@ -147,36 +183,38 @@ export default function GoalDetailPage() {
   }
 
   const now = Date.now();
-  const badge = statusBadge(goal.status as GoalStatus, goal.periodEnd, now);
-  const chatter = chatterById[String(goal.chatterId)];
+  const periodEndTs = goal.period_end ? new Date(goal.period_end).getTime() : 0;
+  const periodStartTs = goal.period_start ? new Date(goal.period_start).getTime() : 0;
+  const badge = statusBadge(goal.status as GoalStatus, periodEndTs, now);
+  const chatter = chatterById[String(goal.chatter_id)];
   const smart = parseSmartDescription(goal.description);
 
   const formGoal: GoalFormGoal = {
-    id: String(goal._id),
-    chatterId: String(goal.chatterId),
+    id: String(goal.id),
+    chatterId: String(goal.chatter_id),
     title: goal.title ?? "",
     description: goal.description,
     metric: goal.metric,
-    targetValue: goal.targetValue,
-    currentValue: goal.currentValue,
-    startValue: goal.startValue,
+    targetValue: goal.target_value,
+    currentValue: goal.current_value,
+    startValue: goal.start_value,
     unit: goal.unit,
-    periodStart: goal.periodStart,
-    periodEnd: goal.periodEnd,
+    periodStart: periodStartTs,
+    periodEnd: periodEndTs,
     visibility: goal.visibility ?? "shared",
     status: goal.status,
   };
 
   const trackerGoal: ProgressTrackerGoal = {
-    id: String(goal._id),
+    id: String(goal.id),
     title: goal.title ?? "",
     status: goal.status,
     unit: goal.unit,
-    startValue: goal.startValue,
-    currentValue: goal.currentValue,
-    targetValue: goal.targetValue,
-    progressPercent: goal.progressPercent,
-    checkIns: goal.checkIns,
+    startValue: goal.start_value,
+    currentValue: goal.current_value,
+    targetValue: goal.target_value,
+    progressPercent: goal.progress_percent,
+    checkIns: goal.check_ins,
   };
 
   const allowProgressEdit = canManage && goal.status === "active";
@@ -195,7 +233,7 @@ export default function GoalDetailPage() {
           chatters={chatterOptions}
           initialGoal={formGoal}
           onCancel={() => setEditing(false)}
-          onSaved={() => setEditing(false)}
+          onSaved={() => { setEditing(false); loadGoal(); }}
         />
       ) : (
         <>
@@ -219,7 +257,7 @@ export default function GoalDetailPage() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 900, fontSize: 18 }}>{goal.title}</div>
                 <div style={{ marginTop: 6, fontSize: 13, color: "var(--text-secondary)" }}>
-                  👤 {chatter?.name ?? goal.chatterId}
+                  👤 {chatter?.name ?? goal.chatter_id}
                 </div>
               </div>
 
@@ -275,7 +313,7 @@ export default function GoalDetailPage() {
               >
                 <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Period</div>
                 <div style={{ marginTop: 4, fontWeight: 700 }}>
-                  {formatDate(goal.periodStart)} → {formatDate(goal.periodEnd)}
+                  {formatDate(periodStartTs)} → {formatDate(periodEndTs)}
                 </div>
               </div>
 

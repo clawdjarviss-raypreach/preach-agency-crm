@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "../../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import PIPCard, { type PIPCardPip, type PIPCardChatter, type PipStatus } from "../../../../components/PIPCard";
 
 type CrmUser = {
@@ -25,7 +24,9 @@ export default function PipsPage() {
   const [user, setUser] = useState<CrmUser | null>(null);
   const [filterChatter, setFilterChatter] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [showCreateModal, setShowCreateModal] = useState(false);
+
+  const [pipsRaw, setPipsRaw] = useState<any[] | undefined>(undefined);
+  const [chattersRaw, setChattersRaw] = useState<any[] | undefined>(undefined);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token");
@@ -36,37 +37,50 @@ export default function PipsPage() {
 
   const isSupervisor = isSupervisorRole(user?.role);
 
-  const pipsQuery = useQuery(
-    api.crm.coaching.getActivePips,
-    token ? { token } : "skip"
-  );
+  const loadData = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [pipsRes, chattersRes] = await Promise.all([
+        supabase.from("crm_coaching_pips").select("*"),
+        supabase.from("crm_chatters").select("*"),
+      ]);
+      if (pipsRes.error) throw pipsRes.error;
+      if (chattersRes.error) throw chattersRes.error;
+      setPipsRaw(pipsRes.data ?? []);
+      setChattersRaw(chattersRes.data ?? []);
+    } catch (e) {
+      console.error("Failed to load data:", e);
+      setPipsRaw([]);
+      setChattersRaw([]);
+    }
+  }, [token]);
 
-  const chattersQuery = useQuery(
-    api.crm.chatters.list,
-    token ? { token } : "skip"
-  );
+  useEffect(() => {
+    if (!token) return;
+    loadData();
+  }, [token, loadData]);
 
   const chattersMap = useMemo(() => {
     const map: Record<string, PIPCardChatter> = {};
-    if (chattersQuery && Array.isArray(chattersQuery)) {
-      for (const c of chattersQuery) {
-        map[c.id] = { id: c.id, name: c.name, avatarEmoji: c.avatarEmoji };
+    if (chattersRaw && Array.isArray(chattersRaw)) {
+      for (const c of chattersRaw) {
+        map[c.id] = { id: c.id, name: c.name, avatarEmoji: c.avatar_emoji };
       }
     }
     return map;
-  }, [chattersQuery]);
+  }, [chattersRaw]);
 
   const pips: PIPCardPip[] = useMemo(() => {
-    if (!pipsQuery || !Array.isArray(pipsQuery)) return [];
-    return pipsQuery.map((p: any) => ({
-      id: p._id,
-      chatterId: p.chatterId,
+    if (!pipsRaw || !Array.isArray(pipsRaw)) return [];
+    return pipsRaw.map((p: any) => ({
+      id: p.id,
+      chatterId: p.chatter_id,
       title: p.title || p.reason || "Performance Improvement Plan",
       status: p.status as PipStatus,
-      endDate: p.endDate,
+      endDate: p.end_date ? new Date(p.end_date).getTime() : 0,
       milestones: p.milestones || [],
     }));
-  }, [pipsQuery]);
+  }, [pipsRaw]);
 
   const filteredPips = useMemo(() => {
     return pips.filter((p) => {

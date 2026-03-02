@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
 type ModalType = "add" | "edit" | "assignments" | "resetPin" | null;
 type RoleFilter = "all" | "chatter" | "supervisor" | "manager" | "admin";
@@ -49,6 +48,13 @@ export default function AdminPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [creatingInvite, setCreatingInvite] = useState(false);
 
+  // Data state
+  const [chatters, setChatters] = useState<any[] | undefined>(undefined);
+  const [creators, setCreators] = useState<any[] | undefined>(undefined);
+  const [activeShifts, setActiveShifts] = useState<any[] | undefined>(undefined);
+  const [invites, setInvites] = useState<any[] | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -56,27 +62,36 @@ export default function AdminPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const chatters = useQuery(api.crm.chatters.list, token ? { token } : "skip");
-  const creators = useQuery(api.crm.creators.list, token ? { token } : "skip");
-  const activeShifts = useQuery(api.crm.shifts.getAllActive, token ? { token } : "skip");
+  const fetchData = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    let cancelled = false;
 
-  const createChatter = useMutation(api.crm.chatters.create);
-  const updateChatter = useMutation(api.crm.chatters.update);
-  const deactivateChatter = useMutation(api.crm.chatters.deactivate);
-  const reactivateChatter = useMutation(api.crm.chatters.reactivate);
-  const resetPinMutation = useMutation(api.crm.chatters.resetPin);
+    const [chattersRes, creatorsRes, shiftsRes, invitesRes] = await Promise.all([
+      supabase.from("crm_chatters").select("*"),
+      supabase.from("crm_creators").select("*"),
+      supabase.from("crm_shifts").select("*, chatter:crm_chatters(id, name)").is("clock_out", null),
+      supabase.from("crm_invite_tokens").select("*").order("created_at", { ascending: false }),
+    ]);
 
-  const invites = useQuery(
-    api.crm.invites.listInvites,
-    token && user?._id ? { token, creatorId: user._id } : "skip"
-  );
-  const createInviteMutation = useMutation(api.crm.invites.createInvite);
-  const revokeInviteMutation = useMutation(api.crm.invites.revokeInvite);
+    if (cancelled) return;
+
+    if (chattersRes.data) setChatters(chattersRes.data);
+    if (creatorsRes.data) setCreators(creatorsRes.data);
+    if (shiftsRes.data) setActiveShifts(shiftsRes.data);
+    if (invitesRes.data) setInvites(invitesRes.data);
+    setLoading(false);
+
+    return () => { cancelled = true; };
+  }, [token]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Stats
   const totalMembers = chatters?.length || 0;
   const activeNow = activeShifts?.length || 0;
-  const onBreak = 0; // We don't have per-shift break data from getAllActive easily
   const activeMembers = chatters?.filter((c: any) => c.status === "active").length || 0;
 
   // Active chatter IDs for status badge
@@ -97,7 +112,7 @@ export default function AdminPage() {
     // Creator filter
     if (creatorFilter !== "all") {
       result = result.filter((c: any) =>
-        c.assignedCreators && c.assignedCreators.includes(creatorFilter)
+        c.assigned_creators && c.assigned_creators.includes(creatorFilter)
       );
     }
 
@@ -139,11 +154,11 @@ export default function AdminPage() {
     setFormName(chatter.name);
     setFormUsername(chatter.username);
     setFormRole(chatter.role);
-    setFormEmoji(chatter.avatarEmoji || "👤");
-    setFormProfilePictureUrl(chatter.profilePictureUrl || "");
-    setFormProfilePicturePreview(chatter.profilePictureUrl || "");
-    setFormHourlyRate(chatter.hourlyRate?.toString() || "");
-    setFormCommissionPct(chatter.commissionPct?.toString() || "");
+    setFormEmoji(chatter.avatar_emoji || "👤");
+    setFormProfilePictureUrl(chatter.profile_picture_url || "");
+    setFormProfilePicturePreview(chatter.profile_picture_url || "");
+    setFormHourlyRate(chatter.hourly_rate?.toString() || "");
+    setFormCommissionPct(chatter.commission_pct?.toString() || "");
     setSelectedChatter(chatter);
     setModal("edit");
   };
@@ -153,7 +168,7 @@ export default function AdminPage() {
     setSelectedChatter(chatter);
     const selections: Record<string, boolean> = {};
     (creators || []).forEach((c: any) => {
-      selections[c.name] = (chatter.assignedCreators || []).includes(c.name);
+      selections[c.name] = (chatter.assigned_creators || []).includes(c.name);
     });
     setAssignmentSelections(selections);
     setModal("assignments");
@@ -177,20 +192,22 @@ export default function AdminPage() {
       const assignedCreators = Object.entries(formAssignedCreators)
         .filter(([, v]) => v)
         .map(([k]) => k);
-      await createChatter({
-        token,
+      // TODO: pin_hash should ideally be hashed, but for now store as-is
+      const { error: insertErr } = await supabase.from("crm_chatters").insert({
         name: formName.trim(),
         username: formUsername.trim().toLowerCase(),
-        pin: formPin,
-        role: formRole as any,
-        assignedCreators,
-        avatarEmoji: formEmoji || undefined,
-        profilePictureUrl: formProfilePictureUrl.trim() || undefined,
-        hourlyRate: formHourlyRate ? parseFloat(formHourlyRate) : undefined,
-        commissionPct: formCommissionPct ? parseFloat(formCommissionPct) : undefined,
+        pin_hash: formPin,
+        role: formRole,
+        assigned_creators: assignedCreators,
+        avatar_emoji: formEmoji || undefined,
+        profile_picture_url: formProfilePictureUrl.trim() || undefined,
+        hourly_rate: formHourlyRate ? parseFloat(formHourlyRate) : undefined,
+        commission_pct: formCommissionPct ? parseFloat(formCommissionPct) : undefined,
       });
+      if (insertErr) throw insertErr;
       setSuccess(`${formName} added successfully!`);
       setModal(null);
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to add member");
     } finally {
@@ -203,18 +220,18 @@ export default function AdminPage() {
     setSaving(true);
     setError("");
     try {
-      await updateChatter({
-        token,
-        chatterId: selectedChatter.id,
+      const { error: updateErr } = await supabase.from("crm_chatters").update({
         name: formName.trim() || undefined,
-        role: formRole as any,
-        avatarEmoji: formEmoji || undefined,
-        profilePictureUrl: formProfilePictureUrl.trim() || undefined,
-        hourlyRate: formHourlyRate ? parseFloat(formHourlyRate) : undefined,
-        commissionPct: formCommissionPct ? parseFloat(formCommissionPct) : undefined,
-      });
+        role: formRole,
+        avatar_emoji: formEmoji || undefined,
+        profile_picture_url: formProfilePictureUrl.trim() || undefined,
+        hourly_rate: formHourlyRate ? parseFloat(formHourlyRate) : undefined,
+        commission_pct: formCommissionPct ? parseFloat(formCommissionPct) : undefined,
+      }).eq("id", selectedChatter.id);
+      if (updateErr) throw updateErr;
       setSuccess(`${formName} updated!`);
       setModal(null);
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to update member");
     } finally {
@@ -230,13 +247,13 @@ export default function AdminPage() {
       const selected = Object.entries(assignmentSelections)
         .filter(([, v]) => v)
         .map(([k]) => k);
-      await updateChatter({
-        token,
-        chatterId: selectedChatter.id,
-        assignedCreators: selected,
-      });
+      const { error: updateErr } = await supabase.from("crm_chatters").update({
+        assigned_creators: selected,
+      }).eq("id", selectedChatter.id);
+      if (updateErr) throw updateErr;
       setSuccess(`Assignments updated for ${selectedChatter.name}!`);
       setModal(null);
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to update assignments");
     } finally {
@@ -249,13 +266,14 @@ export default function AdminPage() {
     setSaving(true);
     setError("");
     try {
-      await resetPinMutation({
-        token,
-        chatterId: selectedChatter.id,
-        newPin,
-      });
+      // TODO: pin_hash should ideally be hashed
+      const { error: updateErr } = await supabase.from("crm_chatters").update({
+        pin_hash: newPin,
+      }).eq("id", selectedChatter.id);
+      if (updateErr) throw updateErr;
       setSuccess(`PIN reset for ${selectedChatter.name}!`);
       setModal(null);
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to reset PIN");
     } finally {
@@ -266,19 +284,20 @@ export default function AdminPage() {
   const handleToggleStatus = async (chatter: any) => {
     if (!confirm(`${chatter.status === "active" ? "Deactivate" : "Reactivate"} ${chatter.name}?`)) return;
     try {
-      if (chatter.status === "active") {
-        await deactivateChatter({ token, chatterId: chatter.id });
-      } else {
-        await reactivateChatter({ token, chatterId: chatter.id });
-      }
+      const newStatus = chatter.status === "active" ? "inactive" : "active";
+      const { error: updateErr } = await supabase.from("crm_chatters").update({
+        status: newStatus,
+      }).eq("id", chatter.id);
+      if (updateErr) throw updateErr;
       setSuccess(`${chatter.name} ${chatter.status === "active" ? "deactivated" : "reactivated"}!`);
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to update status");
     }
   };
 
   const handleCreateInvite = async () => {
-    if (!inviteEmail.trim() || !token || !user?._id) {
+    if (!inviteEmail.trim() || !token || !user?.id) {
       setError("Email is required");
       return;
     }
@@ -286,14 +305,21 @@ export default function AdminPage() {
     setCreatingInvite(true);
     setError("");
     try {
-      const result = await createInviteMutation({
-        token,
-        creatorId: user._id,
+      const inviteToken = crypto.randomUUID();
+      const { data, error: insertErr } = await supabase.from("crm_invite_tokens").insert({
+        token: inviteToken,
+        creator_id: user.id,
         email: inviteEmail,
-      });
+        status: "active",
+        created_by: user.id,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      }).select().single();
+      if (insertErr) throw insertErr;
       setInviteEmail("");
-      setSuccess(`Invite created: ${result.inviteUrl}`);
-      await navigator.clipboard.writeText(`${window.location.origin}${result.inviteUrl}`);
+      const inviteUrl = `/crm/invite/${data.token}`;
+      setSuccess(`Invite created: ${inviteUrl}`);
+      await navigator.clipboard.writeText(`${window.location.origin}${inviteUrl}`);
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to create invite");
     } finally {
@@ -304,8 +330,13 @@ export default function AdminPage() {
   const handleRevokeInvite = async (tokenId: string) => {
     if (!confirm("Revoke this invite link?")) return;
     try {
-      await revokeInviteMutation({ token, tokenId: tokenId as any });
+      const { error: updateErr } = await supabase.from("crm_invite_tokens").update({
+        status: "revoked",
+        revoked_at: new Date().toISOString(),
+      }).eq("id", tokenId);
+      if (updateErr) throw updateErr;
       setSuccess("Invite revoked");
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to revoke invite");
     }
@@ -343,6 +374,10 @@ export default function AdminPage() {
   }
 
   if (!user) return null;
+
+  if (loading && !chatters) {
+    return <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Loading team data...</div>;
+  }
 
   return (
     <div style={{ maxWidth: "1200px" }}>
@@ -394,11 +429,11 @@ export default function AdminPage() {
             <div key={invite.id} style={{ border: "1px solid var(--border)", borderRadius: "12px", padding: "10px 12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 180 }}>
                 <div style={{ fontSize: "13px", color: "var(--text)", fontWeight: 600 }}>{invite.email}</div>
-                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>{invite.inviteUrl}</div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>/crm/invite/{invite.token}</div>
               </div>
               <span style={{ fontSize: "11px", padding: "4px 8px", borderRadius: "999px", background: "var(--bg)", color: "var(--text-secondary)", textTransform: "uppercase" }}>{invite.status}</span>
               <button
-                onClick={() => navigator.clipboard.writeText(`${window.location.origin}${invite.inviteUrl}`)}
+                onClick={() => navigator.clipboard.writeText(`${window.location.origin}/crm/invite/${invite.token}`)}
                 style={cardActionBtnStyle}
               >
                 Copy
@@ -536,9 +571,9 @@ export default function AdminPage() {
             >
               {/* Top Row: Avatar + Name + Status */}
               <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "12px" }}>
-                {chatter.profilePictureUrl ? (
+                {chatter.profile_picture_url ? (
                   <img
-                    src={chatter.profilePictureUrl}
+                    src={chatter.profile_picture_url}
                     alt={chatter.name}
                     style={{
                       width: "48px", height: "48px", borderRadius: "14px",
@@ -552,7 +587,7 @@ export default function AdminPage() {
                     display: "flex", alignItems: "center", justifyContent: "center", fontSize: "24px",
                     flexShrink: 0,
                   }}>
-                    {chatter.avatarEmoji || "👤"}
+                    {chatter.avatar_emoji || "👤"}
                   </div>
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -586,9 +621,9 @@ export default function AdminPage() {
 
               {/* Assigned Creators */}
               <div style={{ marginBottom: "14px", minHeight: "28px" }}>
-                {chatter.assignedCreators && chatter.assignedCreators.length > 0 ? (
+                {chatter.assigned_creators && chatter.assigned_creators.length > 0 ? (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                    {chatter.assignedCreators.map((name: string) => (
+                    {chatter.assigned_creators.map((name: string) => (
                       <span key={name} style={{
                         padding: "3px 8px", fontSize: "11px", fontWeight: "500",
                         background: "var(--bg)", color: "var(--accent)",

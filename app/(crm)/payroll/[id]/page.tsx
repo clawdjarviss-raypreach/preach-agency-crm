@@ -1,10 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useState, useEffect, useMemo, type ComponentProps } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { api } from "../../../../convex/_generated/api";
-import { Id } from "../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import PayRunStatusBadge from "../../../../components/PayRunStatusBadge";
 import PayRunItemRow from "../../../../components/PayRunItemRow";
 import BatchPaymentModal from "../../../../components/BatchPaymentModal";
@@ -17,6 +15,52 @@ interface CrmUser {
   role: string;
 }
 
+interface PayRunItem {
+  id: string;
+  chatter_name: string;
+  chatter_id: string;
+  hours_worked: number;
+  base_pay: number;
+  bonus_total: number;
+  commission_total: number;
+  deductions: number;
+  gross_pay: number;
+  net_pay: number;
+  payment_status: string;
+  payment_method: string | null;
+  payment_ref: string | null;
+  payment_date: string | null;
+  payment_notes: string | null;
+  breakdown: any;
+}
+
+type PayRunStatus = ComponentProps<typeof PayRunStatusBadge>["status"];
+type PayRunItemPaymentStatus = ComponentProps<typeof PayRunItemRow>["paymentStatus"];
+
+interface PayRun {
+  id: string;
+  period_start: string;
+  period_end: string;
+  status: string;
+  total_gross: number;
+  total_net: number;
+  line_item_count: number;
+  created_by: string;
+  created_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  paid_at: string | null;
+  notes: string | null;
+  items: PayRunItem[];
+}
+
+function formatCents(cents: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
+
 function formatDateRange(start: string, end: string): string {
   const startDate = new Date(start);
   const endDate = new Date(end);
@@ -26,8 +70,9 @@ function formatDateRange(start: string, end: string): string {
   return `${startStr} – ${endStr}`;
 }
 
-function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString("en-US", {
+function formatDate(timestamp: number | string): string {
+  const ts = typeof timestamp === "string" ? new Date(timestamp).getTime() : timestamp;
+  return new Date(ts).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -50,6 +95,9 @@ export default function PayRunDetailPage() {
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
 
+  const [payRun, setPayRun] = useState<PayRun | null>(null);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -57,16 +105,38 @@ export default function PayRunDetailPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const payRun = useQuery(
-    api.crm.payroll.getPayRun,
-    token && payRunId
-      ? { token, payRunId: payRunId as Id<"crm_pay_runs"> }
-      : "skip"
-  );
+  // Fetch pay run + items
+  const fetchPayRun = async () => {
+    if (!token || !payRunId) return;
+    setLoading(true);
+    try {
+      const { data: run, error: runError } = await supabase
+        .from("crm_pay_runs")
+        .select("*")
+        .eq("id", payRunId)
+        .single();
 
-  const updateStatus = useMutation(api.crm.payroll.updatePayRunStatus);
-  const markItemPaid = useMutation(api.crm.payroll.markItemPaid);
-  const batchMarkPaid = useMutation(api.crm.payroll.batchMarkPaid);
+      if (runError) throw runError;
+
+      const { data: items, error: itemsError } = await supabase
+        .from("crm_pay_run_items")
+        .select("*")
+        .eq("pay_run_id", payRunId)
+        .order("chatter_name");
+
+      if (itemsError) throw itemsError;
+
+      setPayRun({ ...run, items: items || [] });
+    } catch (err) {
+      console.error("Failed to fetch pay run:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPayRun();
+  }, [token, payRunId]);
 
   // Stats calculations
   const stats = useMemo(() => {
@@ -78,9 +148,9 @@ export default function PayRunDetailPage() {
     let deductions = 0;
 
     for (const item of payRun.items) {
-      basePay += item.basePay || 0;
-      bonuses += item.bonusTotal || 0;
-      commissions += item.commissionTotal || 0;
+      basePay += item.base_pay || 0;
+      bonuses += item.bonus_total || 0;
+      commissions += item.commission_total || 0;
       deductions += item.deductions || 0;
     }
 
@@ -89,7 +159,7 @@ export default function PayRunDetailPage() {
 
   const pendingItems = useMemo(() => {
     if (!payRun?.items) return [];
-    return payRun.items.filter((item) => item.paymentStatus !== "paid");
+    return payRun.items.filter((item) => item.payment_status !== "paid");
   }, [payRun?.items]);
 
   const handleSelectItem = (itemId: string) => {
@@ -114,12 +184,18 @@ export default function PayRunDetailPage() {
     setActionLoading(true);
     setError("");
     try {
-      await updateStatus({
-        token,
-        payRunId: payRunId as Id<"crm_pay_runs">,
-        status: "approved",
-      });
+      const { error: updateError } = await supabase
+        .from("crm_pay_runs")
+        .update({
+          status: "approved",
+          approved_by: user?.name || user?.username || "unknown",
+          approved_at: new Date().toISOString(),
+        })
+        .eq("id", payRunId);
+
+      if (updateError) throw updateError;
       setSuccess("Pay run approved!");
+      await fetchPayRun();
     } catch (err: any) {
       setError(err.message || "Failed to approve pay run");
     } finally {
@@ -129,16 +205,18 @@ export default function PayRunDetailPage() {
 
   const handleCancel = async () => {
     if (!confirm("Are you sure you want to cancel this pay run? This cannot be undone.")) return;
-    
+
     setActionLoading(true);
     setError("");
     try {
-      await updateStatus({
-        token,
-        payRunId: payRunId as Id<"crm_pay_runs">,
-        status: "cancelled",
-      });
+      const { error: updateError } = await supabase
+        .from("crm_pay_runs")
+        .update({ status: "cancelled" })
+        .eq("id", payRunId);
+
+      if (updateError) throw updateError;
       setSuccess("Pay run cancelled");
+      await fetchPayRun();
     } catch (err: any) {
       setError(err.message || "Failed to cancel pay run");
     } finally {
@@ -150,13 +228,23 @@ export default function PayRunDetailPage() {
     setActionLoading(true);
     setError("");
     try {
-      await updateStatus({
-        token,
-        payRunId: payRunId as Id<"crm_pay_runs">,
-        status: "paid",
-      });
+      const { error: updateRunError } = await supabase
+        .from("crm_pay_runs")
+        .update({ status: "paid", paid_at: new Date().toISOString() })
+        .eq("id", payRunId);
+
+      if (updateRunError) throw updateRunError;
+
+      const { error: updateItemsError } = await supabase
+        .from("crm_pay_run_items")
+        .update({ payment_status: "paid", paid_at: new Date().toISOString() })
+        .eq("pay_run_id", payRunId);
+
+      if (updateItemsError) throw updateItemsError;
+
       setSuccess("All items marked as paid!");
       setSelectedItems(new Set());
+      await fetchPayRun();
     } catch (err: any) {
       setError(err.message || "Failed to mark all as paid");
     } finally {
@@ -168,11 +256,14 @@ export default function PayRunDetailPage() {
     setActionLoading(true);
     setError("");
     try {
-      await markItemPaid({
-        token,
-        itemId: itemId as Id<"crm_pay_run_items">,
-      });
+      const { error: updateError } = await supabase
+        .from("crm_pay_run_items")
+        .update({ payment_status: "paid", paid_at: new Date().toISOString() })
+        .eq("id", itemId);
+
+      if (updateError) throw updateError;
       setSuccess("Item marked as paid!");
+      await fetchPayRun();
     } catch (err: any) {
       setError(err.message || "Failed to mark item as paid");
     } finally {
@@ -182,16 +273,19 @@ export default function PayRunDetailPage() {
 
   const handleBatchMarkPaid = async () => {
     if (selectedItems.size === 0) return;
-    
+
     setActionLoading(true);
     setError("");
     try {
-      await batchMarkPaid({
-        token,
-        itemIds: Array.from(selectedItems) as Id<"crm_pay_run_items">[],
-      });
+      const { error: updateError } = await supabase
+        .from("crm_pay_run_items")
+        .update({ payment_status: "paid", paid_at: new Date().toISOString() })
+        .in("id", Array.from(selectedItems));
+
+      if (updateError) throw updateError;
       setSuccess(`${selectedItems.size} items marked as paid!`);
       setSelectedItems(new Set());
+      await fetchPayRun();
     } catch (err: any) {
       setError(err.message || "Failed to mark items as paid");
     } finally {
@@ -269,14 +363,14 @@ export default function PayRunDetailPage() {
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "8px" }}>
               <h1 style={{ fontSize: "26px", fontWeight: "700", color: "var(--text)" }}>
-                {formatDateRange(payRun.periodStartDate, payRun.periodEndDate)}
+                {formatDateRange(payRun.period_start, payRun.period_end)}
               </h1>
-              <PayRunStatusBadge status={payRun.status} />
+              <PayRunStatusBadge status={payRun.status as PayRunStatus} />
             </div>
             <div style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
-              Created by {payRun.createdBy} on {formatDate(payRun.createdAt)}
-              {payRun.approvedBy && ` • Approved by ${payRun.approvedBy}`}
-              {payRun.paidAt && ` • Paid ${formatDate(payRun.paidAt)}`}
+              Created by {payRun.created_by} on {formatDate(payRun.created_at)}
+              {payRun.approved_by && ` • Approved by ${payRun.approved_by}`}
+              {payRun.paid_at && ` • Paid ${formatDate(payRun.paid_at)}`}
             </div>
             {payRun.notes && (
               <div style={{ fontSize: "13px", color: "var(--text-muted)", marginTop: "6px", fontStyle: "italic" }}>
@@ -325,7 +419,7 @@ export default function PayRunDetailPage() {
         }}>
           <div style={summaryStatStyle}>
             <div style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "4px" }}>Total Gross</div>
-            <div style={{ fontSize: "24px", fontWeight: "700", color: "var(--text)" }}>{payRun.totalGrossFormatted}</div>
+            <div style={{ fontSize: "24px", fontWeight: "700", color: "var(--text)" }}>{formatCents(payRun.total_gross)}</div>
           </div>
           <div style={summaryStatStyle}>
             <div style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "4px" }}>Base Pay</div>
@@ -347,7 +441,7 @@ export default function PayRunDetailPage() {
           </div>
           <div style={summaryStatStyle}>
             <div style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "4px" }}>Total Net</div>
-            <div style={{ fontSize: "24px", fontWeight: "700", color: "var(--accent)" }}>{payRun.totalNetFormatted}</div>
+            <div style={{ fontSize: "24px", fontWeight: "700", color: "var(--accent)" }}>{formatCents(payRun.total_net)}</div>
           </div>
         </div>
       </div>
@@ -367,9 +461,9 @@ export default function PayRunDetailPage() {
             {selectedItems.size} item{selectedItems.size !== 1 ? "s" : ""} selected
           </span>
           <div style={{ display: "flex", gap: "10px" }}>
-            <button 
-              onClick={() => setShowBatchModal(true)} 
-              disabled={actionLoading} 
+            <button
+              onClick={() => setShowBatchModal(true)}
+              disabled={actionLoading}
               style={paidBtn}
             >
               💰 Mark Selected as Paid
@@ -423,20 +517,20 @@ export default function PayRunDetailPage() {
                 <PayRunItemRow
                   key={item.id}
                   id={item.id}
-                  chatterName={item.chatterName}
-                  chatterId={item.chatterId}
-                  hoursWorked={item.hoursWorked}
-                  basePayFormatted={item.basePayFormatted}
-                  bonusTotalFormatted={item.bonusTotalFormatted}
-                  commissionTotalFormatted={item.commissionTotalFormatted}
-                  deductionsFormatted={item.deductionsFormatted}
-                  grossPayFormatted={item.grossPayFormatted}
-                  netPayFormatted={item.netPayFormatted}
-                  paymentStatus={item.paymentStatus}
-                  paymentMethod={item.paymentMethod}
-                  paymentRef={item.paymentRef}
-                  paymentDate={item.paymentDate}
-                  paymentNotes={item.paymentNotes}
+                  chatterName={item.chatter_name}
+                  chatterId={item.chatter_id}
+                  hoursWorked={item.hours_worked}
+                  basePayFormatted={formatCents(item.base_pay)}
+                  bonusTotalFormatted={formatCents(item.bonus_total)}
+                  commissionTotalFormatted={formatCents(item.commission_total)}
+                  deductionsFormatted={item.deductions > 0 ? `-${formatCents(item.deductions)}` : formatCents(0)}
+                  grossPayFormatted={formatCents(item.gross_pay)}
+                  netPayFormatted={formatCents(item.net_pay)}
+                  paymentStatus={item.payment_status as PayRunItemPaymentStatus}
+                  paymentMethod={item.payment_method ?? undefined}
+                  paymentRef={item.payment_ref ?? undefined}
+                  paymentDate={item.payment_date ?? undefined}
+                  paymentNotes={item.payment_notes ?? undefined}
                   breakdown={item.breakdown}
                   isApproved={isApproved}
                   selected={selectedItems.has(item.id)}
@@ -461,13 +555,14 @@ export default function PayRunDetailPage() {
       {showBatchModal && (
         <BatchPaymentModal
           token={token}
-          payRunId={payRunId as Id<"crm_pay_runs">}
+          payRunId={payRunId}
           selectedItemIds={Array.from(selectedItems)}
           onClose={() => setShowBatchModal(false)}
           onSuccess={(count) => {
             setShowBatchModal(false);
             setSelectedItems(new Set());
             setSuccess(`${count} payments processed successfully!`);
+            fetchPayRun();
           }}
         />
       )}
@@ -476,7 +571,7 @@ export default function PayRunDetailPage() {
       {showExportModal && (
         <ExportModal
           token={token}
-          payRunId={payRunId as Id<"crm_pay_runs">}
+          payRunId={payRunId}
           selectedItemIds={selectedItems.size > 0 ? Array.from(selectedItems) : undefined}
           onClose={() => setShowExportModal(false)}
           onSuccess={(message) => {

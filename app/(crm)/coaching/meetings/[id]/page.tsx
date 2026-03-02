@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { api } from "../../../../../convex/_generated/api";
-import type { Id } from "../../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import ActionItemList from "../../../../../components/ActionItemList";
 import type { MeetingActionItem } from "../../../../../components/MeetingCard";
 
@@ -53,6 +51,9 @@ export default function MeetingDetailPage() {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<CrmUser | null>(null);
 
+  const [meeting, setMeeting] = useState<any | null | undefined>(undefined);
+  const [chatters, setChatters] = useState<any[] | undefined>(undefined);
+
   const [initialized, setInitialized] = useState(false);
   const [saving, setSaving] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -80,40 +81,74 @@ export default function MeetingDetailPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const meeting = useQuery(
-    api.crm.coaching.getMeetingById,
-    token && meetingId ? { token, meetingId: meetingId as Id<"crm_coaching_meetings"> } : "skip"
-  ) as any | null | undefined;
-
   const canManage = isSupervisorRole(user?.role);
-  const chatters = useQuery(api.crm.chatters.list, token && canManage ? { token } : "skip");
+
+  const loadMeeting = useCallback(async () => {
+    if (!token || !meetingId) return;
+    try {
+      const { data, error } = await supabase
+        .from("crm_coaching_meetings")
+        .select("*")
+        .eq("id", meetingId)
+        .single();
+      if (error) {
+        if (error.code === "PGRST116") {
+          setMeeting(null);
+        } else {
+          throw error;
+        }
+      } else {
+        setMeeting(data);
+      }
+    } catch (e) {
+      console.error("Failed to load meeting:", e);
+      setMeeting(null);
+    }
+  }, [token, meetingId]);
+
+  const loadChatters = useCallback(async () => {
+    if (!token || !canManage) return;
+    try {
+      const { data, error } = await supabase.from("crm_chatters").select("*");
+      if (error) throw error;
+      setChatters(data ?? []);
+    } catch (e) {
+      console.error("Failed to load chatters:", e);
+      setChatters([]);
+    }
+  }, [token, canManage]);
+
+  useEffect(() => {
+    if (!token) return;
+    loadMeeting();
+    loadChatters();
+  }, [token, loadMeeting, loadChatters]);
 
   const chatterName = useMemo(() => {
     if (!meeting) return "";
-    const chatter = (chatters || []).find((c: any) => c.id === meeting.chatterId);
-    return chatter?.name ?? meeting.chatterId;
+    const chatter = (chatters || []).find((c: any) => c.id === meeting.chatter_id);
+    return chatter?.name ?? meeting.chatter_id;
   }, [chatters, meeting]);
-
-  const updateMeeting = useMutation(api.crm.coaching.updateMeeting);
-  const completeMeeting = useMutation(api.crm.coaching.completeMeeting);
 
   useEffect(() => {
     if (!meeting || initialized) return;
 
-    setMeetingDateTime(toDateTimeLocalValue(meeting.meetingDate));
-    setMeetingType(meeting.meetingType);
+    const meetingDateTs = meeting.meeting_date ? new Date(meeting.meeting_date).getTime() : Date.now();
+    setMeetingDateTime(toDateTimeLocalValue(meetingDateTs));
+    setMeetingType(meeting.meeting_type);
     setDuration(meeting.duration ? String(meeting.duration) : "");
     setLocation(meeting.location ?? "");
     setAgenda(meeting.agenda ?? "");
     setNotes(meeting.notes ?? "");
-    setPrivateNotes(meeting.privateNotes ?? "");
-    setActionItems((meeting.actionItems ?? []) as MeetingActionItem[]);
+    setPrivateNotes(meeting.private_notes ?? "");
+    setActionItems((meeting.action_items ?? []) as MeetingActionItem[]);
 
-    const fuEnabled = Boolean(meeting.followUpDate) && !Boolean(meeting.followUpCompleted);
+    const followUpTs = meeting.follow_up_date ? new Date(meeting.follow_up_date).getTime() : 0;
+    const fuEnabled = Boolean(followUpTs) && !Boolean(meeting.follow_up_completed);
     setFollowUpEnabled(fuEnabled);
-    setFollowUpDate(toDateInputValue(meeting.followUpDate));
-    setFollowUpNotes(meeting.followUpNotes ?? "");
-    setFollowUpCompletedLocal(Boolean(meeting.followUpCompleted));
+    setFollowUpDate(toDateInputValue(followUpTs || undefined));
+    setFollowUpNotes(meeting.follow_up_notes ?? "");
+    setFollowUpCompletedLocal(Boolean(meeting.follow_up_completed));
 
     setInitialized(true);
   }, [meeting, initialized]);
@@ -145,22 +180,26 @@ export default function MeetingDetailPage() {
 
     setSaving(true);
     try {
-      await updateMeeting({
-        token,
-        meetingId: meetingId as Id<"crm_coaching_meetings">,
-        meetingDate: meetingDateTs,
-        meetingType: meetingType as any,
-        duration: durationNum,
-        location: location.trim() ? location.trim() : undefined,
-        agenda: agenda.trim() ? agenda.trim() : undefined,
-        notes,
-        privateNotes: privateNotes.trim() ? privateNotes.trim() : undefined,
-        actionItems,
-        followUpDate: followUpEnabled ? fromDateInputValue(followUpDate) : undefined,
-        followUpNotes: followUpNotes.trim() ? followUpNotes.trim() : undefined,
-      });
+      const { error: updateError } = await supabase
+        .from("crm_coaching_meetings")
+        .update({
+          meeting_date: new Date(meetingDateTs).toISOString(),
+          meeting_type: meetingType,
+          duration: durationNum ?? null,
+          location: location.trim() || null,
+          agenda: agenda.trim() || null,
+          notes,
+          private_notes: privateNotes.trim() || null,
+          action_items: actionItems,
+          follow_up_date: followUpEnabled && followUpDate ? new Date(followUpDate + "T12:00:00").toISOString() : null,
+          follow_up_notes: followUpNotes.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", meetingId);
 
+      if (updateError) throw updateError;
       setSuccess("Saved.");
+      await loadMeeting();
     } catch (e: any) {
       setError(e?.message ?? "Failed to save");
     } finally {
@@ -179,12 +218,18 @@ export default function MeetingDetailPage() {
 
     setCompleting(true);
     try {
-      await completeMeeting({
-        token,
-        meetingId: meetingId as Id<"crm_coaching_meetings">,
-        followUpNotes: followUpNotes.trim() ? followUpNotes.trim() : undefined,
-      });
+      const { error: updateError } = await supabase
+        .from("crm_coaching_meetings")
+        .update({
+          follow_up_completed: true,
+          follow_up_notes: followUpNotes.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", meetingId);
+
+      if (updateError) throw updateError;
       setSuccess("Meeting marked complete.");
+      await loadMeeting();
     } catch (e: any) {
       setError(e?.message ?? "Failed to complete meeting");
     } finally {
@@ -192,7 +237,7 @@ export default function MeetingDetailPage() {
     }
   };
 
-  const followUpCompleted = Boolean(meeting?.followUpCompleted);
+  const followUpCompleted = Boolean(meeting?.follow_up_completed);
 
   return (
     <div style={{ padding: 20, maxWidth: 1000, margin: "0 auto" }}>

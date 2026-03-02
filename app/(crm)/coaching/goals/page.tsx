@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import GoalCard, {
   type GoalCardChatter,
   type GoalCardGoal,
@@ -42,21 +40,21 @@ function uiStatus(goal: Pick<GoalCardGoal, "status" | "periodEnd">, now: number)
 
 function normalizeGoal(raw: any): GoalCardGoal {
   return {
-    id: String(raw.id ?? raw._id),
-    chatterId: String(raw.chatterId),
+    id: String(raw.id),
+    chatterId: String(raw.chatter_id),
     title: String(raw.title ?? ""),
     description: raw.description ?? undefined,
     metric: raw.metric ?? undefined,
-    targetValue: raw.targetValue ?? undefined,
-    currentValue: raw.currentValue ?? undefined,
-    startValue: raw.startValue ?? undefined,
+    targetValue: raw.target_value ?? undefined,
+    currentValue: raw.current_value ?? undefined,
+    startValue: raw.start_value ?? undefined,
     unit: raw.unit ?? undefined,
-    periodStart: Number(raw.periodStart ?? 0),
-    periodEnd: Number(raw.periodEnd ?? 0),
+    periodStart: raw.period_start ? new Date(raw.period_start).getTime() : 0,
+    periodEnd: raw.period_end ? new Date(raw.period_end).getTime() : 0,
     status: raw.status as GoalCardGoal["status"],
-    achievedAt: raw.achievedAt ?? undefined,
-    progressPercent: raw.progressPercent ?? undefined,
-    checkIns: raw.checkIns ?? undefined,
+    achievedAt: raw.achieved_at ? new Date(raw.achieved_at).getTime() : undefined,
+    progressPercent: raw.progress_percent ?? undefined,
+    checkIns: raw.check_ins ?? undefined,
   };
 }
 
@@ -72,6 +70,9 @@ export default function GoalsPage() {
 
   const [showNewGoal, setShowNewGoal] = useState(false);
 
+  const [chatters, setChatters] = useState<any[] | undefined>(undefined);
+  const [goalsRaw, setGoalsRaw] = useState<any[] | undefined>(undefined);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -81,73 +82,53 @@ export default function GoalsPage() {
 
   const canManage = isSupervisorRole(user?.role);
 
-  const chatters = useQuery(api.crm.chatters.list, token && canManage ? { token } : "skip") as
-    | any[]
-    | undefined;
+  const loadChatters = useCallback(async () => {
+    if (!token || !canManage) return;
+    try {
+      const { data, error } = await supabase.from("crm_chatters").select("*");
+      if (error) throw error;
+      setChatters(data ?? []);
+    } catch (e) {
+      console.error("Failed to load chatters:", e);
+      setChatters([]);
+    }
+  }, [token, canManage]);
 
-  const chatterOptions = useMemo((): GoalFormChatterOption[] => {
-    return (chatters || []).map((c: any) => ({
-      id: String(c.id),
-      name: String(c.name ?? c.username ?? c.id),
-      role: c.role,
-      avatarEmoji: c.avatarEmoji,
-    }));
-  }, [chatters]);
+  const loadGoals = useCallback(async () => {
+    if (!token) return;
+    try {
+      let query = supabase.from("crm_coaching_goals").select("*");
 
-  const chatterById = useMemo(() => {
-    const map: Record<string, GoalCardChatter> = {};
-    (chatters || []).forEach((c: any) => {
-      map[String(c.id)] = {
-        id: String(c.id),
-        name: String(c.name ?? c.username ?? c.id),
-        avatarEmoji: c.avatarEmoji,
-        profilePictureUrl: c.profilePictureUrl,
-      };
-    });
-    return map;
-  }, [chatters]);
-
-  const activeArgs = useMemo(() => {
-    if (!token) return "skip" as const;
-
-    if (canManage) {
-      if (selectedChatterId) {
-        return {
-          token,
-          chatterId: selectedChatterId as Id<"crm_chatters">,
-          limit: 500,
-        };
+      if (canManage) {
+        if (selectedChatterId) {
+          query = query.eq("chatter_id", selectedChatterId);
+        }
+      } else if (user?.id) {
+        query = query.eq("chatter_id", user.id);
+      } else {
+        return;
       }
-      return { token, limit: 500 };
-    }
 
-    if (user?.id) {
-      return {
-        token,
-        chatterId: user.id as Id<"crm_chatters">,
-        limit: 500,
-      };
-    }
+      query = query.limit(500);
 
-    return "skip" as const;
+      const { data, error } = await query;
+      if (error) throw error;
+      setGoalsRaw(data ?? []);
+    } catch (e) {
+      console.error("Failed to load goals:", e);
+      setGoalsRaw([]);
+    }
   }, [token, canManage, selectedChatterId, user?.id]);
 
-  const activeGoalsRaw = useQuery(api.crm.coaching.getActiveGoals, activeArgs as any) as
-    | any[]
-    | undefined;
+  useEffect(() => {
+    if (!token) return;
+    loadChatters();
+  }, [token, loadChatters]);
 
-  const historyChatterId = useMemo(() => {
-    if (!token) return "";
-    if (canManage) return selectedChatterId; // only if a chatter is selected
-    return user?.id ?? "";
-  }, [token, canManage, selectedChatterId, user?.id]);
-
-  const goalsForChatterRaw = useQuery(
-    api.crm.coaching.getGoalsByChatter,
-    token && historyChatterId
-      ? { token, chatterId: historyChatterId as Id<"crm_chatters"> }
-      : "skip"
-  ) as any[] | undefined;
+  useEffect(() => {
+    if (!token) return;
+    loadGoals();
+  }, [token, loadGoals]);
 
   // Default chatter selection: for chatters, lock to self.
   useEffect(() => {
@@ -157,11 +138,37 @@ export default function GoalsPage() {
     }
   }, [canManage, user?.id]);
 
+  const chatterOptions = useMemo((): GoalFormChatterOption[] => {
+    return (chatters || []).map((c: any) => ({
+      id: String(c.id),
+      name: String(c.name ?? c.username ?? c.id),
+      role: c.role,
+      avatarEmoji: c.avatar_emoji,
+    }));
+  }, [chatters]);
+
+  const chatterById = useMemo(() => {
+    const map: Record<string, GoalCardChatter> = {};
+    (chatters || []).forEach((c: any) => {
+      map[String(c.id)] = {
+        id: String(c.id),
+        name: String(c.name ?? c.username ?? c.id),
+        avatarEmoji: c.avatar_emoji,
+        profilePictureUrl: c.profile_picture_url,
+      };
+    });
+    return map;
+  }, [chatters]);
+
   const now = Date.now();
 
+  const allGoals = useMemo(() => {
+    return (goalsRaw || []).map(normalizeGoal);
+  }, [goalsRaw]);
+
   const activeGoals = useMemo(() => {
-    return (activeGoalsRaw || []).map(normalizeGoal);
-  }, [activeGoalsRaw]);
+    return allGoals.filter((g) => g.status === "active");
+  }, [allGoals]);
 
   const expiredFromActive = useMemo(() => {
     return activeGoals.filter((g) => uiStatus(g, now) === "expired");
@@ -174,14 +181,14 @@ export default function GoalsPage() {
   }, [activeGoals, now, periodFilter]);
 
   const historyGoals = useMemo(() => {
-    const base = goalsForChatterRaw ? goalsForChatterRaw.map(normalizeGoal) : expiredFromActive;
+    const base = allGoals;
     const filtered = base
       .filter((g) => uiStatus(g, now) !== "active")
       .filter((g) => (periodFilter === "all" ? true : periodBucket(g) === periodFilter));
 
     filtered.sort((a, b) => (b.periodEnd ?? 0) - (a.periodEnd ?? 0));
     return filtered;
-  }, [goalsForChatterRaw, expiredFromActive, now, periodFilter]);
+  }, [allGoals, now, periodFilter]);
 
   const filteredActive = useMemo(() => {
     if (statusFilter === "all" || statusFilter === "active") return activeNotExpired;
@@ -227,6 +234,12 @@ export default function GoalsPage() {
     const first = chatterOptions.find((c) => c.role === "chatter") ?? chatterOptions[0];
     return first?.id ?? "";
   }, [canManage, user?.id, selectedChatterId, chatterOptions]);
+
+  const historyChatterId = useMemo(() => {
+    if (!token) return "";
+    if (canManage) return selectedChatterId;
+    return user?.id ?? "";
+  }, [token, canManage, selectedChatterId, user?.id]);
 
   return (
     <div style={{ padding: 20, maxWidth: 1100, margin: "0 auto" }}>
@@ -297,7 +310,7 @@ export default function GoalsPage() {
                 .filter((c: any) => c.role === "chatter")
                 .map((c: any) => (
                   <option key={c.id} value={String(c.id)}>
-                    {c.avatarEmoji ? `${c.avatarEmoji} ` : ""}{c.name}
+                    {c.avatar_emoji ? `${c.avatar_emoji} ` : ""}{c.name}
                   </option>
                 ))}
             </select>

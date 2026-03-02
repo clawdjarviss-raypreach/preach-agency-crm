@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function SubmitReportPage() {
@@ -25,6 +24,9 @@ export default function SubmitReportPage() {
   const [needHelpWith, setNeedHelpWith] = useState("");
   const [contentFeedback, setContentFeedback] = useState("");
 
+  // Creators state
+  const [creators, setCreators] = useState<any[] | null>(null);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -32,12 +34,21 @@ export default function SubmitReportPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const creators = useQuery(api.crm.creators.list, token ? { token } : "skip");
-  const submitReport = useMutation(api.crm.salesReports.submit);
+  useEffect(() => {
+    if (!token) return;
+    const fetchCreators = async () => {
+      const { data } = await supabase
+        .from("crm_creators")
+        .select("*")
+        .eq("status", "active");
+      setCreators(data || []);
+    };
+    fetchCreators();
+  }, [token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token || !creators) return;
+    if (!token || !creators || !user) return;
     setError("");
     setSubmitting(true);
 
@@ -45,24 +56,31 @@ export default function SubmitReportPage() {
       const sales = creators
         .filter((c) => creatorSales[c.id] && parseFloat(creatorSales[c.id]) > 0)
         .map((c) => ({
-          creatorId: c.id as any,
+          creatorId: c.id,
           amount: parseFloat(creatorSales[c.id]) || 0,
         }));
 
-      await submitReport({
-        token,
-        date,
-        sales,
-        busynessRating,
-        spenderCount: parseInt(spenderCount) || 0,
-        warmedUpSubs: parseInt(warmedUpSubs) || 0,
-        warmedUpSubNames: warmedUpSubNames || undefined,
-        sellingChatsFromMM: sellingChatsFromMM ? parseInt(sellingChatsFromMM) : undefined,
-        whatWentWell: whatWentWell || undefined,
-        whatDidntGoWell: whatDidntGoWell || undefined,
-        needHelpWith: needHelpWith || undefined,
-        contentFeedback: contentFeedback || undefined,
-      });
+      const totalSalesAmount = sales.reduce((sum, s) => sum + s.amount, 0);
+
+      const { error: insertError } = await supabase
+        .from("crm_sales_reports")
+        .insert({
+          chatter_id: user.id,
+          date,
+          sales,
+          total_sales: totalSalesAmount,
+          busyness_rating: busynessRating,
+          spender_count: parseInt(spenderCount) || 0,
+          warmed_up_subs: parseInt(warmedUpSubs) || 0,
+          warmed_up_sub_names: warmedUpSubNames || null,
+          selling_chats_from_mm: sellingChatsFromMM ? parseInt(sellingChatsFromMM) : null,
+          what_went_well: whatWentWell || null,
+          what_didnt_go_well: whatDidntGoWell || null,
+          need_help_with: needHelpWith || null,
+          content_feedback: contentFeedback || null,
+        });
+
+      if (insertError) throw insertError;
 
       setSubmitted(true);
     } catch (err: any) {

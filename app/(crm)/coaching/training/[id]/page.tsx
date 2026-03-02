@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { api } from "../../../../../convex/_generated/api";
-import { Id } from "../../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import TrainingAssigner from "../../../../../components/TrainingAssigner";
 
 type CrmUser = {
@@ -39,7 +37,7 @@ function typeIcon(type: string) {
 }
 
 type Assignment = {
-  _id: string;
+  id: string;
   chatterId: string;
   chatterName?: string;
   status: "assigned" | "in_progress" | "completed" | "overdue";
@@ -57,6 +55,10 @@ export default function TrainingDetailPage() {
   const [user, setUser] = useState<CrmUser | null>(null);
   const [showAssigner, setShowAssigner] = useState(false);
 
+  const [material, setMaterial] = useState<any | null | undefined>(undefined);
+  const [assignmentsRaw, setAssignmentsRaw] = useState<any[] | undefined>(undefined);
+  const [chattersRaw, setChattersRaw] = useState<any[] | undefined>(undefined);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token");
     const u = localStorage.getItem("crm_user");
@@ -66,39 +68,57 @@ export default function TrainingDetailPage() {
 
   const isSupervisor = isSupervisorRole(user?.role);
 
-  const coachingApi = (api as any).crm.coaching;
+  const loadData = useCallback(async () => {
+    if (!token || !materialId) return;
+    try {
+      const [materialRes, assignmentsRes, chattersRes] = await Promise.all([
+        supabase.from("crm_training_materials").select("*").eq("id", materialId).single(),
+        supabase.from("crm_training_assignments").select("*").eq("material_id", materialId),
+        supabase.from("crm_chatters").select("*"),
+      ]);
 
-  const materialsQuery = useQuery(
-    coachingApi.getTrainingMaterials,
-    token ? { token } : "skip"
-  ) as any[] | undefined;
+      if (materialRes.error) {
+        if (materialRes.error.code === "PGRST116") {
+          setMaterial(null);
+        } else {
+          throw materialRes.error;
+        }
+      } else {
+        setMaterial(materialRes.data);
+      }
 
-  const material = materialsQuery?.find((m: any) => (m._id || m.id) === materialId);
+      if (assignmentsRes.error) throw assignmentsRes.error;
+      setAssignmentsRaw(assignmentsRes.data ?? []);
 
-  const assignmentsQuery = useQuery(
-    api.crm.coaching.getAssignments,
-    token ? { token } : "skip"
-  );
+      if (chattersRes.error) throw chattersRes.error;
+      setChattersRaw(chattersRes.data ?? []);
+    } catch (e) {
+      console.error("Failed to load training detail:", e);
+      setMaterial(null);
+      setAssignmentsRaw([]);
+      setChattersRaw([]);
+    }
+  }, [token, materialId]);
 
-  const chattersQuery = useQuery(
-    api.crm.chatters.list,
-    token ? { token } : "skip"
-  );
+  useEffect(() => {
+    if (!token) return;
+    loadData();
+  }, [token, loadData]);
 
   const chattersMap = useMemo(() => {
     const map: Record<string, string> = {};
-    if (chattersQuery && Array.isArray(chattersQuery)) {
-      for (const c of chattersQuery) {
+    if (chattersRaw && Array.isArray(chattersRaw)) {
+      for (const c of chattersRaw) {
         map[c.id] = c.name;
       }
     }
     return map;
-  }, [chattersQuery]);
+  }, [chattersRaw]);
 
   const materialOptions = useMemo(() => {
     if (!material) return [];
     return [{
-      id: material._id || material.id,
+      id: material.id,
       title: material.title,
       type: material.type,
       category: material.category,
@@ -106,35 +126,39 @@ export default function TrainingDetailPage() {
   }, [material]);
 
   const chatterOptions = useMemo(() => {
-    return (chattersQuery || []).map((c: any) => ({
+    return (chattersRaw || []).map((c: any) => ({
       id: c.id,
       name: c.name,
       role: c.role,
-      avatarEmoji: c.avatarEmoji,
+      avatarEmoji: c.avatar_emoji,
     }));
-  }, [chattersQuery]);
+  }, [chattersRaw]);
 
   const assignments: Assignment[] = useMemo(() => {
-    if (!assignmentsQuery || !Array.isArray(assignmentsQuery)) return [];
-    return assignmentsQuery
-      .filter((a: any) => (a.materialId || a.trainingMaterialId) === materialId)
-      .map((a: any) => ({
-        _id: a._id,
-        chatterId: a.chatterId,
-        chatterName: chattersMap[a.chatterId] || "Unknown",
-        status: a.status,
-        assignedAt: a.assignedAt,
-        dueDate: a.dueDate,
-        completedAt: a.completedAt,
-      }));
-  }, [assignmentsQuery, chattersMap, materialId]);
-
-  const markComplete = useMutation(api.crm.coaching.markTrainingComplete);
+    if (!assignmentsRaw || !Array.isArray(assignmentsRaw)) return [];
+    return assignmentsRaw.map((a: any) => ({
+      id: a.id,
+      chatterId: a.chatter_id,
+      chatterName: chattersMap[a.chatter_id] || "Unknown",
+      status: a.status,
+      assignedAt: a.assigned_at ? new Date(a.assigned_at).getTime() : Date.now(),
+      dueDate: a.due_date ? new Date(a.due_date).getTime() : undefined,
+      completedAt: a.completed_at ? new Date(a.completed_at).getTime() : undefined,
+    }));
+  }, [assignmentsRaw, chattersMap]);
 
   const handleMarkComplete = async (assignmentId: string) => {
     if (!token) return;
     try {
-      await markComplete({ token, assignmentId: assignmentId as Id<"crm_training_assignments"> });
+      const { error } = await supabase
+        .from("crm_training_assignments")
+        .update({
+          status: "completed",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", assignmentId);
+      if (error) throw error;
+      await loadData();
     } catch (e) {
       console.error("Failed to mark complete:", e);
     }
@@ -143,6 +167,10 @@ export default function TrainingDetailPage() {
   const completedCount = assignments.filter((a) => a.status === "completed").length;
 
   if (!token) {
+    return <div style={{ padding: 32 }}>Loading...</div>;
+  }
+
+  if (material === undefined) {
     return <div style={{ padding: 32 }}>Loading...</div>;
   }
 
@@ -203,9 +231,9 @@ export default function TrainingDetailPage() {
           <p style={{ color: "var(--text-secondary)", marginBottom: 16 }}>{material.description}</p>
         )}
 
-        {material.contentUrl && (
+        {material.url && (
           <a
-            href={material.contentUrl}
+            href={material.url}
             target="_blank"
             rel="noopener noreferrer"
             style={{
@@ -252,7 +280,7 @@ export default function TrainingDetailPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {assignments.map((a) => (
               <div
-                key={a._id}
+                key={a.id}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -310,7 +338,7 @@ export default function TrainingDetailPage() {
                 </span>
                 {isSupervisor && a.status !== "completed" && (
                   <button
-                    onClick={() => handleMarkComplete(a._id)}
+                    onClick={() => handleMarkComplete(a.id)}
                     style={{
                       padding: "6px 12px",
                       background: "var(--green)",
@@ -338,7 +366,7 @@ export default function TrainingDetailPage() {
         chatters={chatterOptions}
         defaultMaterialIds={[materialId]}
         onClose={() => setShowAssigner(false)}
-        onAssigned={() => setShowAssigner(false)}
+        onAssigned={() => { setShowAssigner(false); loadData(); }}
       />
     </div>
   );

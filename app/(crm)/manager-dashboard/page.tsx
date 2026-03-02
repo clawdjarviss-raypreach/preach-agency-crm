@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import {
   XAxis,
   YAxis,
@@ -11,13 +9,9 @@ import {
   BarChart,
   Bar,
   CartesianGrid,
-  PieChart,
-  Pie,
-  Cell,
 } from "recharts";
 import DateRangePicker, { DateRange } from "../../../components/DateRangePicker";
-import TrackingLinksCard from "./TrackingLinksCard";
-import type { Id } from "../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 const CREATOR_COLORS = [
   "#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6",
@@ -77,491 +71,19 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
   );
 }
 
-function KpiCard({ label, value, icon }: { label: string; value: string | number; icon: string }) {
-  return (
-    <Card>
-      <div style={{
-        fontSize: "11px", color: "#a0a0a0", fontWeight: "500",
-        textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px",
-      }}>
-        {icon} {label}
-      </div>
-      <div style={{ fontSize: "24px", fontWeight: "700", color: "#fff" }}>
-        {typeof value === "number" ? value.toLocaleString() : value}
-      </div>
-    </Card>
-  );
-}
-
-/* ─── IG Expandable Account Row (Redesigned) ─── */
-function IgAccountRow({
-  account,
-  stats,
-  token,
-  dateRange,
-  colorIndex,
-}: {
-  account: any;
-  stats: any;
-  token: string;
-  dateRange: DateRange;
-  colorIndex: number;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [reelSort, setReelSort] = useState<"views" | "likes" | "comments" | "date">("views");
-
-  const reels = useQuery(
-    api.crm.igQueries.getIgReels,
-    expanded && token
-      ? {
-          token,
-          igAccountId: account._id as Id<"crm_ig_accounts">,
-          sortBy: reelSort,
-          order: "desc" as const,
-          limit: 10,
-          startDate: dateRange.start,
-          endDate: dateRange.end,
-        }
-      : "skip"
-  );
-
-  const followersDelta = stats?.followersDelta ?? 0;
-  const followerGrowth = account.followers > 0 ? ((followersDelta / account.followers) * 100).toFixed(1) : "0.0";
-
-  return (
-    <>
-      <tr
-        onClick={() => setExpanded(!expanded)}
-        style={{ borderBottom: "1px solid #1C2A3A", cursor: "pointer", transition: "background 0.15s" }}
-        onMouseEnter={(e) => (e.currentTarget.style.background = "#1a2535")}
-        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-      >
-        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 600 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <span style={{ color: "#666", fontSize: "10px", transition: "transform 0.2s", transform: expanded ? "rotate(90deg)" : "none" }}>▶</span>
-            <div style={{ width: "10px", height: "10px", borderRadius: "3px", background: CREATOR_COLORS[colorIndex % CREATOR_COLORS.length], flexShrink: 0 }} />
-            @{account.username}
-          </div>
-        </td>
-        <td style={{ padding: "14px 12px" }}>
-          <span style={{ color: followersDelta >= 0 ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
-            {followersDelta >= 0 ? "+" : ""}{followersDelta.toLocaleString()}
-          </span>
-          <span style={{ color: "#666", fontSize: "11px", marginLeft: "6px" }}>({followerGrowth}%)</span>
-        </td>
-        <td style={{ padding: "14px 12px" }}>
-          <span style={{
-            background: "#22c55e20", color: "#22c55e", padding: "3px 10px",
-            borderRadius: "12px", fontSize: "11px", fontWeight: 600,
-          }}>Active</span>
-        </td>
-        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{(stats?.views ?? 0).toLocaleString()}</td>
-        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{(stats?.likes ?? 0).toLocaleString()}</td>
-        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{(stats?.comments ?? 0).toLocaleString()}</td>
-        <td style={{ padding: "14px 12px", color: "#fff", fontWeight: 500 }}>{stats?.reelCount ?? 0}</td>
-      </tr>
-      {expanded && (
-        <tr style={{ borderBottom: "1px solid #1C2A3A" }}>
-          <td colSpan={7} style={{ padding: "16px", background: "#0a1219" }}>
-            {/* Sort controls */}
-            <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "center" }}>
-              <span style={{ color: "#666", fontSize: "12px", marginRight: "4px" }}>Sort by:</span>
-              {(["views", "likes", "comments", "date"] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={(e) => { e.stopPropagation(); setReelSort(s); }}
-                  style={{
-                    padding: "4px 12px", fontSize: "11px", fontWeight: 500,
-                    color: reelSort === s ? "#0F1923" : "#999",
-                    background: reelSort === s ? "#f1ae38" : "#1C2A3A",
-                    border: "none", borderRadius: "14px", cursor: "pointer",
-                    textTransform: "capitalize",
-                  }}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-            {!reels ? (
-              <div style={{ color: "#666", fontSize: "12px" }}>Loading reels…</div>
-            ) : reels.length === 0 ? (
-              <div style={{ color: "#666", fontSize: "12px" }}>No reels in this period</div>
-            ) : (
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                gap: "12px",
-              }}>
-                {reels.map((reel: any) => {
-                  const postedDate = reel.postedAt ? new Date(reel.postedAt) : null;
-                  const dateLabel = postedDate
-                    ? `${String(postedDate.getDate()).padStart(2, "0")}.${String(postedDate.getMonth() + 1).padStart(2, "0")}.`
-                    : "";
-                  return (
-                    <div
-                      key={reel._id}
-                      style={{
-                        background: "#1C2A3A",
-                        borderRadius: "10px",
-                        overflow: "hidden",
-                        border: "1px solid #253545",
-                      }}
-                    >
-                      {/* Thumbnail */}
-                      <div style={{
-                        width: "100%", height: "120px", background: "#253545",
-                        position: "relative", overflow: "hidden",
-                      }}>
-                        {reel.thumbnailUrl ? (
-                          <img
-                            src={reel.thumbnailUrl}
-                            alt=""
-                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                          />
-                        ) : (
-                          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: "24px" }}>
-                            🎬
-                          </div>
-                        )}
-                        {/* Date overlay */}
-                        {dateLabel && (
-                          <div style={{
-                            position: "absolute", top: "6px", left: "6px",
-                            background: "rgba(0,0,0,0.7)", color: "#fff",
-                            padding: "2px 8px", borderRadius: "6px", fontSize: "11px", fontWeight: 600,
-                          }}>
-                            {dateLabel}
-                          </div>
-                        )}
-                      </div>
-                      {/* Stats overlay */}
-                      <div style={{ padding: "10px", display: "flex", flexDirection: "column", gap: "3px" }}>
-                        <div style={{ fontSize: "11px", color: "#a0a0a0" }}>
-                          <span style={{ color: "#22c55e" }}>+{(reel.views || 0).toLocaleString()}</span> views
-                        </div>
-                        <div style={{ fontSize: "11px", color: "#a0a0a0" }}>
-                          <span style={{ color: "#ef4444" }}>+{(reel.likes || 0).toLocaleString()}</span> likes
-                        </div>
-                        <div style={{ fontSize: "11px", color: "#a0a0a0" }}>
-                          <span style={{ color: "#3b82f6" }}>+{(reel.comments || 0).toLocaleString()}</span> comments
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-/* ─── Donut Chart with Legend ─── */
-function DonutWithLegend({
-  title,
-  data,
-}: {
-  title: string;
-  data: { name: string; value: number; color: string }[];
-}) {
-  const total = data.reduce((s, d) => s + d.value, 0);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "8px", flex: "1 1 280px", minWidth: "250px" }}>
-      <div style={{ fontSize: "12px", color: "#a0a0a0", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.5px" }}>
-        {title}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-        <div style={{ width: "160px", height: "160px", flexShrink: 0 }}>
-          {total > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={data.filter(d => d.value > 0)}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={45}
-                  outerRadius={72}
-                  strokeWidth={0}
-                >
-                  {data.filter(d => d.value > 0).map((entry, i) => (
-                    <Cell key={i} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value) => formatNumber(Number(value ?? 0))}
-                  contentStyle={{ background: "#1C2A3A", border: "1px solid #253545", borderRadius: "8px", fontSize: "12px", color: "#fff" }}
-                  itemStyle={{ color: "#fff" }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#a0a0a0", fontSize: "12px" }}>
-              No data
-            </div>
-          )}
-        </div>
-        <div style={{
-          flex: 1, maxHeight: "160px", overflowY: "auto",
-          display: "flex", flexDirection: "column", gap: "6px",
-          paddingRight: "4px",
-        }}>
-          {data.map((entry, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
-              <div style={{ width: "8px", height: "8px", borderRadius: "2px", background: entry.color, flexShrink: 0 }} />
-              <span style={{ color: "#ccc", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {entry.name}
-              </span>
-              <span style={{ color: "#f1ae38", fontWeight: 600, flexShrink: 0 }}>
-                {formatNumber(entry.value)}
-              </span>
-              <span style={{ color: "#666", flexShrink: 0, fontSize: "11px" }}>
-                {total > 0 ? Math.round((entry.value / total) * 100) : 0}%
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Instagram Analytics Section (Redesigned) ─── */
-function InstagramAnalyticsSection({ token, dateRange }: { token: string; dateRange: DateRange }) {
-  const [selectedCreator, setSelectedCreator] = useState<string>("all");
-  const [showAll, setShowAll] = useState(false);
-
-  const igAccounts = useQuery(
-    api.crm.igQueries.getIgAccounts,
-    token
-      ? {
-          token,
-          ...(selectedCreator !== "all"
-            ? { creatorId: selectedCreator as Id<"crm_creators"> }
-            : {}),
-        }
-      : "skip"
-  );
-
-  const allIgAccounts = useQuery(
-    api.crm.igQueries.getIgAccounts,
-    token ? { token } : "skip"
-  );
-
-  const igReelStats = useQuery(
-    api.crm.igQueries.getIgAccountReelStats,
-    token
-      ? {
-          token,
-          startDate: dateRange.start,
-          endDate: dateRange.end,
-          ...(selectedCreator !== "all"
-            ? { creatorId: selectedCreator as Id<"crm_creators"> }
-            : {}),
-        }
-      : "skip"
-  );
-
-  const creatorOptions = useMemo(() => {
-    if (!allIgAccounts) return [];
-    const map = new Map<string, string>();
-    for (const acc of allIgAccounts) {
-      if (acc.creatorId && acc.creatorName) {
-        map.set(String(acc.creatorId), acc.creatorName);
-      }
-    }
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [allIgAccounts]);
-
-  const statsMap = useMemo(() => {
-    if (!igReelStats?.byAccount) return new Map();
-    return new Map(igReelStats.byAccount.map((s: any) => [s.accountId, s]));
-  }, [igReelStats]);
-
-  const sortedAccounts = useMemo(() => {
-    if (!igAccounts) return [];
-    return [...igAccounts].sort((a, b) => {
-      const aViews = statsMap.get(String(a._id))?.views ?? 0;
-      const bViews = statsMap.get(String(b._id))?.views ?? 0;
-      return bViews - aViews;
-    });
-  }, [igAccounts, statsMap]);
-
-  const displayedAccounts = showAll ? sortedAccounts : sortedAccounts.slice(0, 30);
-  const totals = igReelStats?.totals;
-
-  // Donut chart data: views and followers per account
-  const pieChartData = useMemo(() => {
-    if (!igReelStats?.byAccount || !igAccounts) return { viewsData: [], followersData: [] };
-    const accountMap = new Map<string, any>(igAccounts.map((a: any) => [String(a._id), a]));
-    const viewsData: { name: string; value: number; color: string }[] = [];
-    const followersData: { name: string; value: number; color: string }[] = [];
-    igReelStats.byAccount.slice(0, 15).forEach((stat: any, i: number) => {
-      const account = accountMap.get(stat.accountId);
-      const name = account?.creatorName || account?.username || "Unknown";
-      const color = CREATOR_COLORS[i % CREATOR_COLORS.length];
-      viewsData.push({ name, value: stat.views, color });
-      followersData.push({ name, value: Math.max(0, stat.followersDelta || 0), color });
-    });
-    return { viewsData, followersData };
-  }, [igReelStats, igAccounts]);
-
-  return (
-    <div>
-      <div style={{
-        borderTop: "1px solid #1C2A3A", marginBottom: "28px", paddingTop: "28px",
-      }}>
-        <div style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-          flexWrap: "wrap", gap: "12px", marginBottom: "24px",
-        }}>
-          <h2 style={{ fontSize: "20px", fontWeight: "700", color: "#fff", margin: 0 }}>
-            📸 Instagram Analytics
-          </h2>
-          <select
-            value={selectedCreator}
-            onChange={(e) => { setSelectedCreator(e.target.value); setShowAll(false); }}
-            style={{
-              background: "#1C2A3A", color: "#fff", border: "1px solid #253545",
-              borderRadius: "8px", padding: "8px 12px", fontSize: "13px",
-              cursor: "pointer",
-            }}
-          >
-            <option value="all">All Creators</option>
-            {creatorOptions.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* A. KPI Cards Row */}
-      {totals && (
-        <div style={{
-          display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-          gap: "14px", marginBottom: "24px",
-        }}>
-          {[
-            { label: "All Views", value: totals.views, icon: "👁" },
-            { label: "All Likes", value: totals.likes, icon: "❤️" },
-            { label: "New Followers", value: totals.followersDelta ?? 0, icon: "👥", prefix: (totals.followersDelta ?? 0) >= 0 ? "+" : "" },
-            { label: "All Shares", value: totals.shares, icon: "🔗" },
-            { label: "Reels Posted", value: totals.reelCount, icon: "🎬" },
-            { label: "All Comments", value: totals.comments, icon: "💬" },
-          ].map((kpi) => (
-            <div key={kpi.label} style={{
-              background: "#1C2A3A", borderRadius: "14px", padding: "20px",
-              border: "1px solid #253545",
-            }}>
-              <div style={{
-                fontSize: "11px", color: "#a0a0a0", fontWeight: 500,
-                textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "8px",
-              }}>
-                {kpi.icon} {kpi.label}
-              </div>
-              <div style={{ fontSize: "24px", fontWeight: 700, color: "#f1ae38" }}>
-                {kpi.prefix || ""}{typeof kpi.value === "number" ? formatNumber(kpi.value) : kpi.value}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* B. Donut Charts Row */}
-      {(pieChartData.viewsData.length > 0 || pieChartData.followersData.length > 0) && (
-        <div style={{
-          background: "#1C2A3A", borderRadius: "14px", padding: "24px",
-          border: "1px solid #253545", marginBottom: "24px",
-        }}>
-          <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
-            <DonutWithLegend title="All Views Comparison" data={pieChartData.viewsData} />
-            <DonutWithLegend title="New Followers Comparison" data={pieChartData.followersData} />
-          </div>
-        </div>
-      )}
-
-      {/* C. Accounts Table */}
-      <div style={{
-        background: "#1C2A3A", borderRadius: "14px", padding: "24px",
-        border: "1px solid #253545", overflowX: "auto",
-      }}>
-        <div style={{
-          fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
-          textTransform: "uppercase", letterSpacing: "0.5px",
-        }}>
-          Accounts (by views)
-        </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "700px" }}>
-          <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid #253545" }}>
-              {["Username", "New Followers", "Status", "Views", "Likes", "Comments", "Reels Posted"].map((h) => (
-                <th key={h} style={{ padding: "12px 12px", fontSize: "11px", color: "#666", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {!igAccounts ? (
-              <tr>
-                <td colSpan={7} style={{ padding: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
-                  Loading…
-                </td>
-              </tr>
-            ) : displayedAccounts.length === 0 ? (
-              <tr>
-                <td colSpan={7} style={{ padding: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
-                  No accounts found
-                </td>
-              </tr>
-            ) : (
-              displayedAccounts.map((account: any, i: number) => (
-                <IgAccountRow
-                  key={account._id}
-                  account={account}
-                  stats={statsMap.get(String(account._id))}
-                  token={token}
-                  dateRange={dateRange}
-                  colorIndex={i}
-                />
-              ))
-            )}
-          </tbody>
-        </table>
-        {!showAll && sortedAccounts.length > 30 && (
-          <div style={{ textAlign: "center", marginTop: "16px" }}>
-            <button
-              onClick={() => setShowAll(true)}
-              style={{
-                background: "transparent", color: "#f1ae38", border: "1px solid #f1ae38",
-                borderRadius: "8px", padding: "8px 20px", fontSize: "13px",
-                cursor: "pointer", fontWeight: 600,
-              }}
-            >
-              Show all ({sortedAccounts.length - 30} remaining)
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ─── Main Page ─── */
 export default function ManagerDashboardPage() {
-  const [token, setToken] = useState("");
   const [user, setUser] = useState<any>(null);
-
   const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(6));
+  const [loading, setLoading] = useState(true);
+
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [totals, setTotals] = useState({ newSubsInRange: 0 });
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [trackingLinks, setTrackingLinks] = useState<any[]>([]);
+  const [igRows, setIgRows] = useState<any[]>([]);
 
   useEffect(() => {
-    const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
-    setToken(t);
     if (u) setUser(JSON.parse(u));
   }, []);
 
@@ -574,25 +96,134 @@ export default function ManagerDashboardPage() {
     return "90d";
   }, [dateRange]);
 
-  const subscriberStats = useQuery(
-    api.crm.managerDashboard.getSubscriberStats,
-    token ? { token, startDate: dateRange.start, endDate: dateRange.end } : "skip"
-  );
+  useEffect(() => {
+    let cancelled = false;
 
-  const subTrends = useQuery(
-    api.crm.managerDashboard.getSubTrends,
-    token ? { token, period: trendPeriod } : "skip"
-  );
+    async function loadData() {
+      setLoading(true);
 
-  const chartData = useMemo(() => {
-    if (!subTrends?.dataPoints) return [];
-    return subTrends.dataPoints.map((dp: any) => ({
-      date: new Date(dp.date + "T12:00:00").toLocaleDateString("en-US", {
-        month: "short", day: "numeric",
-      }),
-      "New Subs": dp.newSubs,
-    }));
-  }, [subTrends]);
+      const [{ data: creators }, { data: ofAccounts }] = await Promise.all([
+        supabase.from("crm_creators").select("id,name").eq("status", "active"),
+        supabase.from("crm_of_accounts").select("account_id,creator_id"),
+      ]);
+
+      const creatorNameById = new Map<string, string>((creators ?? []).map((c: any) => [c.id, c.name]));
+      const accountToCreator = new Map<string, string>();
+      for (const row of ofAccounts ?? []) {
+        const name = creatorNameById.get((row as any).creator_id) || "Unknown";
+        accountToCreator.set((row as any).account_id, name);
+      }
+
+      const { data: subsTx } = await supabase
+        .from("crm_of_transactions")
+        .select("account_id,type,timestamp")
+        .in("type", ["new_sub", "subscription", "rebill"])
+        .gte("timestamp", `${dateRange.start}T00:00:00`)
+        .lte("timestamp", `${dateRange.end}T23:59:59`);
+
+      const accMap = new Map<string, { accountId: string; creatorName: string; newSubsInRange: number }>();
+      for (const tx of subsTx ?? []) {
+        const accountId = (tx as any).account_id;
+        const creatorName = accountToCreator.get(accountId) || accountId;
+        const key = accountId;
+        if (!accMap.has(key)) accMap.set(key, { accountId, creatorName, newSubsInRange: 0 });
+        accMap.get(key)!.newSubsInRange += 1;
+      }
+      const accountsRows = Array.from(accMap.values()).sort((a, b) => b.newSubsInRange - a.newSubsInRange);
+
+      const days = trendPeriod === "7d" ? 7 : trendPeriod === "30d" ? 30 : 90;
+      const startTrend = new Date();
+      startTrend.setDate(startTrend.getDate() - (days - 1));
+      const trendStart = toDateOnly(startTrend);
+
+      const { data: trendTx } = await supabase
+        .from("crm_of_transactions")
+        .select("timestamp,type")
+        .in("type", ["new_sub", "subscription", "rebill"])
+        .gte("timestamp", `${trendStart}T00:00:00`)
+        .lte("timestamp", `${toDateOnly(new Date())}T23:59:59`);
+
+      const trendMap = new Map<string, number>();
+      for (const tx of trendTx ?? []) {
+        const d = new Date((tx as any).timestamp).toISOString().split("T")[0];
+        trendMap.set(d, (trendMap.get(d) || 0) + 1);
+      }
+      const trendRows: any[] = [];
+      for (let i = 0; i < days; i++) {
+        const d = new Date(startTrend);
+        d.setDate(startTrend.getDate() + i);
+        const key = toDateOnly(d);
+        trendRows.push({
+          date: new Date(`${key}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          "New Subs": trendMap.get(key) || 0,
+        });
+      }
+
+      const { data: links } = await supabase
+        .from("crm_of_tracking_links")
+        .select("id,name,url,clicks,subscribers,conversion_rate,last_synced_at,creator_id")
+        .order("clicks", { ascending: false });
+
+      const linksRows = (links ?? []).map((l: any) => ({
+        ...l,
+        creatorName: creatorNameById.get(l.creator_id) || "Unknown",
+      }));
+
+      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }] = await Promise.all([
+        supabase.from("crm_ig_accounts").select("id,creator_id,username,followers").order("followers", { ascending: false }),
+        supabase
+          .from("crm_ig_daily_snapshots")
+          .select("ig_account_id,followers_delta,views,likes,comments,reels_posted,date")
+          .gte("date", dateRange.start)
+          .lte("date", dateRange.end),
+        supabase
+          .from("crm_ig_reels")
+          .select("ig_account_id")
+          .gte("posted_at", `${dateRange.start}T00:00:00`)
+          .lte("posted_at", `${dateRange.end}T23:59:59`),
+      ]);
+
+      const snapByAccount = new Map<string, any>();
+      for (const s of igSnapshots ?? []) {
+        const id = (s as any).ig_account_id;
+        if (!snapByAccount.has(id)) snapByAccount.set(id, { followersDelta: 0, views: 0, likes: 0, comments: 0, reelCount: 0 });
+        const row = snapByAccount.get(id);
+        row.followersDelta += Number((s as any).followers_delta || 0);
+        row.views += Number((s as any).views || 0);
+        row.likes += Number((s as any).likes || 0);
+        row.comments += Number((s as any).comments || 0);
+        row.reelCount += Number((s as any).reels_posted || 0);
+      }
+      for (const r of igReels ?? []) {
+        const id = (r as any).ig_account_id;
+        if (!snapByAccount.has(id)) snapByAccount.set(id, { followersDelta: 0, views: 0, likes: 0, comments: 0, reelCount: 0 });
+        snapByAccount.get(id).reelCount += 1;
+      }
+
+      const igRowsData = (igAccounts ?? []).map((a: any) => {
+        const s = snapByAccount.get(a.id) || { followersDelta: 0, views: 0, likes: 0, comments: 0, reelCount: 0 };
+        return {
+          accountId: a.id,
+          creatorName: creatorNameById.get(a.creator_id) || "Unknown",
+          username: a.username,
+          followers: Number(a.followers || 0),
+          ...s,
+        };
+      }).sort((a: any, b: any) => b.views - a.views);
+
+      if (!cancelled) {
+        setAccounts(accountsRows);
+        setTotals({ newSubsInRange: accountsRows.reduce((s, a) => s + a.newSubsInRange, 0) });
+        setChartData(trendRows);
+        setTrackingLinks(linksRows);
+        setIgRows(igRowsData);
+        setLoading(false);
+      }
+    }
+
+    loadData();
+    return () => { cancelled = true; };
+  }, [dateRange.start, dateRange.end, trendPeriod]);
 
   if (!user) return null;
   if (user.role !== "marketing_manager" && user.role !== "admin") {
@@ -603,13 +234,10 @@ export default function ManagerDashboardPage() {
     );
   }
 
-  const accounts = subscriberStats?.accounts || [];
-  const totals = subscriberStats?.totals || { newSubsInRange: 0 };
   const rangeLabelText = `${new Date(dateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(dateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 
   return (
     <div style={{ maxWidth: "1400px" }}>
-      {/* Header */}
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "flex-start",
         marginBottom: "28px", flexWrap: "wrap", gap: "16px",
@@ -619,13 +247,12 @@ export default function ManagerDashboardPage() {
             {getGreeting()}, {user.name || "Manager"}! 📊
           </h1>
           <p style={{ fontSize: "14px", color: "#a0a0a0", marginTop: "6px", margin: 0 }}>
-            Acquisition metrics for your creators
+            Acquisition metrics from Supabase
           </p>
         </div>
         <DateRangePicker value={dateRange} onChange={setDateRange} />
       </div>
 
-      {/* Summary Card — New Subs in Range */}
       <div style={{ marginBottom: "24px" }}>
         <Card>
           <div style={{
@@ -640,7 +267,6 @@ export default function ManagerDashboardPage() {
         </Card>
       </div>
 
-      {/* New Subs Per Creator Table */}
       <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
         <div style={{
           fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
@@ -651,13 +277,18 @@ export default function ManagerDashboardPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "400px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {["Creator", "New Subs"].map((h) => (
+              {[
+                "Creator",
+                "New Subs",
+              ].map((h) => (
                 <th key={h} style={{ padding: "12px 10px", fontSize: "12px", color: "#a0a0a0", fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {accounts.length === 0 ? (
+            {loading ? (
+              <tr><td colSpan={2} style={{ padding: "24px", textAlign: "center", color: "#666" }}>Loading…</td></tr>
+            ) : accounts.length === 0 ? (
               <tr>
                 <td colSpan={2} style={{ padding: "24px", textAlign: "center", color: "#666", fontSize: "13px" }}>
                   No creators assigned
@@ -679,19 +310,10 @@ export default function ManagerDashboardPage() {
                 </tr>
               ))
             )}
-            {accounts.length > 1 && (
-              <tr style={{ borderTop: "2px solid #333" }}>
-                <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700 }}>Total</td>
-                <td style={{ padding: "12px 10px", color: "#f1ae38", fontWeight: 700, fontSize: "16px" }}>
-                  {accounts.reduce((s: number, r: any) => s + r.newSubsInRange, 0)}
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </Card>
 
-      {/* Daily Sub Trend Chart */}
       <Card style={{ marginBottom: "24px" }}>
         <div style={{
           fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
@@ -716,15 +338,67 @@ export default function ManagerDashboardPage() {
         )}
       </Card>
 
-      {/* Tracking Links */}
-      <div style={{ marginBottom: "24px" }}>
-        <TrackingLinksCard token={token} isAdmin={user.role === "admin"} />
-      </div>
+      <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
+        <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, marginBottom: "12px", textTransform: "uppercase" }}>
+          🔗 Tracking Links
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "760px" }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
+              {[
+                "Name",
+                "Creator",
+                "Clicks",
+                "Subscribers",
+                "Conv %",
+                "Last Synced",
+              ].map((h) => (
+                <th key={h} style={{ padding: "10px", fontSize: "12px", color: "#a0a0a0" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {trackingLinks.slice(0, 40).map((l: any) => (
+              <tr key={l.id} style={{ borderBottom: "1px solid #242424" }}>
+                <td style={{ padding: "10px", color: "#fff" }}>{l.name}</td>
+                <td style={{ padding: "10px", color: "#a0a0a0" }}>{l.creatorName}</td>
+                <td style={{ padding: "10px", color: "#fff" }}>{Number(l.clicks || 0).toLocaleString()}</td>
+                <td style={{ padding: "10px", color: "#fff" }}>{Number(l.subscribers || 0).toLocaleString()}</td>
+                <td style={{ padding: "10px", color: "#22c55e" }}>{(Number(l.conversion_rate || 0) * 100).toFixed(1)}%</td>
+                <td style={{ padding: "10px", color: "#a0a0a0" }}>{l.last_synced_at ? new Date(l.last_synced_at).toLocaleString() : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
 
-      {/* Instagram Analytics Section */}
-      {token && (
-        <InstagramAnalyticsSection token={token} dateRange={dateRange} />
-      )}
+      <Card style={{ overflowX: "auto" }}>
+        <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, marginBottom: "12px", textTransform: "uppercase" }}>
+          📸 Instagram Analytics
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "860px" }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
+              {["Creator", "Account", "Views", "Likes", "Comments", "New Followers", "Reels"].map((h) => (
+                <th key={h} style={{ padding: "10px", fontSize: "12px", color: "#a0a0a0" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {igRows.slice(0, 50).map((r: any) => (
+              <tr key={r.accountId} style={{ borderBottom: "1px solid #242424" }}>
+                <td style={{ padding: "10px", color: "#fff" }}>{r.creatorName}</td>
+                <td style={{ padding: "10px", color: "#a0a0a0" }}>@{r.username}</td>
+                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.views || 0)}</td>
+                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.likes || 0)}</td>
+                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.comments || 0)}</td>
+                <td style={{ padding: "10px", color: r.followersDelta >= 0 ? "#22c55e" : "#ef4444" }}>{r.followersDelta >= 0 ? "+" : ""}{formatNumber(r.followersDelta || 0)}</td>
+                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.reelCount || 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
     </div>
   );
 }

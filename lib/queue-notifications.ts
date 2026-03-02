@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
-import type { Id } from "../convex/_generated/dataModel";
-import type { QueueNotificationKind, QueueNotificationToastItem } from "../components/QueueNotificationToast";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
+import type {
+  QueueNotificationKind,
+  QueueNotificationToastItem,
+} from "../components/QueueNotificationToast";
 
 export type QueueNotificationEventType =
   | "new_message"
@@ -13,18 +14,18 @@ export type QueueNotificationEventType =
   | "escalated";
 
 export type QueueItemForNotifications = {
-  _id: string;
-  creatorId: string;
-  chatterId?: string;
-  escalatedTo?: string;
+  id: string;
+  creator_id: string;
+  chatter_id?: string;
+  escalated_to?: string;
   status: string;
   priority: "critical" | "high" | "normal" | "low";
-  fanUsername: string;
-  fanSegment?: string;
-  messageType?: string;
-  receivedAt: number;
-  slaMaxWaitSec?: number;
-  updatedAt?: number;
+  fan_username: string;
+  fan_segment?: string;
+  message_type?: string;
+  received_at: string;
+  sla_max_wait_sec?: number;
+  updated_at?: string;
 };
 
 type SlaBucket = "ok" | "warning" | "breach";
@@ -42,18 +43,21 @@ export type QueueNotificationsOptions = {
   user: { id: string; role: string };
 
   /**
-   * If provided, notifications are derived from these items (already subscribed elsewhere).
-   * If omitted, this hook will subscribe using Convex.
+   * If provided, notifications are derived from these items (already fetched elsewhere).
+   * If omitted, this hook will poll / subscribe via Supabase.
    */
   items?: QueueItemForNotifications[] | undefined;
 
   /**
-   * Convex subscription mode when `items` is omitted.
+   * Subscription mode when `items` is omitted.
    * - "self": chatter queue (assigned to current user)
-   * - "supervisor_escalations": only escalated items where escalatedTo=current user
+   * - "supervisor_escalations": only escalated items where escalated_to=current user
    * - "supervisor_all_open": open items for supervisors (heavier)
    */
-  subscriptionMode?: "self" | "supervisor_escalations" | "supervisor_all_open";
+  subscriptionMode?:
+    | "self"
+    | "supervisor_escalations"
+    | "supervisor_all_open";
 
   /** Base route for navigation to a queue item. */
   baseHref?: string;
@@ -71,10 +75,23 @@ export type QueueNotificationsOptions = {
   requestBrowserNotificationPermissionOnMount?: boolean;
 
   /**
-   * If true, computes persistent, banner-friendly alerts using Phase 3 config.
-   * (Only works for supervisor/admin roles due to permissions.)
+   * If true, computes persistent, banner-friendly alerts.
+   * (Only works for supervisor/admin roles.)
    */
   computePhase3Alerts?: boolean;
+
+  /**
+   * Alert config for Phase 3 persistent alerts.
+   * If computePhase3Alerts is true and this is not provided,
+   * the hook will attempt to fetch it from Supabase.
+   */
+  alertConfig?: {
+    enableVipQueue?: boolean;
+    vipQueueThreshold: number;
+    vipQueueMinutes: number;
+    enableQueueOverload?: boolean;
+    queueOverloadThreshold: number;
+  } | null;
 };
 
 function isSupervisorRole(role: string): boolean {
@@ -82,10 +99,17 @@ function isSupervisorRole(role: string): boolean {
 }
 
 function isOpenStatus(status: string): boolean {
-  return status === "pending" || status === "in_progress" || status === "escalated";
+  return (
+    status === "pending" ||
+    status === "in_progress" ||
+    status === "escalated"
+  );
 }
 
-function computeSlaBucket(waitSec: number, maxWaitSec?: number): SlaBucket {
+function computeSlaBucket(
+  waitSec: number,
+  maxWaitSec?: number
+): SlaBucket {
   const max = maxWaitSec ?? 0;
   if (!Number.isFinite(max) || max <= 0) return "ok";
   const ratio = waitSec / max;
@@ -106,7 +130,10 @@ function bucketRank(b: SlaBucket): number {
   }
 }
 
-function kindForEvent(type: QueueNotificationEventType, priority?: string): QueueNotificationKind {
+function kindForEvent(
+  type: QueueNotificationEventType,
+  priority?: string
+): QueueNotificationKind {
   if (type === "sla_breach") return "critical";
   if (type === "sla_warning") return "warning";
   if (type === "escalated") return "warning";
@@ -125,7 +152,8 @@ export function playCriticalQueueSound(): void {
 
   // Best-effort: WebAudio beep (avoids shipping an mp3).
   try {
-    const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext) as
+    const AudioCtx = (window.AudioContext ||
+      (window as any).webkitAudioContext) as
       | (new () => AudioContext)
       | undefined;
 
@@ -166,7 +194,9 @@ export function playCriticalQueueSound(): void {
 }
 
 function canUseBrowserNotifications(): boolean {
-  return typeof window !== "undefined" && typeof Notification !== "undefined";
+  return (
+    typeof window !== "undefined" && typeof Notification !== "undefined"
+  );
 }
 
 function requestBrowserNotificationPermissionOnce(): void {
@@ -184,7 +214,10 @@ function requestBrowserNotificationPermissionOnce(): void {
   }
 }
 
-function maybeSendBrowserNotification(opts: { title: string; body: string }): void {
+function maybeSendBrowserNotification(opts: {
+  title: string;
+  body: string;
+}): void {
   if (!canUseBrowserNotifications()) return;
   if (document && document.hidden !== true) return;
   if (Notification.permission !== "granted") return;
@@ -197,59 +230,85 @@ function maybeSendBrowserNotification(opts: { title: string; body: string }): vo
   }
 }
 
-function normalizeQueueItemLike(raw: any): QueueItemForNotifications {
+function normalizeQueueItem(raw: any): QueueItemForNotifications {
   return {
-    _id: String(raw._id),
-    creatorId: String(raw.creatorId),
-    chatterId: raw.chatterId ? String(raw.chatterId) : undefined,
-    escalatedTo: raw.escalatedTo ? String(raw.escalatedTo) : undefined,
+    id: String(raw.id),
+    creator_id: String(raw.creator_id),
+    chatter_id: raw.chatter_id ? String(raw.chatter_id) : undefined,
+    escalated_to: raw.escalated_to
+      ? String(raw.escalated_to)
+      : undefined,
     status: String(raw.status),
     priority: raw.priority as QueueItemForNotifications["priority"],
-    fanUsername: String(raw.fanUsername ?? ""),
-    fanSegment: raw.fanSegment ? String(raw.fanSegment) : undefined,
-    messageType: raw.messageType ? String(raw.messageType) : undefined,
-    receivedAt: Number(raw.receivedAt ?? 0),
-    slaMaxWaitSec: raw.slaMaxWaitSec ? Number(raw.slaMaxWaitSec) : undefined,
-    updatedAt: raw.updatedAt ? Number(raw.updatedAt) : undefined,
+    fan_username: String(raw.fan_username ?? ""),
+    fan_segment: raw.fan_segment ? String(raw.fan_segment) : undefined,
+    message_type: raw.message_type
+      ? String(raw.message_type)
+      : undefined,
+    received_at: String(raw.received_at ?? ""),
+    sla_max_wait_sec: raw.sla_max_wait_sec
+      ? Number(raw.sla_max_wait_sec)
+      : undefined,
+    updated_at: raw.updated_at ? String(raw.updated_at) : undefined,
   };
 }
 
-function shouldSeeNewMessageToast(user: { id: string; role: string }, item: QueueItemForNotifications): boolean {
+function receivedAtMs(item: QueueItemForNotifications): number {
+  return new Date(item.received_at).getTime();
+}
+
+function shouldSeeNewMessageToast(
+  user: { id: string; role: string },
+  item: QueueItemForNotifications
+): boolean {
   // Assigned chatter should be notified.
   if (user.role === "chatter") {
-    return item.chatterId === user.id;
+    return item.chatter_id === user.id;
   }
 
   // Supervisors: only notify for escalations (handled separately).
   return false;
 }
 
-function shouldSeeEscalationToast(user: { id: string; role: string }, item: QueueItemForNotifications): boolean {
+function shouldSeeEscalationToast(
+  user: { id: string; role: string },
+  item: QueueItemForNotifications
+): boolean {
   if (!isSupervisorRole(user.role)) return false;
   if (item.status !== "escalated") return false;
-  if (!item.escalatedTo) return false;
-  return item.escalatedTo === user.id;
+  if (!item.escalated_to) return false;
+  return item.escalated_to === user.id;
 }
 
-function toastTitleForEvent(type: QueueNotificationEventType, item: QueueItemForNotifications): string {
+function toastTitleForEvent(
+  type: QueueNotificationEventType,
+  item: QueueItemForNotifications
+): string {
   switch (type) {
     case "new_message":
-      return `New message from @${item.fanUsername}`;
+      return `New message from @${item.fan_username}`;
     case "sla_warning":
-      return `SLA warning: @${item.fanUsername}`;
+      return `SLA warning: @${item.fan_username}`;
     case "sla_breach":
-      return `SLA breached: @${item.fanUsername}`;
+      return `SLA breached: @${item.fan_username}`;
     case "escalated":
-      return `Escalated item: @${item.fanUsername}`;
+      return `Escalated item: @${item.fan_username}`;
     default:
-      return `Queue update: @${item.fanUsername}`;
+      return `Queue update: @${item.fan_username}`;
   }
 }
 
-function toastMessageForEvent(type: QueueNotificationEventType, item: QueueItemForNotifications): string {
-  const seg = item.fanSegment ? `${item.fanSegment.toUpperCase()} • ` : "";
-  const pri = item.priority ? `${String(item.priority).toUpperCase()} • ` : "";
-  const msgType = item.messageType ? `${item.messageType} • ` : "";
+function toastMessageForEvent(
+  type: QueueNotificationEventType,
+  item: QueueItemForNotifications
+): string {
+  const seg = item.fan_segment
+    ? `${item.fan_segment.toUpperCase()} • `
+    : "";
+  const pri = item.priority
+    ? `${String(item.priority).toUpperCase()} • `
+    : "";
+  const msgType = item.message_type ? `${item.message_type} • ` : "";
 
   switch (type) {
     case "new_message":
@@ -265,6 +324,35 @@ function toastMessageForEvent(type: QueueNotificationEventType, item: QueueItemF
     default:
       return `${seg}${pri}`;
   }
+}
+
+/**
+ * Fetch queue items from Supabase based on subscription mode.
+ */
+async function fetchQueueItems(
+  mode: string,
+  userId: string
+): Promise<QueueItemForNotifications[]> {
+  let query = supabase
+    .from("crm_message_queue")
+    .select("*")
+    .in("status", ["pending", "in_progress", "escalated"]);
+
+  if (mode === "supervisor_escalations") {
+    query = query
+      .eq("status", "escalated")
+      .eq("escalated_to", userId)
+      .limit(200);
+  } else if (mode === "supervisor_all_open") {
+    query = query.limit(500);
+  } else {
+    // "self" mode
+    query = query.limit(200);
+  }
+
+  const { data } = await query;
+  if (!data) return [];
+  return data.map(normalizeQueueItem);
 }
 
 export function useQueueNotifications(opts: QueueNotificationsOptions): {
@@ -284,51 +372,100 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
     browserNotificationsForCritical = true,
     requestBrowserNotificationPermissionOnMount = false,
     computePhase3Alerts = false,
+    alertConfig: alertConfigProp = null,
   } = opts;
 
   const supervisor = isSupervisorRole(user.role);
 
-  const subscribedRaw = useQuery(
-    api.crm.queue.getQueueItems,
-    itemsProp
-      ? "skip"
-      : token
-        ? (() => {
-            if (subscriptionMode === "supervisor_all_open") {
-              return { token, includeClosed: false, limit: 500 } as const;
-            }
-            if (subscriptionMode === "supervisor_escalations") {
-              return {
-                token,
-                includeClosed: false,
-                status: "escalated" as const,
-                escalatedTo: user.id as unknown as Id<"crm_chatters">,
-                limit: 200,
-              } as const;
-            }
-            // self
-            return { token, includeClosed: false, limit: 200 } as const;
-          })()
-        : "skip"
-  );
+  // ─── Supabase subscription / polling state ─────────────────
+  const [fetchedItems, setFetchedItems] = useState<
+    QueueItemForNotifications[] | undefined
+  >(undefined);
+
+  // Poll for queue items if not provided via prop.
+  // Also set up a Supabase realtime channel for live INSERT/UPDATE notifications.
+  useEffect(() => {
+    if (itemsProp !== undefined) return; // items provided externally
+    if (!token) return;
+
+    let cancelled = false;
+
+    // Initial fetch
+    fetchQueueItems(subscriptionMode, user.id).then((items) => {
+      if (!cancelled) setFetchedItems(items);
+    });
+
+    // Realtime subscription for live updates
+    const channel = supabase
+      .channel("queue-notifications")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "crm_message_queue",
+        },
+        () => {
+          // Re-fetch on any change to the queue table
+          fetchQueueItems(subscriptionMode, user.id).then((items) => {
+            if (!cancelled) setFetchedItems(items);
+          });
+        }
+      )
+      .subscribe();
+
+    // Also poll every 30 seconds as a fallback
+    const pollInterval = window.setInterval(() => {
+      fetchQueueItems(subscriptionMode, user.id).then((items) => {
+        if (!cancelled) setFetchedItems(items);
+      });
+    }, 30_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollInterval);
+      supabase.removeChannel(channel);
+    };
+  }, [itemsProp, token, subscriptionMode, user.id]);
 
   const subscribedItems = useMemo(() => {
-    if (itemsProp) return itemsProp;
-    if (!subscribedRaw) return subscribedRaw as undefined;
-    const rawList = subscribedRaw as any[];
-    return rawList.map(normalizeQueueItemLike);
-  }, [itemsProp, subscribedRaw]);
+    if (itemsProp !== undefined) return itemsProp;
+    return fetchedItems;
+  }, [itemsProp, fetchedItems]);
 
-  const alertConfig = useQuery(
-    api.crm.alertConfig.get,
-    computePhase3Alerts && supervisor && token ? { token } : "skip"
-  );
+  // ─── Alert config fetch (Phase 3) ─────────────────────────
+  const [alertConfig, setAlertConfig] = useState(alertConfigProp);
 
-  const [notifications, setNotifications] = useState<QueueNotificationToastItem[]>([]);
+  useEffect(() => {
+    if (!computePhase3Alerts || !supervisor || !token) return;
+    if (alertConfigProp) {
+      setAlertConfig(alertConfigProp);
+      return;
+    }
 
-  const dismissNotification = (id: string) => {
+    // TODO: Fetch alert config from a settings table if needed.
+    // For now, use sensible defaults.
+    setAlertConfig({
+      enableVipQueue: true,
+      vipQueueThreshold: 3,
+      vipQueueMinutes: 10,
+      enableQueueOverload: true,
+      queueOverloadThreshold: 20,
+    });
+  }, [
+    alertConfigProp,
+    computePhase3Alerts,
+    supervisor,
+    token,
+  ]);
+
+  const [notifications, setNotifications] = useState<
+    QueueNotificationToastItem[]
+  >([]);
+
+  const dismissNotification = useCallback((id: string) => {
     setNotifications((prev) => prev.filter((t) => t.id !== id));
-  };
+  }, []);
 
   // Keep items in a ref for the SLA interval effect.
   const itemsRef = useRef<QueueItemForNotifications[]>([]);
@@ -360,12 +497,21 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
 
     const now = safeNow();
 
-    const nextById = new Map<string, { status: string; slaBucket: SlaBucket }>();
+    const nextById = new Map<
+      string,
+      { status: string; slaBucket: SlaBucket }
+    >();
 
     for (const item of subscribedItems) {
-      const waitSec = Math.max(0, Math.floor((now - item.receivedAt) / 1000));
-      const slaBucket = computeSlaBucket(waitSec, item.slaMaxWaitSec);
-      nextById.set(item._id, { status: item.status, slaBucket });
+      const waitSec = Math.max(
+        0,
+        Math.floor((now - receivedAtMs(item)) / 1000)
+      );
+      const slaBucket = computeSlaBucket(
+        waitSec,
+        item.sla_max_wait_sec
+      );
+      nextById.set(item.id, { status: item.status, slaBucket });
     }
 
     if (!initializedRef.current) {
@@ -379,25 +525,26 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
 
     // New items.
     for (const item of subscribedItems) {
-      const prev = prevById.get(item._id);
+      const prev = prevById.get(item.id);
       if (!prev) {
         if (shouldSeeNewMessageToast(user, item)) {
           const type: QueueNotificationEventType = "new_message";
           const kind = kindForEvent(type, item.priority);
           newToasts.push({
-            id: `${type}:${item._id}:${item.receivedAt}`,
+            id: `${type}:${item.id}:${item.received_at}`,
             kind,
             title: toastTitleForEvent(type, item),
             message: toastMessageForEvent(type, item),
-            href: `${baseHref}?focus=${encodeURIComponent(item._id)}`,
+            href: `${baseHref}?focus=${encodeURIComponent(item.id)}`,
             createdAt: now,
           });
 
-          if (kind === "critical" && soundForCritical) playCriticalQueueSound();
+          if (kind === "critical" && soundForCritical)
+            playCriticalQueueSound();
           if (kind === "critical" && browserNotificationsForCritical) {
             maybeSendBrowserNotification({
               title: "Queue: Critical message",
-              body: `@${item.fanUsername} (${item.fanSegment ?? "unknown"})`,
+              body: `@${item.fan_username} (${item.fan_segment ?? "unknown"})`,
             });
           }
         }
@@ -407,20 +554,21 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
           const type: QueueNotificationEventType = "escalated";
           const kind = kindForEvent(type, item.priority);
           newToasts.push({
-            id: `${type}:${item._id}:${item.updatedAt ?? item.receivedAt}`,
+            id: `${type}:${item.id}:${item.updated_at ?? item.received_at}`,
             kind,
             title: toastTitleForEvent(type, item),
-            message: (item as any).escalationReason
-              ? `Reason: ${String((item as any).escalationReason)}`
+            message: (item as any).escalation_reason
+              ? `Reason: ${String((item as any).escalation_reason)}`
               : toastMessageForEvent(type, item),
-            href: `${baseHref}?focus=${encodeURIComponent(item._id)}`,
+            href: `${baseHref}?focus=${encodeURIComponent(item.id)}`,
             createdAt: now,
           });
-          if (kind === "critical" && soundForCritical) playCriticalQueueSound();
+          if (kind === "critical" && soundForCritical)
+            playCriticalQueueSound();
           if (kind === "critical" && browserNotificationsForCritical) {
             maybeSendBrowserNotification({
               title: "Queue: Escalation",
-              body: `Escalated item for @${item.fanUsername}`,
+              body: `Escalated item for @${item.fan_username}`,
             });
           }
         }
@@ -428,26 +576,30 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
         continue;
       }
 
-      // Status transitions → escalated
-      if (item.status === "escalated" && prev.status !== "escalated") {
+      // Status transitions -> escalated
+      if (
+        item.status === "escalated" &&
+        prev.status !== "escalated"
+      ) {
         if (shouldSeeEscalationToast(user, item)) {
           const type: QueueNotificationEventType = "escalated";
           const kind = kindForEvent(type, item.priority);
           newToasts.push({
-            id: `${type}:${item._id}:${item.updatedAt ?? now}`,
+            id: `${type}:${item.id}:${item.updated_at ?? String(now)}`,
             kind,
             title: toastTitleForEvent(type, item),
-            message: (item as any).escalationReason
-              ? `Reason: ${String((item as any).escalationReason)}`
+            message: (item as any).escalation_reason
+              ? `Reason: ${String((item as any).escalation_reason)}`
               : toastMessageForEvent(type, item),
-            href: `${baseHref}?focus=${encodeURIComponent(item._id)}`,
+            href: `${baseHref}?focus=${encodeURIComponent(item.id)}`,
             createdAt: now,
           });
-          if (kind === "critical" && soundForCritical) playCriticalQueueSound();
+          if (kind === "critical" && soundForCritical)
+            playCriticalQueueSound();
           if (kind === "critical" && browserNotificationsForCritical) {
             maybeSendBrowserNotification({
               title: "Queue: Escalation",
-              body: `Escalated item for @${item.fanUsername}`,
+              body: `Escalated item for @${item.fan_username}`,
             });
           }
         }
@@ -471,7 +623,13 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
     }
 
     lastByIdRef.current = nextById;
-  }, [baseHref, browserNotificationsForCritical, soundForCritical, subscribedItems, user]);
+  }, [
+    baseHref,
+    browserNotificationsForCritical,
+    soundForCritical,
+    subscribedItems,
+    user,
+  ]);
 
   // Timer-based SLA threshold notifications.
   useEffect(() => {
@@ -493,42 +651,50 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
 
         // Only warn chatters about their own queue; supervisors only if they're in "all open" mode.
         if (user.role === "chatter") {
-          if (item.chatterId !== user.id) continue;
+          if (item.chatter_id !== user.id) continue;
         } else {
           if (subscriptionMode !== "supervisor_all_open") continue;
         }
 
-        const waitSec = Math.max(0, Math.floor((now - item.receivedAt) / 1000));
-        const bucket = computeSlaBucket(waitSec, item.slaMaxWaitSec);
+        const waitSec = Math.max(
+          0,
+          Math.floor((now - receivedAtMs(item)) / 1000)
+        );
+        const bucket = computeSlaBucket(
+          waitSec,
+          item.sla_max_wait_sec
+        );
 
-        const prev = byId.get(item._id);
+        const prev = byId.get(item.id);
         const prevBucket = prev?.slaBucket ?? "ok";
 
         if (bucketRank(bucket) <= bucketRank(prevBucket)) continue;
 
         // bucket has escalated.
-        const type: QueueNotificationEventType = bucket === "breach" ? "sla_breach" : "sla_warning";
+        const type: QueueNotificationEventType =
+          bucket === "breach" ? "sla_breach" : "sla_warning";
         const kind = kindForEvent(type, item.priority);
 
         toAdd.push({
-          id: `${type}:${item._id}:${bucket}:${Math.floor(now / 1000)}`,
+          id: `${type}:${item.id}:${bucket}:${Math.floor(now / 1000)}`,
           kind,
           title: toastTitleForEvent(type, item),
           message: toastMessageForEvent(type, item),
-          href: `${baseHref}?focus=${encodeURIComponent(item._id)}`,
+          href: `${baseHref}?focus=${encodeURIComponent(item.id)}`,
           createdAt: now,
         });
 
-        if (kind === "critical" && soundForCritical) playCriticalQueueSound();
+        if (kind === "critical" && soundForCritical)
+          playCriticalQueueSound();
         if (kind === "critical" && browserNotificationsForCritical) {
           maybeSendBrowserNotification({
             title: "Queue: SLA breach",
-            body: `@${item.fanUsername} (${item.fanSegment ?? "unknown"})`,
+            body: `@${item.fan_username} (${item.fan_segment ?? "unknown"})`,
           });
         }
 
         // Update stored bucket so we don't keep firing.
-        byId.set(item._id, { status: item.status, slaBucket: bucket });
+        byId.set(item.id, { status: item.status, slaBucket: bucket });
       }
 
       if (toAdd.length > 0) {
@@ -540,14 +706,24 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
             merged.push(toast);
             seen.add(toast.id);
           }
-          const sorted = merged.sort((a, b) => a.createdAt - b.createdAt);
+          const sorted = merged.sort(
+            (a, b) => a.createdAt - b.createdAt
+          );
           return sorted.slice(Math.max(0, sorted.length - 20));
         });
       }
     }, intervalMs);
 
     return () => window.clearInterval(t);
-  }, [baseHref, browserNotificationsForCritical, enableSlaToasts, soundForCritical, subscriptionMode, user.role, user.id]);
+  }, [
+    baseHref,
+    browserNotificationsForCritical,
+    enableSlaToasts,
+    soundForCritical,
+    subscriptionMode,
+    user.role,
+    user.id,
+  ]);
 
   const persistentAlerts = useMemo<QueuePersistentAlert[]>(() => {
     if (!computePhase3Alerts || !supervisor) return [];
@@ -558,12 +734,18 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
 
     const alerts: QueuePersistentAlert[] = [];
 
-    // A) SLA breaches anywhere in open queue (using computed slaMaxWaitSec if available).
+    // A) SLA breaches anywhere in open queue.
     const open = subscribedItems.filter((i) => isOpenStatus(i.status));
     let breaches = 0;
     for (const i of open) {
-      const waitSec = Math.max(0, Math.floor((now - i.receivedAt) / 1000));
-      const bucket = computeSlaBucket(waitSec, i.slaMaxWaitSec);
+      const waitSec = Math.max(
+        0,
+        Math.floor((now - receivedAtMs(i)) / 1000)
+      );
+      const bucket = computeSlaBucket(
+        waitSec,
+        i.sla_max_wait_sec
+      );
       if (bucket === "breach") breaches += 1;
     }
 
@@ -577,29 +759,39 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
       });
     }
 
-    // B) VIP queue backup (Phase 3 config: vipQueueThreshold, vipQueueMinutes)
+    // B) VIP queue backup
     if (alertConfig.enableVipQueue) {
-      const minWaitSec = Math.max(0, Math.floor(alertConfig.vipQueueMinutes * 60));
-      const vipCount = open.filter((i) => i.fanSegment === "vip")
-        .filter((i) => Math.floor((now - i.receivedAt) / 1000) >= minWaitSec).length;
+      const minWaitSec = Math.max(
+        0,
+        Math.floor(alertConfig.vipQueueMinutes * 60)
+      );
+      const vipCount = open
+        .filter((i) => i.fan_segment === "vip")
+        .filter(
+          (i) =>
+            Math.floor((now - receivedAtMs(i)) / 1000) >= minWaitSec
+        ).length;
 
       if (vipCount >= alertConfig.vipQueueThreshold) {
         alerts.push({
           id: "vip_queue_backup",
-          severity: vipCount >= alertConfig.vipQueueThreshold * 2 ? "critical" : "warning",
+          severity:
+            vipCount >= alertConfig.vipQueueThreshold * 2
+              ? "critical"
+              : "warning",
           title: "VIP queue backup",
-          message: `${vipCount} VIP fan(s) waiting ≥ ${alertConfig.vipQueueMinutes} min`,
+          message: `${vipCount} VIP fan(s) waiting >= ${alertConfig.vipQueueMinutes} min`,
           href: baseHref,
         });
       }
     }
 
-    // C) Queue overload (Phase 3 config: queueOverloadThreshold)
+    // C) Queue overload
     if (alertConfig.enableQueueOverload) {
       const pending = open.filter((i) => i.status === "pending");
       const byChatter = new Map<string, number>();
       for (const i of pending) {
-        const cid = i.chatterId ?? "unassigned";
+        const cid = i.chatter_id ?? "unassigned";
         byChatter.set(cid, (byChatter.get(cid) ?? 0) + 1);
       }
 
@@ -624,7 +816,18 @@ export function useQueueNotifications(opts: QueueNotificationsOptions): {
     }
 
     return alerts;
-  }, [alertConfig, baseHref, computePhase3Alerts, subscribedItems, supervisor]);
+  }, [
+    alertConfig,
+    baseHref,
+    computePhase3Alerts,
+    subscribedItems,
+    supervisor,
+  ]);
 
-  return { notifications, dismissNotification, persistentAlerts, subscribedItems };
+  return {
+    notifications,
+    dismissNotification,
+    persistentAlerts,
+    subscribedItems,
+  };
 }

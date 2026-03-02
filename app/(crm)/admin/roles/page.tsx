@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import { Id } from "../../../../convex/_generated/dataModel";
+import { useEffect, useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface RoleDoc {
-  _id: Id<"crm_roles">;
+  id: string;
   name: string;
   description?: string;
   color: string;
   permissions: string[];
-  isSystem: boolean;
+  is_system: boolean;
+}
+
+interface MemberRow {
+  id: string;
+  role_id: string | null;
+  status: string;
 }
 
 const PERMISSION_GROUPS = [
@@ -77,6 +81,11 @@ export default function RolesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // Data
+  const [roles, setRoles] = useState<RoleDoc[] | undefined>(undefined);
+  const [members, setMembers] = useState<MemberRow[] | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -84,15 +93,30 @@ export default function RolesPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const roles = useQuery(api.crm.teamManagement.listRoles, token ? { token } : "skip") as RoleDoc[] | undefined;
-  const members = useQuery(api.crm.teamManagement.listMembers, token ? { token } : "skip") as any[] | undefined;
+  const fetchData = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    let cancelled = false;
 
-  const createRoleMut = useMutation(api.crm.teamManagement.createRole);
-  const updateRoleMut = useMutation(api.crm.teamManagement.updateRole);
-  const deleteRoleMut = useMutation(api.crm.teamManagement.deleteRole);
+    const [rolesRes, membersRes] = await Promise.all([
+      supabase.from("crm_roles").select("*"),
+      supabase.from("crm_chatters").select("id, role_id, status"),
+    ]);
+
+    if (cancelled) return;
+    if (rolesRes.data) setRoles(rolesRes.data as RoleDoc[]);
+    if (membersRes.data) setMembers(membersRes.data as MemberRow[]);
+    setLoading(false);
+
+    return () => { cancelled = true; };
+  }, [token]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const memberCountByRole = (roleId: string) =>
-    (members || []).filter((m) => m.role && String(m.role._id) === roleId && m.status !== "inactive").length;
+    (members || []).filter((m) => m.role_id === roleId && m.status !== "inactive").length;
 
   const openCreate = () => {
     setModal("create");
@@ -124,11 +148,24 @@ export default function RolesPage() {
     setError("");
     try {
       if (modal === "create") {
-        await createRoleMut({ token, name: formName.trim(), description: formDesc.trim() || undefined, color: formColor, permissions: formPerms });
+        const { error: insertErr } = await supabase.from("crm_roles").insert({
+          name: formName.trim(),
+          description: formDesc.trim() || null,
+          color: formColor,
+          permissions: formPerms,
+        });
+        if (insertErr) throw insertErr;
       } else if (editRole) {
-        await updateRoleMut({ token, roleId: editRole._id, name: formName.trim(), description: formDesc.trim() || undefined, color: formColor, permissions: formPerms });
+        const { error: updateErr } = await supabase.from("crm_roles").update({
+          name: formName.trim(),
+          description: formDesc.trim() || null,
+          color: formColor,
+          permissions: formPerms,
+        }).eq("id", editRole.id);
+        if (updateErr) throw updateErr;
       }
       setModal(null);
+      await fetchData();
     } catch (err: any) {
       setError(err.message || "Failed to save");
     } finally {
@@ -140,8 +177,10 @@ export default function RolesPage() {
     if (!deleteRole) return;
     setSaving(true);
     try {
-      await deleteRoleMut({ token, roleId: deleteRole._id });
+      const { error: deleteErr } = await supabase.from("crm_roles").delete().eq("id", deleteRole.id);
+      if (deleteErr) throw deleteErr;
       setDeleteRole(null);
+      await fetchData();
     } catch (err: any) {
       alert(err.message || "Failed to delete");
     } finally {
@@ -150,6 +189,10 @@ export default function RolesPage() {
   };
 
   if (!user) return null;
+
+  if (loading && !roles) {
+    return <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Loading roles...</div>;
+  }
 
   return (
     <div style={{ maxWidth: 1000 }}>
@@ -164,23 +207,23 @@ export default function RolesPage() {
           <div style={{ background: "var(--surface)", borderRadius: 16, padding: 32, textAlign: "center", color: "var(--text-muted)" }}>No roles yet</div>
         )}
         {(roles || []).map((r) => (
-          <div key={String(r._id)} style={{ background: "var(--surface)", borderRadius: 16, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <div key={r.id} style={{ background: "var(--surface)", borderRadius: 16, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             {/* Color badge */}
             <span style={{ display: "inline-block", padding: "4px 12px", fontSize: 14, fontWeight: 600, color: r.color, background: `${r.color}18`, borderRadius: 8 }}>
               {r.name}
             </span>
-            {r.isSystem && <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--bg)", padding: "2px 8px", borderRadius: 4, fontWeight: 500 }}>System</span>}
+            {r.is_system && <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--bg)", padding: "2px 8px", borderRadius: 4, fontWeight: 500 }}>System</span>}
 
             <span style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)", minWidth: 120 }}>{r.description || "—"}</span>
 
             <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--text-muted)" }}>
-              <span>{memberCountByRole(String(r._id))} member{memberCountByRole(String(r._id)) !== 1 ? "s" : ""}</span>
+              <span>{memberCountByRole(r.id)} member{memberCountByRole(r.id) !== 1 ? "s" : ""}</span>
               <span>{r.permissions.length} permission{r.permissions.length !== 1 ? "s" : ""}</span>
             </div>
 
             <div style={{ display: "flex", gap: 6 }}>
               <button onClick={() => openEdit(r)} style={btnSmall}>✏️ Edit</button>
-              {!r.isSystem && (
+              {!r.is_system && (
                 <button onClick={() => setDeleteRole(r)} style={{ ...btnSmall, background: "#7f1d1d" }}>🗑️ Delete</button>
               )}
             </div>

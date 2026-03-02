@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface Props {
   token: string;
@@ -35,10 +35,58 @@ function StatCard({ label, value, icon, isEmpty }: { label: string; value: strin
 }
 
 export default function IgOverviewCards({ token, startDate, endDate }: Props) {
-  const overview = useQuery(
-    api.crm.igQueries.getIgOverview,
-    token ? { token, startDate, endDate } : "skip"
-  );
+  const [overview, setOverview] = useState<any>(null);
+
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchOverview() {
+      // Aggregate from crm_ig_daily_snapshots for date range
+      const { data: snapshots } = await supabase
+        .from("crm_ig_daily_snapshots")
+        .select("followers, followers_delta, views, likes, comments")
+        .gte("date", startDate)
+        .lte("date", endDate);
+
+      if (!snapshots || snapshots.length === 0) {
+        setOverview({
+          totalFollowers: 0,
+          totalFollowerDelta: 0,
+          totalViews: 0,
+          totalLikes: 0,
+          totalComments: 0,
+        });
+        return;
+      }
+
+      // Get latest followers total (max from the snapshots)
+      const { data: latestSnapshots } = await supabase
+        .from("crm_ig_daily_snapshots")
+        .select("followers")
+        .lte("date", endDate)
+        .order("date", { ascending: false })
+        .limit(50);
+
+      // Sum up deltas and engagement
+      const totalFollowerDelta = snapshots.reduce((s, r) => s + (r.followers_delta || 0), 0);
+      const totalViews = snapshots.reduce((s, r) => s + (r.views || 0), 0);
+      const totalLikes = snapshots.reduce((s, r) => s + (r.likes || 0), 0);
+      const totalComments = snapshots.reduce((s, r) => s + (r.comments || 0), 0);
+
+      // Get unique latest followers per account from the latest snapshots
+      const totalFollowers = (latestSnapshots || []).reduce((max, s) => Math.max(max, s.followers || 0), 0);
+
+      setOverview({
+        totalFollowers,
+        totalFollowerDelta,
+        totalViews,
+        totalLikes,
+        totalComments,
+      });
+    }
+
+    fetchOverview();
+  }, [token, startDate, endDate]);
 
   if (!overview) return null;
 

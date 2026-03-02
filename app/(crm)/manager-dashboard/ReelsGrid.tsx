@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 
 type SortField = "views" | "likes" | "date";
 
@@ -26,10 +25,10 @@ function ReelCard({ reel }: { reel: any }) {
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#2a2a2a"; }}
     >
       {/* Thumbnail */}
-      {reel.mediaUrl ? (
+      {reel.thumbnail_url ? (
         <div style={{
           width: "100%", aspectRatio: "9/16", background: "#0a0a0a",
-          backgroundImage: `url(${reel.thumbnailUrl || reel.mediaUrl})`,
+          backgroundImage: `url(${reel.thumbnail_url})`,
           backgroundSize: "cover", backgroundPosition: "center",
           position: "relative",
         }}>
@@ -56,9 +55,9 @@ function ReelCard({ reel }: { reel: any }) {
           <span>❤️ {formatNumber(reel.likes ?? 0)}</span>
           <span>💬 {formatNumber(reel.comments ?? 0)}</span>
         </div>
-        {reel.postedAt && (
+        {reel.posted_at && (
           <div style={{ fontSize: "11px", color: "#666", marginTop: "6px" }}>
-            {new Date(reel.postedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            {new Date(reel.posted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
           </div>
         )}
       </div>
@@ -76,11 +75,24 @@ function AccountReelsSection({
   sortBy: SortField;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const [reels, setReels] = useState<any[] | null>(null);
 
-  const reels = useQuery(
-    api.crm.igQueries.getIgReels,
-    token ? { token, igAccountId: account._id, sortBy, order: "desc" as const } : "skip"
-  );
+  useEffect(() => {
+    if (!token || !account?.id) return;
+
+    async function fetchReels() {
+      const orderCol = sortBy === "date" ? "posted_at" : sortBy;
+      const { data } = await supabase
+        .from("crm_ig_reels")
+        .select("*")
+        .eq("ig_account_id", account.id)
+        .order(orderCol, { ascending: false })
+        .limit(50);
+      setReels(data || []);
+    }
+
+    fetchReels();
+  }, [token, account?.id, sortBy]);
 
   return (
     <div style={{ marginBottom: "16px" }}>
@@ -97,7 +109,7 @@ function AccountReelsSection({
           transform: expanded ? "rotate(90deg)" : "rotate(0)",
         }}>▶</span>
         <span style={{ fontSize: "14px", fontWeight: "600", color: "#fff" }}>
-          {account.creatorName || account.username || "Unknown"}
+          {account.username || "Unknown"}
         </span>
         <span style={{ fontSize: "12px", color: "#a0a0a0" }}>
           @{account.username || "—"}
@@ -127,7 +139,7 @@ function AccountReelsSection({
               padding: "8px 0",
             }}>
               {reels.map((reel: any) => (
-                <ReelCard key={reel._id} reel={reel} />
+                <ReelCard key={reel.id} reel={reel} />
               ))}
             </div>
           )}
@@ -139,11 +151,18 @@ function AccountReelsSection({
 
 export default function ReelsGrid({ token }: Props) {
   const [sortBy, setSortBy] = useState<SortField>("views");
+  const [accounts, setAccounts] = useState<any[] | null>(null);
 
-  const accounts = useQuery(
-    api.crm.igQueries.getIgAccounts,
-    token ? { token } : "skip"
-  );
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchAccounts() {
+      const { data } = await supabase.from("crm_ig_accounts").select("*");
+      setAccounts(data || []);
+    }
+
+    fetchAccounts();
+  }, [token]);
 
   if (!accounts || accounts.length === 0) return null;
 
@@ -189,7 +208,7 @@ export default function ReelsGrid({ token }: Props) {
 
       {accounts.map((account: any) => (
         <AccountReelsSection
-          key={account._id}
+          key={account.id}
           token={token}
           account={account}
           sortBy={sortBy}

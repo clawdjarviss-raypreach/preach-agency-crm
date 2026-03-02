@@ -416,22 +416,27 @@ export default function TemplatesPage() {
 
   const recordUsage = useCallback(async (templateId: string) => {
     if (!templateId) return;
-    await supabase.rpc("increment_template_usage", { template_id: templateId }).catch(() => {
-      // Fallback: manual increment
-      supabase
+
+    try {
+      const { error } = await supabase.rpc("increment_template_usage", { template_id: templateId });
+      if (!error) return;
+    } catch {
+      // Fall back to manual increment below
+    }
+
+    // Fallback: manual increment
+    const { data } = await supabase
+      .from("crm_reply_templates")
+      .select("usage_count")
+      .eq("id", templateId)
+      .single();
+
+    if (data) {
+      await supabase
         .from("crm_reply_templates")
-        .select("usage_count")
-        .eq("id", templateId)
-        .single()
-        .then(({ data }) => {
-          if (data) {
-            supabase
-              .from("crm_reply_templates")
-              .update({ usage_count: (data.usage_count ?? 0) + 1 })
-              .eq("id", templateId);
-          }
-        });
-    });
+        .update({ usage_count: (data.usage_count ?? 0) + 1 })
+        .eq("id", templateId);
+    }
   }, []);
 
   const handleApply = useCallback(

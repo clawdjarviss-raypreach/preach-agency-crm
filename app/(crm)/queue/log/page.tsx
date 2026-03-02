@@ -2,15 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 
 type FanSegmentUI = "vip" | "whale" | "core" | "casual" | "new";
 type MessageTypeUI = "dm" | "tip" | "ppv_unlock" | "subscription" | "custom_request";
 
 type CreatorListItem = {
-  id: Id<"crm_creators">;
+  id: string;
   name: string;
   onlyFansHandle?: string;
 };
@@ -87,23 +85,33 @@ export default function QueueLogPage() {
     }
   }, []);
 
-  const creatorsRaw = useQuery(
-    api.crm.creators.list,
-    token ? { token, includeArchived: false } : "skip"
-  );
+  const [creatorsRaw, setCreatorsRaw] = useState<any[] | null>(null);
+
+  useEffect(() => {
+    if (!token) return;
+    const fetchCreators = async () => {
+      const { data } = await supabase
+        .from("crm_creators")
+        .select("*")
+        .eq("status", "active");
+      setCreatorsRaw(data || []);
+    };
+    fetchCreators();
+  }, [token]);
 
   const creators = useMemo<CreatorListItem[]>(() => {
-    const list = (creatorsRaw ?? []) as CreatorListItem[];
+    const list = (creatorsRaw ?? []).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      onlyFansHandle: c.only_fans_handle,
+    }));
     if (!assignedCreatorIds || assignedCreatorIds.length === 0) return list;
     const allowed = new Set(assignedCreatorIds);
     const filtered = list.filter((c) => allowed.has(String(c.id)));
     return filtered.length > 0 ? filtered : list;
   }, [creatorsRaw, assignedCreatorIds]);
 
-  const logMessage = useMutation(api.crm.queue.logMessage);
-  const markResponded = useMutation(api.crm.queue.markResponded);
-
-  const [creatorId, setCreatorId] = useState<Id<"crm_creators"> | "">("");
+  const [creatorId, setCreatorId] = useState<string>("");
   const [fanIdentifier, setFanIdentifier] = useState<string>("");
   const [fanSegment, setFanSegment] = useState<FanSegmentUI>("new");
   const [messageType, setMessageType] = useState<MessageTypeUI>("dm");
@@ -121,7 +129,7 @@ export default function QueueLogPage() {
     // Default creator selection
     if (creatorId) return;
     if (assignedCreatorIds.length === 1) {
-      setCreatorId(assignedCreatorIds[0] as Id<"crm_creators">);
+      setCreatorId(assignedCreatorIds[0]);
       return;
     }
     if (creators.length === 1) {
@@ -167,23 +175,35 @@ export default function QueueLogPage() {
       setToast(null);
 
       try {
-        const res = await logMessage({
-          token,
-          creatorId: safeCreatorId,
-          fanUsername: parsed.fanUsername,
-          fanDisplayName: parsed.fanDisplayName,
-          fanSegment,
-          messageType,
-          notes: notes.trim() || undefined,
-          source: "manual",
-        });
+        const { data: inserted, error: insertError } = await supabase
+          .from("crm_message_queue")
+          .insert({
+            creator_id: safeCreatorId,
+            fan_username: parsed.fanUsername,
+            fan_display_name: parsed.fanDisplayName,
+            fan_segment: fanSegment,
+            message_type: messageType,
+            notes: notes.trim() || null,
+            source: "manual",
+            status: "pending",
+            priority: "normal",
+            received_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single();
 
-        if (opts.markAsResponded) {
-          await markResponded({
-            token,
-            queueId: res.queueId as Id<"crm_message_queue">,
-            notes: notes.trim() || undefined,
-          });
+        if (insertError) throw insertError;
+
+        if (opts.markAsResponded && inserted) {
+          const { error: updateError } = await supabase
+            .from("crm_message_queue")
+            .update({
+              status: "responded",
+              responded_at: new Date().toISOString(),
+              notes: notes.trim() || null,
+            })
+            .eq("id", inserted.id);
+          if (updateError) throw updateError;
         }
 
         setToast({
@@ -206,8 +226,6 @@ export default function QueueLogPage() {
       fanSegment,
       messageType,
       notes,
-      logMessage,
-      markResponded,
       resetForNext,
     ]
   );
@@ -295,7 +313,7 @@ export default function QueueLogPage() {
               <label style={{ fontSize: 13, fontWeight: 800 }}>Creator</label>
               <select
                 value={creatorId}
-                onChange={(e) => setCreatorId(e.target.value as Id<"crm_creators">)}
+                onChange={(e) => setCreatorId(e.target.value)}
                 disabled={submitting || creators.length <= 1}
                 style={{
                   width: "100%",

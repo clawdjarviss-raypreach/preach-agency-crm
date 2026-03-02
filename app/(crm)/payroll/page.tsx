@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { useQuery } from "convex/react";
+import { useState, useEffect, useMemo, type ComponentProps } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import PayRunCard from "../../../components/PayRunCard";
 import CreatePayRunModal from "../../../components/CreatePayRunModal";
 import PayRunStatusBadge from "../../../components/PayRunStatusBadge";
@@ -11,12 +10,44 @@ import BatchPaymentModal from "../../../components/BatchPaymentModal";
 import ExportModal from "../../../components/ExportModal";
 
 type StatusFilter = "all" | "draft" | "approved" | "paid" | "cancelled";
+type PayRunCardStatus = ComponentProps<typeof PayRunCard>["status"];
 
 interface CrmUser {
   id: string;
   name: string;
   username: string;
   role: string;
+}
+
+interface PayRun {
+  id: string;
+  period_start: string;
+  period_end: string;
+  status: string;
+  total_gross: number;
+  total_net: number;
+  line_item_count: number;
+  created_by: string;
+  created_at: string;
+  approved_by: string | null;
+  paid_at: string | null;
+  notes: string | null;
+}
+
+interface DashboardStats {
+  pendingItems: number;
+  pendingAmountFormatted: string;
+  readyToPayCount: number;
+  readyToPayAmountFormatted: string;
+  draftPayRunCount: number;
+  paidThisMonthFormatted: string;
+}
+
+function formatCents(cents: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
 }
 
 export default function PayrollPage() {
@@ -29,6 +60,10 @@ export default function PayrollPage() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [success, setSuccess] = useState("");
 
+  const [payRuns, setPayRuns] = useState<PayRun[] | null>(null);
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -36,24 +71,96 @@ export default function PayrollPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const payRuns = useQuery(
-    api.crm.payroll.listPayRuns,
-    token
-      ? { token, status: statusFilter === "all" ? undefined : statusFilter }
-      : "skip"
-  );
+  // Fetch pay runs
+  useEffect(() => {
+    if (!token) return;
 
-  const dashboardStats = useQuery(
-    api.crm.payroll.getDashboardStats,
-    token ? { token } : "skip"
-  );
+    async function fetchPayRuns() {
+      setLoading(true);
+      try {
+        let query = supabase
+          .from("crm_pay_runs")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (statusFilter !== "all") {
+          query = query.eq("status", statusFilter);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        setPayRuns(data || []);
+      } catch (err) {
+        console.error("Failed to fetch pay runs:", err);
+        setPayRuns([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchPayRuns();
+  }, [token, statusFilter]);
+
+  // Fetch dashboard stats
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchDashboardStats() {
+      try {
+        // Get all pay runs for stats
+        const { data: allRuns, error: runsError } = await supabase
+          .from("crm_pay_runs")
+          .select("id, status, total_net, paid_at");
+
+        if (runsError) throw runsError;
+
+        // Get pending items count from pay_run_items
+        const { data: pendingItems, error: itemsError } = await supabase
+          .from("crm_pay_run_items")
+          .select("id, net_pay, pay_run_id")
+          .eq("payment_status", "pending");
+
+        if (itemsError) throw itemsError;
+
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+        const draftRuns = (allRuns || []).filter((r) => r.status === "draft");
+        const approvedRuns = (allRuns || []).filter((r) => r.status === "approved");
+        const paidThisMonth = (allRuns || []).filter(
+          (r) => r.status === "paid" && r.paid_at && r.paid_at >= monthStart
+        );
+
+        const pendingAmount = (pendingItems || []).reduce((sum, item) => sum + (item.net_pay || 0), 0);
+        const paidThisMonthAmount = paidThisMonth.reduce((sum, r) => sum + (r.total_net || 0), 0);
+
+        // Ready to pay = items in approved pay runs that are pending
+        const approvedRunIds = new Set(approvedRuns.map((r) => r.id));
+        const readyItems = (pendingItems || []).filter((item) => approvedRunIds.has(item.pay_run_id));
+        const readyAmount = readyItems.reduce((sum, item) => sum + (item.net_pay || 0), 0);
+
+        setDashboardStats({
+          pendingItems: (pendingItems || []).length,
+          pendingAmountFormatted: formatCents(pendingAmount),
+          readyToPayCount: readyItems.length,
+          readyToPayAmountFormatted: formatCents(readyAmount),
+          draftPayRunCount: draftRuns.length,
+          paidThisMonthFormatted: formatCents(paidThisMonthAmount),
+        });
+      } catch (err) {
+        console.error("Failed to fetch dashboard stats:", err);
+      }
+    }
+
+    fetchDashboardStats();
+  }, [token, payRuns]);
 
   // Stats calculations
   const stats = useMemo(() => {
     if (!payRuns) return { pending: 0, paidThisMonth: 0, totalPending: 0 };
 
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
     let pendingCount = 0;
     let paidThisMonth = 0;
@@ -62,10 +169,10 @@ export default function PayrollPage() {
     for (const pr of payRuns) {
       if (pr.status === "draft" || pr.status === "approved") {
         pendingCount++;
-        totalPending += pr.totalNet;
+        totalPending += pr.total_net;
       }
-      if (pr.status === "paid" && pr.paidAt && pr.paidAt >= monthStart) {
-        paidThisMonth += pr.totalNet;
+      if (pr.status === "paid" && pr.paid_at && pr.paid_at >= monthStart) {
+        paidThisMonth += pr.total_net;
       }
     }
 
@@ -282,7 +389,7 @@ export default function PayrollPage() {
             )}
           </button>
         ))}
-        
+
         {/* Quick action buttons */}
         <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
           {dashboardStats?.draftPayRunCount ? (
@@ -331,16 +438,16 @@ export default function PayrollPage() {
           <PayRunCard
             key={payRun.id}
             id={payRun.id}
-            periodStartDate={payRun.periodStartDate}
-            periodEndDate={payRun.periodEndDate}
-            status={payRun.status}
-            totalGrossFormatted={payRun.totalGrossFormatted}
-            totalNetFormatted={payRun.totalNetFormatted}
-            lineItemCount={payRun.lineItemCount}
-            createdBy={payRun.createdBy}
-            createdAt={payRun.createdAt}
-            approvedBy={payRun.approvedBy}
-            paidAt={payRun.paidAt}
+            periodStartDate={payRun.period_start}
+            periodEndDate={payRun.period_end}
+            status={payRun.status as PayRunCardStatus}
+            totalGrossFormatted={formatCents(payRun.total_gross)}
+            totalNetFormatted={formatCents(payRun.total_net)}
+            lineItemCount={payRun.line_item_count}
+            createdBy={payRun.created_by}
+            createdAt={new Date(payRun.created_at).getTime()}
+            approvedBy={payRun.approved_by ?? undefined}
+            paidAt={payRun.paid_at ? new Date(payRun.paid_at).getTime() : undefined}
             onClick={() => router.push(`/payroll/${payRun.id}`)}
           />
         ))}
@@ -385,7 +492,7 @@ export default function PayrollPage() {
       )}
 
       {/* Loading State */}
-      {!payRuns && (
+      {loading && !payRuns && (
         <div style={{
           background: "var(--surface)",
           borderRadius: "24px",

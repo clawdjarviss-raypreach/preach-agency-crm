@@ -1,8 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { useState, useEffect, useMemo } from "react";
+import { supabase } from "@/lib/supabase";
 import {
   ResponsiveContainer,
   LineChart,
@@ -45,75 +44,58 @@ function ChartTooltip({ active, payload, label }: any) {
 }
 
 export default function FollowerGrowthChart({ token, startDate, endDate }: Props) {
-  const accounts = useQuery(
-    api.crm.igQueries.getIgAccounts,
-    token ? { token } : "skip"
-  );
+  const [accounts, setAccounts] = useState<any[] | null>(null);
+  const [allSnapshots, setAllSnapshots] = useState<Map<string, any[]>>(new Map());
 
-  // We need to fetch snapshots for each account. Since we can't do dynamic queries,
-  // we'll fetch all snapshots via overview and reconstruct per-account data.
-  // Actually, getIgDailySnapshots requires a specific igAccountId, so we fetch per account.
-  // But hooks can't be conditional. We'll use a wrapper approach.
+  // Fetch accounts
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchAccounts() {
+      const { data } = await supabase.from("crm_ig_accounts").select("*");
+      setAccounts(data || []);
+    }
+
+    fetchAccounts();
+  }, [token]);
+
+  // Fetch snapshots for all accounts in a single useEffect
+  useEffect(() => {
+    if (!token || !accounts || accounts.length === 0) return;
+
+    async function fetchAllSnapshots() {
+      const snapshotMap = new Map<string, any[]>();
+
+      await Promise.all(
+        accounts!.slice(0, 10).map(async (account) => {
+          const { data } = await supabase
+            .from("crm_ig_daily_snapshots")
+            .select("*")
+            .eq("ig_account_id", account.id)
+            .gte("date", startDate)
+            .lte("date", endDate)
+            .order("date");
+          snapshotMap.set(account.id, data || []);
+        })
+      );
+
+      setAllSnapshots(snapshotMap);
+    }
+
+    fetchAllSnapshots();
+  }, [token, accounts, startDate, endDate]);
 
   if (!accounts || accounts.length === 0) return null;
 
-  return (
-    <div style={{
-      background: "#1e1e1e", borderRadius: "16px", padding: "24px",
-      border: "1px solid #2a2a2a", marginBottom: "24px",
-    }}>
-      <div style={{
-        fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
-        textTransform: "uppercase", letterSpacing: "0.5px",
-      }}>
-        📊 Follower Growth
-      </div>
-      <FollowerGrowthChartInner
-        token={token}
-        startDate={startDate}
-        endDate={endDate}
-        accounts={accounts}
-      />
-    </div>
-  );
-}
-
-function FollowerGrowthChartInner({
-  token,
-  startDate,
-  endDate,
-  accounts,
-}: {
-  token: string;
-  startDate: string;
-  endDate: string;
-  accounts: any[];
-}) {
-  // Fetch snapshots for up to 10 accounts using individual hooks
-  // We always call all 10 hooks to satisfy React's rules of hooks
-  const MAX_ACCOUNTS = 10;
-  const padded = accounts.slice(0, MAX_ACCOUNTS);
-
-  const s0 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[0] ? { token, igAccountId: padded[0]._id, startDate, endDate } : "skip");
-  const s1 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[1] ? { token, igAccountId: padded[1]._id, startDate, endDate } : "skip");
-  const s2 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[2] ? { token, igAccountId: padded[2]._id, startDate, endDate } : "skip");
-  const s3 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[3] ? { token, igAccountId: padded[3]._id, startDate, endDate } : "skip");
-  const s4 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[4] ? { token, igAccountId: padded[4]._id, startDate, endDate } : "skip");
-  const s5 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[5] ? { token, igAccountId: padded[5]._id, startDate, endDate } : "skip");
-  const s6 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[6] ? { token, igAccountId: padded[6]._id, startDate, endDate } : "skip");
-  const s7 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[7] ? { token, igAccountId: padded[7]._id, startDate, endDate } : "skip");
-  const s8 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[8] ? { token, igAccountId: padded[8]._id, startDate, endDate } : "skip");
-  const s9 = useQuery(api.crm.igQueries.getIgDailySnapshots, padded[9] ? { token, igAccountId: padded[9]._id, startDate, endDate } : "skip");
-
-  const allSnapshots = [s0, s1, s2, s3, s4, s5, s6, s7, s8, s9];
+  const padded = accounts.slice(0, 10);
 
   const chartData = useMemo(() => {
     const dateMap = new Map<string, any>();
 
-    padded.forEach((account, i) => {
-      const snapshots = allSnapshots[i];
+    padded.forEach((account) => {
+      const snapshots = allSnapshots.get(account.id);
       if (!snapshots) return;
-      const name = account.creatorName || account.username || `Account ${i + 1}`;
+      const name = account.username || `Account`;
 
       for (const snap of snapshots) {
         if (!dateMap.has(snap.date)) {
@@ -128,40 +110,49 @@ function FollowerGrowthChartInner({
       ...row,
       date: new Date(row.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     }));
-  }, [padded, ...allSnapshots]);
+  }, [padded, allSnapshots]);
 
-  const accountNames = padded.map((a, i) => a.creatorName || a.username || `Account ${i + 1}`);
-
-  if (chartData.length === 0) {
-    return (
-      <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "60px 0" }}>
-        No follower data available for this date range
-      </div>
-    );
-  }
+  const accountNames = padded.map((a) => a.username || `Account`);
 
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={chartData}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-        <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
-        <Tooltip content={<ChartTooltip />} />
-        <Legend
-          wrapperStyle={{ fontSize: "12px", color: "#a0a0a0" }}
-        />
-        {accountNames.map((name, i) => (
-          <Line
-            key={name}
-            type="monotone"
-            dataKey={name}
-            stroke={COLORS[i % COLORS.length]}
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-          />
-        ))}
-      </LineChart>
-    </ResponsiveContainer>
+    <div style={{
+      background: "#1e1e1e", borderRadius: "16px", padding: "24px",
+      border: "1px solid #2a2a2a", marginBottom: "24px",
+    }}>
+      <div style={{
+        fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
+        textTransform: "uppercase", letterSpacing: "0.5px",
+      }}>
+        📊 Follower Growth
+      </div>
+      {chartData.length === 0 ? (
+        <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "60px 0" }}>
+          No follower data available for this date range
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+            <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend
+              wrapperStyle={{ fontSize: "12px", color: "#a0a0a0" }}
+            />
+            {accountNames.map((name, i) => (
+              <Line
+                key={name}
+                type="monotone"
+                dataKey={name}
+                stroke={COLORS[i % COLORS.length]}
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </div>
   );
 }

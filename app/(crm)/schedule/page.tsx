@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 const SHIFT_TYPES = [
   { value: "morning", label: "Morning", time: "06:00–14:00", emoji: "🌅", color: "#f59e0b" },
@@ -158,7 +157,6 @@ function MiniCalendar({ selectedDate, onSelectDate }: {
 // ── Quick Presets Component ──
 
 function QuickPresets({ onSelect }: { onSelect: (d: Date) => void }) {
-  const now = new Date();
   const presets = [
     { label: "Today", action: () => onSelect(new Date()) },
     { label: "This Week", action: () => onSelect(getMondayOfWeek(new Date())) },
@@ -185,12 +183,13 @@ function QuickPresets({ onSelect }: { onSelect: (d: Date) => void }) {
 // ── Bulk Add Modal ──
 
 function BulkAddModal({
-  token, chatters, creators, onClose,
+  token, chatters, creators, onClose, onDone,
 }: {
   token: string;
   chatters: any[];
   creators: any[];
   onClose: () => void;
+  onDone: () => void;
 }) {
   const [selectedChatters, setSelectedChatters] = useState<Record<string, boolean>>({});
   const [creatorId, setCreatorId] = useState("");
@@ -206,15 +205,12 @@ function BulkAddModal({
   const [error, setError] = useState("");
   const [step, setStep] = useState<"form" | "preview">("form");
 
-  const createSchedule = useMutation(api.crm.schedule.create);
-
   const selectedChatterList = useMemo(() => {
     return chatters.filter((c: any) => selectedChatters[c.id]);
   }, [chatters, selectedChatters]);
 
   const effectiveEndDate = useMemo(() => {
     if (ongoing) {
-      // 3 months ahead
       const d = new Date(startDate + "T12:00:00");
       d.setMonth(d.getMonth() + 3);
       return d.toISOString().split("T")[0];
@@ -237,15 +233,18 @@ function BulkAddModal({
     try {
       for (const chatter of selectedChatterList) {
         for (const date of dates) {
-          await createSchedule({
-            token,
-            chatterId: chatter.id as any,
-            date,
-            shiftType: shiftType as any,
-            creatorId: creatorId ? (creatorId as any) : undefined,
-          });
+          const { error: insertError } = await supabase
+            .from("crm_schedules")
+            .insert({
+              chatter_id: chatter.id,
+              date,
+              shift_type: shiftType,
+              creator_id: creatorId || null,
+            });
+          if (insertError) throw insertError;
         }
       }
+      onDone();
       onClose();
     } catch (err: any) {
       setError(err.message || "Failed to create shifts");
@@ -284,10 +283,10 @@ function BulkAddModal({
                       onChange={(e) => setSelectedChatters({ ...selectedChatters, [c.id]: e.target.checked })}
                       style={{ width: "16px", height: "16px", accentColor: "var(--green)" }}
                     />
-                    {c.profilePictureUrl ? (
-                      <img src={c.profilePictureUrl} alt={c.name} style={{ width: "20px", height: "20px", borderRadius: "6px", objectFit: "cover" }} />
+                    {c.profile_picture_url ? (
+                      <img src={c.profile_picture_url} alt={c.name} style={{ width: "20px", height: "20px", borderRadius: "6px", objectFit: "cover" }} />
                     ) : (
-                      <span style={{ fontSize: "14px" }}>{c.avatarEmoji || "👤"}</span>
+                      <span style={{ fontSize: "14px" }}>{c.avatar_emoji || "👤"}</span>
                     )}
                     <span style={{ fontSize: "14px", fontWeight: "500", color: "var(--text)" }}>{c.name}</span>
                   </label>
@@ -414,10 +413,10 @@ function BulkAddModal({
               <div style={{ marginTop: "12px", borderTop: "1px solid var(--border)", paddingTop: "10px" }}>
                 {selectedChatterList.map((c: any) => (
                   <div key={c.id} style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "4px", display: "flex", alignItems: "center", gap: "6px" }}>
-                    {c.profilePictureUrl ? (
-                      <img src={c.profilePictureUrl} alt={c.name} style={{ width: "16px", height: "16px", borderRadius: "4px", objectFit: "cover" }} />
+                    {c.profile_picture_url ? (
+                      <img src={c.profile_picture_url} alt={c.name} style={{ width: "16px", height: "16px", borderRadius: "4px", objectFit: "cover" }} />
                     ) : (
-                      <span>{c.avatarEmoji || "👤"}</span>
+                      <span>{c.avatar_emoji || "👤"}</span>
                     )}
                     Create {dates.length} shifts for <strong>{c.name}</strong> on {selectedCreatorName} ({new Date(startDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}–{new Date(effectiveEndDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })})
                   </div>
@@ -463,6 +462,13 @@ export default function SchedulePage() {
   // Off-day request state
   const [offNotes, setOffNotes] = useState("");
 
+  // Data state
+  const [schedules, setSchedules] = useState<any[] | null>(null);
+  const [chatters, setChatters] = useState<any[] | null>(null);
+  const [creators, setCreators] = useState<any[] | null>(null);
+  const [pendingRequests, setPendingRequests] = useState<any[] | null>(null);
+  const [dataVersion, setDataVersion] = useState(0);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -486,22 +492,35 @@ export default function SchedulePage() {
   const startDate = viewDates[0];
   const endDate = viewDates[viewDates.length - 1];
 
-  const schedules = useQuery(
-    api.crm.schedule.listByDateRange,
-    token ? { token, startDate, endDate } : "skip"
-  );
-  const chatters = useQuery(api.crm.chatters.list, token && isAdmin ? { token } : "skip");
-  const creators = useQuery(api.crm.creators.list, token ? { token } : "skip");
-  const pendingRequests = useQuery(
-    api.crm.schedule.getPendingRequests,
-    token && isAdmin ? { token } : "skip"
-  );
+  const reload = useCallback(() => setDataVersion((v) => v + 1), []);
 
-  const createSchedule = useMutation(api.crm.schedule.create);
-  const removeSchedule = useMutation(api.crm.schedule.remove);
-  const requestDayOff = useMutation(api.crm.schedule.requestDayOff);
-  const approveDayOff = useMutation(api.crm.schedule.approveDayOff);
-  const denyDayOff = useMutation(api.crm.schedule.denyDayOff);
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchData = async () => {
+      const [schedulesRes, chattersRes, creatorsRes, pendingRes] = await Promise.all([
+        supabase
+          .from("crm_schedules")
+          .select("*, chatter:crm_chatters(name, avatar_emoji, profile_picture_url), creator:crm_creators(name)")
+          .gte("date", startDate)
+          .lte("date", endDate),
+        isAdmin
+          ? supabase.from("crm_chatters").select("*")
+          : Promise.resolve({ data: null, error: null }),
+        supabase.from("crm_creators").select("*").eq("status", "active"),
+        isAdmin
+          ? supabase.from("crm_schedules").select("*, chatter:crm_chatters(name, avatar_emoji, profile_picture_url)").eq("status", "off_requested")
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+
+      if (schedulesRes.data) setSchedules(schedulesRes.data);
+      if (chattersRes.data) setChatters(chattersRes.data);
+      if (creatorsRes.data) setCreators(creatorsRes.data);
+      if (pendingRes.data) setPendingRequests(pendingRes.data);
+    };
+
+    fetchData();
+  }, [token, startDate, endDate, isAdmin, dataVersion]);
 
   const today = new Date().toISOString().split("T")[0];
 
@@ -510,7 +529,16 @@ export default function SchedulePage() {
     const map: Record<string, any[]> = {};
     viewDates.forEach((d) => (map[d] = []));
     (schedules || []).forEach((s: any) => {
-      if (map[s.date]) map[s.date].push(s);
+      if (map[s.date]) {
+        map[s.date].push({
+          ...s,
+          chatterName: s.chatter?.name,
+          chatterEmoji: s.chatter?.avatar_emoji,
+          chatterProfilePictureUrl: s.chatter?.profile_picture_url,
+          creatorName: s.creator?.name,
+          shiftType: s.shift_type,
+        });
+      }
     });
     return map;
   }, [schedules, viewDates]);
@@ -520,19 +548,22 @@ export default function SchedulePage() {
     setSaving(true);
     setError("");
     try {
-      await createSchedule({
-        token,
-        chatterId: addChatterId as any,
-        date: selectedDate,
-        shiftType: addShiftType as any,
-        creatorId: addCreatorId ? (addCreatorId as any) : undefined,
-        notes: addNotes || undefined,
-      });
+      const { error: insertError } = await supabase
+        .from("crm_schedules")
+        .insert({
+          chatter_id: addChatterId,
+          date: selectedDate,
+          shift_type: addShiftType,
+          creator_id: addCreatorId || null,
+          notes: addNotes || null,
+        });
+      if (insertError) throw insertError;
       setShowAddModal(false);
       setAddChatterId("");
       setAddShiftType("morning");
       setAddCreatorId("");
       setAddNotes("");
+      reload();
     } catch (err: any) {
       setError(err.message || "Failed to add schedule");
     } finally {
@@ -543,7 +574,12 @@ export default function SchedulePage() {
   const handleRemoveSchedule = async (scheduleId: string) => {
     if (!confirm("Remove this schedule entry?")) return;
     try {
-      await removeSchedule({ token, scheduleId: scheduleId as any });
+      const { error: deleteError } = await supabase
+        .from("crm_schedules")
+        .delete()
+        .eq("id", scheduleId);
+      if (deleteError) throw deleteError;
+      reload();
     } catch (err: any) {
       alert(err.message || "Failed to remove");
     }
@@ -554,13 +590,19 @@ export default function SchedulePage() {
     setSaving(true);
     setError("");
     try {
-      await requestDayOff({
-        token,
-        date: selectedDate,
-        notes: offNotes || undefined,
-      });
+      const { error: insertError } = await supabase
+        .from("crm_schedules")
+        .insert({
+          chatter_id: user.id,
+          date: selectedDate,
+          shift_type: "full",
+          status: "off_requested",
+          notes: offNotes || null,
+        });
+      if (insertError) throw insertError;
       setShowOffModal(false);
       setOffNotes("");
+      reload();
     } catch (err: any) {
       setError(err.message || "Failed to request day off");
     } finally {
@@ -570,7 +612,12 @@ export default function SchedulePage() {
 
   const handleApprove = async (scheduleId: string) => {
     try {
-      await approveDayOff({ token, scheduleId: scheduleId as any });
+      const { error: updateError } = await supabase
+        .from("crm_schedules")
+        .update({ status: "off_approved" })
+        .eq("id", scheduleId);
+      if (updateError) throw updateError;
+      reload();
     } catch (err: any) {
       alert(err.message || "Failed to approve");
     }
@@ -578,7 +625,12 @@ export default function SchedulePage() {
 
   const handleDeny = async (scheduleId: string) => {
     try {
-      await denyDayOff({ token, scheduleId: scheduleId as any });
+      const { error: updateError } = await supabase
+        .from("crm_schedules")
+        .update({ status: "off_denied" })
+        .eq("id", scheduleId);
+      if (updateError) throw updateError;
+      reload();
     } catch (err: any) {
       alert(err.message || "Failed to deny");
     }
@@ -647,13 +699,13 @@ export default function SchedulePage() {
                 flexWrap: "wrap", gap: "8px",
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  {req.chatterProfilePictureUrl ? (
-                    <img src={req.chatterProfilePictureUrl} alt={req.chatterName} style={{ width: "28px", height: "28px", borderRadius: "8px", objectFit: "cover" }} />
+                  {req.chatter?.profile_picture_url ? (
+                    <img src={req.chatter.profile_picture_url} alt={req.chatter?.name} style={{ width: "28px", height: "28px", borderRadius: "8px", objectFit: "cover" }} />
                   ) : (
-                    <span style={{ fontSize: "20px" }}>{req.chatterEmoji}</span>
+                    <span style={{ fontSize: "20px" }}>{req.chatter?.avatar_emoji}</span>
                   )}
                   <div>
-                    <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--text)" }}>{req.chatterName}</div>
+                    <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--text)" }}>{req.chatter?.name}</div>
                     <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                       {new Date(req.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
                       {req.notes && ` — ${req.notes}`}
@@ -892,7 +944,7 @@ export default function SchedulePage() {
                 <select value={addChatterId} onChange={(e) => setAddChatterId(e.target.value)} style={inputStyle}>
                   <option value="">Select member...</option>
                   {(chatters || []).filter((c: any) => c.status === "active").map((c: any) => (
-                    <option key={c.id} value={c.id}>{c.avatarEmoji || "👤"} {c.name}</option>
+                    <option key={c.id} value={c.id}>{c.avatar_emoji || "👤"} {c.name}</option>
                   ))}
                 </select>
               </div>
@@ -980,6 +1032,7 @@ export default function SchedulePage() {
           chatters={chatters}
           creators={creators}
           onClose={() => setShowBulkModal(false)}
+          onDone={reload}
         />
       )}
     </div>

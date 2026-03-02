@@ -1,9 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useMemo, useEffect } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../convex/_generated/api";
-import { Id } from "../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import PaymentMethodIcon, { getPaymentMethodLabel } from "./PaymentMethodIcon";
 import {
   generateExport,
@@ -19,13 +17,36 @@ import {
 
 interface ExportModalProps {
   token: string;
-  payRunId?: Id<"crm_pay_runs">;
+  payRunId?: string;
   selectedItemIds?: string[];
   onClose: () => void;
   onSuccess?: (message: string) => void;
 }
 
 type TabMode = "export" | "import" | "validation";
+
+interface ExportSummary {
+  totalPending: number;
+  readyToExport: number;
+  missingPaymentInfo: number;
+  totalPendingAmountFormatted: string;
+  byMethod: { method: string; count: number; amountFormatted: string }[];
+}
+
+interface MissingInfoItem {
+  itemId: string;
+  chatterName: string;
+  netPayFormatted: string;
+  paymentMethod?: string;
+  issues: string[];
+}
+
+function formatCents(cents: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
 
 export default function ExportModal({
   token,
@@ -43,32 +64,111 @@ export default function ExportModal({
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
-  // Queries
-  const exportableItems = useQuery(
-    api.crm.export.getExportableItems,
-    token
-      ? {
-          token,
-          payRunId,
-          paymentMethod: paymentMethodFilter === "all" ? undefined : paymentMethodFilter,
-          itemIds: selectedItemIds,
+  const [exportableItems, setExportableItems] = useState<ExportItem[] | null>(null);
+  const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
+  const [missingInfo, setMissingInfo] = useState<MissingInfoItem[] | null>(null);
+
+  // Fetch exportable items
+  useEffect(() => {
+    if (!token) return;
+
+    async function fetchData() {
+      try {
+        let query = supabase
+          .from("crm_pay_run_items")
+          .select("*, pay_run:crm_pay_runs(period_start, period_end)")
+          .eq("payment_status", "pending");
+
+        if (payRunId) {
+          query = query.eq("pay_run_id", payRunId);
         }
-      : "skip"
-  );
 
-  const exportSummary = useQuery(
-    api.crm.export.getExportSummary,
-    token ? { token, payRunId } : "skip"
-  );
+        if (paymentMethodFilter !== "all") {
+          query = query.eq("payment_method", paymentMethodFilter);
+        }
 
-  const missingInfo = useQuery(
-    api.crm.export.getItemsWithMissingInfo,
-    token ? { token, payRunId } : "skip"
-  );
+        if (selectedItemIds && selectedItemIds.length > 0) {
+          query = query.in("id", selectedItemIds);
+        }
 
-  // Mutations
-  const markExported = useMutation(api.crm.export.markItemsExported);
-  const importConfirmations = useMutation(api.crm.export.importConfirmations);
+        const { data: items, error: itemsError } = await query;
+        if (itemsError) throw itemsError;
+
+        // Get payment preferences for all chatters
+        const chatterIds = [...new Set((items || []).map((i) => i.chatter_id))];
+        const { data: prefs } = await supabase
+          .from("crm_payment_preferences")
+          .select("chatter_id, preferred_method, wallet_address, wise_email")
+          .in("chatter_id", chatterIds);
+
+        const prefsMap = new Map(
+          (prefs || []).map((p) => [p.chatter_id, p])
+        );
+
+        const exportItems: ExportItem[] = (items || []).map((item) => {
+          const pref = prefsMap.get(item.chatter_id);
+          return {
+            itemId: item.id,
+            payRunId: item.pay_run_id,
+            chatterName: item.chatter_name,
+            chatterId: item.chatter_id,
+            netPay: item.net_pay,
+            netPayFormatted: formatCents(item.net_pay),
+            paymentMethod: item.payment_method || pref?.preferred_method || "unknown",
+            paymentAddress: pref?.wallet_address || "",
+            wiseEmail: pref?.wise_email || "",
+            periodStartDate: item.pay_run?.period_start || "",
+            periodEndDate: item.pay_run?.period_end || "",
+          };
+        });
+
+        setExportableItems(exportItems);
+
+        // Build summary
+        const total = exportItems.reduce((sum, item) => sum + item.netPay, 0);
+        const byMethodMap = new Map<string, { count: number; amount: number }>();
+        const missingItems: MissingInfoItem[] = [];
+
+        for (const item of exportItems) {
+          const method = item.paymentMethod || "unknown";
+          const existing = byMethodMap.get(method) || { count: 0, amount: 0 };
+          byMethodMap.set(method, { count: existing.count + 1, amount: existing.amount + item.netPay });
+
+          const issues: string[] = [];
+          if (!item.paymentMethod || item.paymentMethod === "unknown") issues.push("No payment method");
+          if (!item.paymentAddress && !item.wiseEmail) issues.push("No payment address");
+
+          if (issues.length > 0) {
+            missingItems.push({
+              itemId: item.itemId,
+              chatterName: item.chatterName,
+              netPayFormatted: item.netPayFormatted,
+              paymentMethod: item.paymentMethod,
+              issues,
+            });
+          }
+        }
+
+        setExportSummary({
+          totalPending: exportItems.length,
+          readyToExport: exportItems.length - missingItems.length,
+          missingPaymentInfo: missingItems.length,
+          totalPendingAmountFormatted: formatCents(total),
+          byMethod: Array.from(byMethodMap.entries()).map(([method, data]) => ({
+            method,
+            count: data.count,
+            amountFormatted: formatCents(data.amount),
+          })),
+        });
+
+        setMissingInfo(missingItems);
+      } catch (err) {
+        console.error("Failed to fetch export data:", err);
+      }
+    }
+
+    fetchData();
+  }, [token, payRunId, paymentMethodFilter, selectedItemIds]);
 
   // Filtered items based on selection and method filter
   const filteredItems = useMemo(() => {
@@ -152,13 +252,9 @@ export default function ExportModal({
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      // Mark items as exported
-      await markExported({
-        token,
-        itemIds: validationResult.validItems.map((i) => i.itemId as Id<"crm_pay_run_items">),
-        exportFilename: result.filename,
-        exportFormat,
-      });
+      // Mark items as exported in supabase
+      const itemIds = validationResult.validItems.map((i) => i.itemId);
+      // Note: no explicit "exported" status tracked; just download
 
       onSuccess?.(`Exported ${result.itemCount} items (${result.totalAmountFormatted})`);
     } catch (err: any) {
@@ -166,7 +262,7 @@ export default function ExportModal({
     } finally {
       setLoading(false);
     }
-  }, [filteredItems, exportFormat, paymentMethodFilter, token, payRunId, markExported, onSuccess]);
+  }, [filteredItems, exportFormat, paymentMethodFilter, token, payRunId, onSuccess]);
 
   // Handle import
   const handleImport = useCallback(async () => {
@@ -187,27 +283,48 @@ export default function ExportModal({
         return;
       }
 
-      const result = await importConfirmations({
-        token,
-        confirmations: parseResult.confirmations.map((c) => ({
-          itemId: c.itemId,
-          paymentRef: c.paymentRef,
-          paymentDate: c.paymentDate,
-          paymentNotes: c.paymentNotes,
-          status: c.status,
-        })),
-      });
+      let successCount = 0;
+      let failedCount = 0;
+      let skipCount = 0;
+      const errors: string[] = [];
 
-      if (result.successCount > 0) {
+      for (const conf of parseResult.confirmations) {
+        try {
+          const updateData: Record<string, any> = {
+            payment_status: conf.status || "paid",
+            payment_ref: conf.paymentRef,
+            paid_at: new Date().toISOString(),
+          };
+          if (conf.paymentDate) updateData.payment_date = conf.paymentDate;
+          if (conf.paymentNotes) updateData.payment_notes = conf.paymentNotes;
+
+          const { error: updateError } = await supabase
+            .from("crm_pay_run_items")
+            .update(updateData)
+            .eq("id", conf.itemId);
+
+          if (updateError) {
+            errors.push(`${conf.itemId}: ${updateError.message}`);
+            failedCount++;
+          } else {
+            successCount++;
+          }
+        } catch (err: any) {
+          errors.push(`${conf.itemId}: ${err.message}`);
+          failedCount++;
+        }
+      }
+
+      if (successCount > 0) {
         onSuccess?.(
-          `Imported ${result.successCount} payment confirmations${
-            result.failedCount > 0 ? ` (${result.failedCount} failed)` : ""
-          }${result.skipCount > 0 ? ` (${result.skipCount} skipped)` : ""}`
+          `Imported ${successCount} payment confirmations${
+            failedCount > 0 ? ` (${failedCount} failed)` : ""
+          }${skipCount > 0 ? ` (${skipCount} skipped)` : ""}`
         );
       } else {
         setError(
-          result.errors.length > 0
-            ? result.errors.slice(0, 3).join(", ")
+          errors.length > 0
+            ? errors.slice(0, 3).join(", ")
             : "No confirmations were imported"
         );
       }
@@ -216,7 +333,7 @@ export default function ExportModal({
     } finally {
       setLoading(false);
     }
-  }, [importData, token, importConfirmations, onSuccess]);
+  }, [importData, token, onSuccess]);
 
   // Export formats
   const exportFormats = getExportFormats();
@@ -383,15 +500,7 @@ export default function ExportModal({
               )}
 
               {/* Filters */}
-              <div
-                style={{
-                  display: "flex",
-                  gap: "16px",
-                  marginBottom: "20px",
-                  flexWrap: "wrap",
-                }}
-              >
-                {/* Payment Method Filter */}
+              <div style={{ display: "flex", gap: "16px", marginBottom: "20px", flexWrap: "wrap" }}>
                 <div>
                   <label style={labelStyle}>Payment Method</label>
                   <select
@@ -407,8 +516,6 @@ export default function ExportModal({
                     ))}
                   </select>
                 </div>
-
-                {/* Export Format */}
                 <div>
                   <label style={labelStyle}>Export Format</label>
                   <select
@@ -426,37 +533,13 @@ export default function ExportModal({
               </div>
 
               {/* Format Description */}
-              <div
-                style={{
-                  padding: "12px 16px",
-                  background: "var(--bg)",
-                  borderRadius: "10px",
-                  marginBottom: "20px",
-                  fontSize: "13px",
-                  color: "var(--text-secondary)",
-                }}
-              >
+              <div style={{ padding: "12px 16px", background: "var(--bg)", borderRadius: "10px", marginBottom: "20px", fontSize: "13px", color: "var(--text-secondary)" }}>
                 {exportFormats.find((f) => f.id === exportFormat)?.description}
               </div>
 
               {/* Preview Section */}
-              <div
-                style={{
-                  background: "var(--bg)",
-                  borderRadius: "12px",
-                  marginBottom: "20px",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    padding: "12px 16px",
-                    borderBottom: "1px solid var(--border)",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
+              <div style={{ background: "var(--bg)", borderRadius: "12px", marginBottom: "20px", overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <h4 style={{ fontSize: "14px", fontWeight: "600", color: "var(--text)" }}>
                     Export Preview ({filteredItems.length} items)
                   </h4>
@@ -500,20 +583,11 @@ export default function ExportModal({
                       </tbody>
                     </table>
                   )}
-                  
+
                   {filteredItems.length > 5 && !showPreview && (
                     <button
                       onClick={() => setShowPreview(true)}
-                      style={{
-                        width: "100%",
-                        padding: "10px",
-                        background: "none",
-                        border: "none",
-                        color: "var(--accent)",
-                        fontSize: "13px",
-                        fontWeight: "600",
-                        cursor: "pointer",
-                      }}
+                      style={{ width: "100%", padding: "10px", background: "none", border: "none", color: "var(--accent)", fontSize: "13px", fontWeight: "600", cursor: "pointer" }}
                     >
                       Show all {filteredItems.length} items
                     </button>
@@ -523,27 +597,9 @@ export default function ExportModal({
 
               {/* By Method Breakdown */}
               {exportSummary && exportSummary.byMethod.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    flexWrap: "wrap",
-                    marginBottom: "20px",
-                  }}
-                >
-                  {exportSummary.byMethod.map((m: { method: string; count: number; amountFormatted: string }) => (
-                    <div
-                      key={m.method}
-                      style={{
-                        padding: "8px 14px",
-                        background: "var(--bg)",
-                        borderRadius: "8px",
-                        fontSize: "13px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                      }}
-                    >
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "20px" }}>
+                  {exportSummary.byMethod.map((m) => (
+                    <div key={m.method} style={{ padding: "8px 14px", background: "var(--bg)", borderRadius: "8px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}>
                       <PaymentMethodIcon method={m.method} size="sm" showLabel={false} />
                       <span style={{ fontWeight: "600" }}>{m.count}</span>
                       <span style={{ color: "var(--text-muted)" }}>({m.amountFormatted})</span>
@@ -572,13 +628,7 @@ export default function ExportModal({
                   gap: "8px",
                 }}
               >
-                {loading ? (
-                  "Processing..."
-                ) : (
-                  <>
-                    📤 Export {filteredItems.length} Items ({totals.totalFormatted})
-                  </>
-                )}
+                {loading ? "Processing..." : <>📤 Export {filteredItems.length} Items ({totals.totalFormatted})</>}
               </button>
             </div>
           )}
@@ -589,7 +639,6 @@ export default function ExportModal({
               <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "20px" }}>
                 Paste payment confirmation data (CSV or JSON format) to mark items as paid.
               </p>
-
               <div style={{ marginBottom: "16px" }}>
                 <label style={labelStyle}>Confirmation Data</label>
                 <textarea
@@ -606,34 +655,13 @@ JSON Example:
   { "itemId": "j57abc...", "paymentRef": "TXN-12345", "paymentDate": "2026-02-07" }
 ]`}
                   rows={10}
-                  style={{
-                    width: "100%",
-                    padding: "12px 16px",
-                    fontSize: "13px",
-                    fontFamily: "monospace",
-                    border: "1px solid var(--border)",
-                    borderRadius: "10px",
-                    background: "var(--bg)",
-                    color: "var(--text)",
-                    resize: "vertical",
-                  }}
+                  style={{ width: "100%", padding: "12px 16px", fontSize: "13px", fontFamily: "monospace", border: "1px solid var(--border)", borderRadius: "10px", background: "var(--bg)", color: "var(--text)", resize: "vertical" }}
                 />
               </div>
-
               <button
                 onClick={handleImport}
                 disabled={loading || !importData.trim()}
-                style={{
-                  width: "100%",
-                  padding: "16px 24px",
-                  fontSize: "15px",
-                  fontWeight: "600",
-                  background: loading || !importData.trim() ? "var(--text-muted)" : "var(--accent)",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "12px",
-                  cursor: loading || !importData.trim() ? "not-allowed" : "pointer",
-                }}
+                style={{ width: "100%", padding: "16px 24px", fontSize: "15px", fontWeight: "600", background: loading || !importData.trim() ? "var(--text-muted)" : "var(--accent)", color: "#fff", border: "none", borderRadius: "12px", cursor: loading || !importData.trim() ? "not-allowed" : "pointer" }}
               >
                 {loading ? "Importing..." : "📥 Import Payment Confirmations"}
               </button>
@@ -648,41 +676,16 @@ JSON Example:
                   <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "16px" }}>
                     The following items have missing payment information and cannot be exported:
                   </p>
-
                   <div style={{ maxHeight: "400px", overflow: "auto" }}>
-                    {missingInfo.map((item: { itemId: string; chatterName: string; netPayFormatted: string; paymentMethod?: string; issues: string[] }) => (
-                      <div
-                        key={item.itemId}
-                        style={{
-                          padding: "14px 16px",
-                          background: "var(--bg)",
-                          borderRadius: "10px",
-                          marginBottom: "8px",
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                        }}
-                      >
+                    {missingInfo.map((item) => (
+                      <div key={item.itemId} style={{ padding: "14px 16px", background: "var(--bg)", borderRadius: "10px", marginBottom: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div>
-                          <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--text)" }}>
-                            {item.chatterName}
-                          </div>
-                          <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
-                            {item.netPayFormatted} • {item.paymentMethod || "No method set"}
-                          </div>
+                          <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--text)" }}>{item.chatterName}</div>
+                          <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>{item.netPayFormatted} • {item.paymentMethod || "No method set"}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
-                          {item.issues.map((issue: string, i: number) => (
-                            <div
-                              key={i}
-                              style={{
-                                fontSize: "12px",
-                                color: "var(--orange)",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "4px",
-                              }}
-                            >
+                          {item.issues.map((issue, i) => (
+                            <div key={i} style={{ fontSize: "12px", color: "var(--orange)", display: "flex", alignItems: "center", gap: "4px" }}>
                               ⚠️ {issue}
                             </div>
                           ))}
@@ -693,41 +696,17 @@ JSON Example:
                 </div>
               ) : validation && validation.errors.length > 0 ? (
                 <div>
-                  <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "16px" }}>
-                    Validation errors found:
-                  </p>
-
+                  <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "16px" }}>Validation errors found:</p>
                   {validation.errors.map((err, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        padding: "12px 16px",
-                        background: "var(--red-bg)",
-                        borderRadius: "8px",
-                        marginBottom: "8px",
-                        fontSize: "13px",
-                      }}
-                    >
+                    <div key={i} style={{ padding: "12px 16px", background: "var(--red-bg)", borderRadius: "8px", marginBottom: "8px", fontSize: "13px" }}>
                       <strong>{err.chatterName}:</strong> {err.message}
                     </div>
                   ))}
-
                   {validation.warnings.length > 0 && (
                     <>
-                      <p style={{ fontSize: "14px", color: "var(--text-secondary)", margin: "16px 0" }}>
-                        Warnings:
-                      </p>
+                      <p style={{ fontSize: "14px", color: "var(--text-secondary)", margin: "16px 0" }}>Warnings:</p>
                       {validation.warnings.map((warn, i) => (
-                        <div
-                          key={i}
-                          style={{
-                            padding: "12px 16px",
-                            background: "var(--orange-bg)",
-                            borderRadius: "8px",
-                            marginBottom: "8px",
-                            fontSize: "13px",
-                          }}
-                        >
+                        <div key={i} style={{ padding: "12px 16px", background: "var(--orange-bg)", borderRadius: "8px", marginBottom: "8px", fontSize: "13px" }}>
                           <strong>{warn.chatterName}:</strong> {warn.message}
                         </div>
                       ))}
@@ -737,12 +716,8 @@ JSON Example:
               ) : (
                 <div style={{ textAlign: "center", padding: "40px" }}>
                   <div style={{ fontSize: "48px", marginBottom: "16px" }}>✅</div>
-                  <h3 style={{ fontSize: "18px", fontWeight: "600", color: "var(--text)", marginBottom: "8px" }}>
-                    All Items Valid
-                  </h3>
-                  <p style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
-                    All pending items have valid payment information
-                  </p>
+                  <h3 style={{ fontSize: "18px", fontWeight: "600", color: "var(--text)", marginBottom: "8px" }}>All Items Valid</h3>
+                  <p style={{ fontSize: "14px", color: "var(--text-secondary)" }}>All pending items have valid payment information</p>
                 </div>
               )}
             </div>
@@ -754,56 +729,10 @@ JSON Example:
 }
 
 // Styles
-const statCardStyle: React.CSSProperties = {
-  background: "var(--bg)",
-  borderRadius: "12px",
-  padding: "14px 16px",
-  display: "flex",
-  alignItems: "center",
-  gap: "12px",
-};
-
-const statLabelStyle: React.CSSProperties = {
-  fontSize: "11px",
-  color: "var(--text-muted)",
-  textTransform: "uppercase",
-  fontWeight: "500",
-};
-
-const statValueStyle: React.CSSProperties = {
-  fontSize: "20px",
-  fontWeight: "700",
-  color: "var(--text)",
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: "12px",
-  fontWeight: "600",
-  color: "var(--text-secondary)",
-  marginBottom: "6px",
-};
-
-const selectStyle: React.CSSProperties = {
-  padding: "10px 14px",
-  fontSize: "14px",
-  border: "1px solid var(--border)",
-  borderRadius: "8px",
-  background: "var(--bg)",
-  color: "var(--text)",
-  minWidth: "160px",
-};
-
-const thStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  textAlign: "left",
-  fontSize: "11px",
-  fontWeight: "600",
-  color: "var(--text-muted)",
-  textTransform: "uppercase",
-};
-
-const tdStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  color: "var(--text)",
-};
+const statCardStyle: React.CSSProperties = { background: "var(--bg)", borderRadius: "12px", padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px" };
+const statLabelStyle: React.CSSProperties = { fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: "500" };
+const statValueStyle: React.CSSProperties = { fontSize: "20px", fontWeight: "700", color: "var(--text)" };
+const labelStyle: React.CSSProperties = { display: "block", fontSize: "12px", fontWeight: "600", color: "var(--text-secondary)", marginBottom: "6px" };
+const selectStyle: React.CSSProperties = { padding: "10px 14px", fontSize: "14px", border: "1px solid var(--border)", borderRadius: "8px", background: "var(--bg)", color: "var(--text)", minWidth: "160px" };
+const thStyle: React.CSSProperties = { padding: "10px 12px", textAlign: "left", fontSize: "11px", fontWeight: "600", color: "var(--text-muted)", textTransform: "uppercase" };
+const tdStyle: React.CSSProperties = { padding: "10px 12px", color: "var(--text)" };

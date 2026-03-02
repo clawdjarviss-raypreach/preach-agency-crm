@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useQuery, useMutation, useAction } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 // ── Period Helpers ──
 
@@ -81,6 +80,183 @@ function formatDelta(current: number, previous: number): { text: string; color: 
   };
 }
 
+// ── Supabase fetch helpers ──
+
+async function fetchDashboard(startDate: string, endDate: string) {
+  // Aggregate from crm_of_daily_earnings
+  const { data: earnings } = await supabase
+    .from("crm_of_daily_earnings")
+    .select("*")
+    .gte("date", startDate)
+    .lte("date", endDate);
+
+  // Also aggregate from crm_om_daily_aggregates
+  const { data: omAgg } = await supabase
+    .from("crm_om_daily_aggregates")
+    .select("*")
+    .gte("date", startDate)
+    .lte("date", endDate);
+
+  const rows = earnings || [];
+  const omRows = omAgg || [];
+
+  const totalRevenue = rows.reduce((s, r) => s + (r.total_earnings || 0), 0) + omRows.reduce((s, r) => s + (r.total_revenue || 0), 0);
+  const subscriptionRevenue = rows.reduce((s, r) => s + (r.subscription_earnings || 0), 0) + omRows.reduce((s, r) => s + (r.subscription_revenue || 0), 0);
+  const messageRevenue = rows.reduce((s, r) => s + (r.message_earnings || 0), 0) + omRows.reduce((s, r) => s + (r.message_revenue || 0), 0);
+  const tipRevenue = rows.reduce((s, r) => s + (r.tip_earnings || 0), 0) + omRows.reduce((s, r) => s + (r.tip_revenue || 0), 0);
+  const chargebackAmount = rows.reduce((s, r) => s + (r.chargeback_amount || 0), 0) + omRows.reduce((s, r) => s + (r.chargeback_amount || 0), 0);
+  const totalTransactions = rows.reduce((s, r) => s + (r.transaction_count || 0), 0) + omRows.reduce((s, r) => s + (r.transaction_count || 0), 0);
+  const uniqueSpenders = omRows.reduce((s, r) => s + (r.unique_fan_count || 0), 0);
+  const avgPerCustomer = uniqueSpenders > 0 ? totalRevenue / uniqueSpenders : 0;
+
+  return {
+    totalRevenue,
+    subscriptionRevenue,
+    messageRevenue,
+    tipRevenue,
+    chargebackAmount,
+    totalTransactions,
+    uniqueSpenders,
+    avgPerCustomer,
+  };
+}
+
+async function fetchRevenueTrend(startDate: string, endDate: string) {
+  const { data: earnings } = await supabase
+    .from("crm_of_daily_earnings")
+    .select("date, subscription_earnings, message_earnings, tip_earnings, total_earnings")
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .order("date");
+
+  if (!earnings) return [];
+
+  // Group by date in case there are multiple accounts
+  const dateMap = new Map<string, { date: string; subscriptionRevenue: number; messageRevenue: number; tipRevenue: number; totalRevenue: number }>();
+  for (const row of earnings) {
+    const existing = dateMap.get(row.date) || { date: row.date, subscriptionRevenue: 0, messageRevenue: 0, tipRevenue: 0, totalRevenue: 0 };
+    existing.subscriptionRevenue += row.subscription_earnings || 0;
+    existing.messageRevenue += row.message_earnings || 0;
+    existing.tipRevenue += row.tip_earnings || 0;
+    existing.totalRevenue += row.total_earnings || 0;
+    dateMap.set(row.date, existing);
+  }
+
+  return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function fetchCreatorBreakdown(startDate: string, endDate: string) {
+  const { data: earnings } = await supabase
+    .from("crm_of_daily_earnings")
+    .select("account_id, subscription_earnings, message_earnings, tip_earnings, total_earnings, chargeback_amount, chargeback_count, transaction_count")
+    .gte("date", startDate)
+    .lte("date", endDate);
+
+  if (!earnings || earnings.length === 0) return [];
+
+  // Get accounts with creator info
+  const accountIds = [...new Set(earnings.map((e) => e.account_id))];
+  const { data: accounts } = await supabase
+    .from("crm_of_accounts")
+    .select("id, account_id, creator_id, display_name")
+    .in("id", accountIds);
+
+  const creatorIds = (accounts || []).map((a) => a.creator_id).filter(Boolean);
+  const { data: creators } = await supabase
+    .from("crm_creators")
+    .select("id, name, avatar_url")
+    .in("id", creatorIds);
+
+  const creatorMap = new Map((creators || []).map((c) => [c.id, c]));
+  const accountMap = new Map((accounts || []).map((a) => [a.id, a]));
+
+  // Aggregate per account
+  const agg = new Map<string, any>();
+  for (const row of earnings) {
+    const key = row.account_id;
+    const existing = agg.get(key) || {
+      accountId: key,
+      subscriptionRevenue: 0,
+      messageRevenue: 0,
+      tipRevenue: 0,
+      totalRevenue: 0,
+      chargebackAmount: 0,
+      transactionCount: 0,
+      uniqueFans: 0,
+    };
+    existing.subscriptionRevenue += row.subscription_earnings || 0;
+    existing.messageRevenue += row.message_earnings || 0;
+    existing.tipRevenue += row.tip_earnings || 0;
+    existing.totalRevenue += row.total_earnings || 0;
+    existing.chargebackAmount += row.chargeback_amount || 0;
+    existing.transactionCount += row.transaction_count || 0;
+    agg.set(key, existing);
+  }
+
+  return Array.from(agg.values()).map((a) => {
+    const account = accountMap.get(a.accountId);
+    const creator = account ? creatorMap.get(account.creator_id) : null;
+    return {
+      ...a,
+      creatorId: account?.creator_id || a.accountId,
+      creatorName: creator?.name || account?.display_name || "Unknown",
+      avatarUrl: creator?.avatar_url || null,
+    };
+  }).sort((a, b) => b.totalRevenue - a.totalRevenue);
+}
+
+async function fetchTopFans(limit: number = 20) {
+  const { data } = await supabase
+    .from("crm_of_fans")
+    .select("fan_id, username, total_spend")
+    .order("total_spend", { ascending: false })
+    .limit(limit);
+
+  return (data || []).map((f) => ({
+    fanId: f.fan_id,
+    username: f.username,
+    totalSpent: f.total_spend || 0,
+    transactionCount: 0, // Not available per-fan without extra query
+  }));
+}
+
+async function fetchSyncStatus() {
+  const { data: accounts } = await supabase
+    .from("crm_of_accounts")
+    .select("last_sync_at, sync_status");
+
+  if (!accounts || accounts.length === 0) return null;
+
+  const lastSyncAt = accounts.reduce((latest, a) => {
+    const ts = a.last_sync_at ? new Date(a.last_sync_at).getTime() : 0;
+    return ts > latest ? ts : latest;
+  }, 0);
+
+  const creatorsWithErrors = accounts.some((a) => a.sync_status === "error");
+
+  return {
+    lastSyncAt: lastSyncAt || null,
+    totalTransactionsSynced: 0, // Would need a count query
+    creatorsWithErrors,
+  };
+}
+
+async function fetchOMImports() {
+  const { data } = await supabase
+    .from("crm_om_imports")
+    .select("*")
+    .order("imported_at", { ascending: false })
+    .limit(10);
+
+  return (data || []).map((imp) => ({
+    id: imp.id,
+    filename: imp.filename,
+    recordCount: imp.record_count,
+    importedAt: imp.imported_at,
+    importedByName: imp.imported_by || "Unknown",
+  }));
+}
+
 export default function AnalyticsPage() {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<any>(null);
@@ -93,6 +269,15 @@ export default function AnalyticsPage() {
   const [importSuccess, setImportSuccess] = useState("");
   const [importError, setImportError] = useState("");
   const [syncing, setSyncing] = useState(false);
+
+  // Data states
+  const [dashboard, setDashboard] = useState<any>(null);
+  const [prevDashboard, setPrevDashboard] = useState<any>(null);
+  const [trend, setTrend] = useState<any[] | null>(null);
+  const [creatorBreakdown, setCreatorBreakdown] = useState<any[] | null>(null);
+  const [topFans, setTopFans] = useState<any[] | null>(null);
+  const [syncStatus, setSyncStatus] = useState<any>(null);
+  const [omImports, setOmImports] = useState<any[] | null>(null);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -114,70 +299,66 @@ export default function AnalyticsPage() {
     return getPreviousPeriod(dateRange.start, dateRange.end);
   }, [dateRange]);
 
-  // ── V2 Queries ──
-  const dashboard = useQuery(
-    api.crm.analyticsV2.getDashboard,
-    token && dateRange.start && dateRange.end
-      ? { token, startDate: dateRange.start, endDate: dateRange.end }
-      : "skip"
-  );
+  // Fetch dashboard data
+  useEffect(() => {
+    if (!token || !dateRange.start || !dateRange.end) return;
+    fetchDashboard(dateRange.start, dateRange.end).then(setDashboard);
+  }, [token, dateRange.start, dateRange.end]);
 
-  const prevDashboard = useQuery(
-    api.crm.analyticsV2.getDashboard,
-    token && prevPeriod.start && prevPeriod.end
-      ? { token, startDate: prevPeriod.start, endDate: prevPeriod.end }
-      : "skip"
-  );
+  // Fetch previous period dashboard
+  useEffect(() => {
+    if (!token || !prevPeriod.start || !prevPeriod.end) return;
+    fetchDashboard(prevPeriod.start, prevPeriod.end).then(setPrevDashboard);
+  }, [token, prevPeriod.start, prevPeriod.end]);
 
-  const trend = useQuery(
-    api.crm.analyticsV2.getRevenueTrend,
-    token && dateRange.start && dateRange.end
-      ? { token, startDate: dateRange.start, endDate: dateRange.end }
-      : "skip"
-  );
+  // Fetch trend
+  useEffect(() => {
+    if (!token || !dateRange.start || !dateRange.end) return;
+    fetchRevenueTrend(dateRange.start, dateRange.end).then(setTrend);
+  }, [token, dateRange.start, dateRange.end]);
 
-  const creatorBreakdown = useQuery(
-    api.crm.analyticsV2.getCreatorBreakdown,
-    token && dateRange.start && dateRange.end
-      ? { token, startDate: dateRange.start, endDate: dateRange.end }
-      : "skip"
-  );
+  // Fetch creator breakdown
+  useEffect(() => {
+    if (!token || !dateRange.start || !dateRange.end) return;
+    fetchCreatorBreakdown(dateRange.start, dateRange.end).then(setCreatorBreakdown);
+  }, [token, dateRange.start, dateRange.end]);
 
-  const topFans = useQuery(
-    api.crm.analyticsV2.getTopFans,
-    token && dateRange.start && dateRange.end
-      ? { token, startDate: dateRange.start, endDate: dateRange.end, limit: 20 }
-      : "skip"
-  );
+  // Fetch top fans
+  useEffect(() => {
+    if (!token || !dateRange.start || !dateRange.end) return;
+    fetchTopFans(20).then(setTopFans);
+  }, [token, dateRange.start, dateRange.end]);
 
-  const syncStatus = useQuery(
-    api.crm.analyticsV2.getSyncStatus,
-    token ? { token } : "skip"
-  );
+  // Fetch sync status
+  useEffect(() => {
+    if (!token) return;
+    fetchSyncStatus().then(setSyncStatus);
+  }, [token]);
 
-  // Legacy: keep import working
-  const omImports = useQuery(
-    api.crm.analytics.listOMImports,
-    token ? { token } : "skip"
-  );
+  // Fetch OM imports
+  useEffect(() => {
+    if (!token) return;
+    fetchOMImports().then(setOmImports);
+  }, [token]);
 
-  const importOMData = useMutation(api.crm.analytics.importOMData);
-
-  // ── Sync trigger (OF API) ──
-  const syncNow = useAction((api as any).crm.ofIntegration.syncNow);
+  // ── Sync trigger ──
+  // TODO: Implement syncNow via Supabase Edge Function
   const handleSync = useCallback(async () => {
     if (!token || syncing) return;
     setSyncing(true);
     try {
-      await syncNow({ token, accountId: "acct_f1540df2d1134b7d9c900e34685ee938", endpoint: "earnings" });
+      // TODO: Call Supabase Edge Function for OF sync
+      // await supabase.functions.invoke('of-sync', { body: { accountId: '...', endpoint: 'earnings' } });
+      console.warn("syncNow: Not yet implemented as Supabase Edge Function");
     } catch (err) {
       console.error("Sync error:", err);
     } finally {
       setSyncing(false);
     }
-  }, [token, syncing, syncNow]);
+  }, [token, syncing]);
 
   // ── Import handler ──
+  // TODO: Implement CSV import via Supabase Edge Function
   const handleImportCSV = useCallback(async () => {
     if (!importFile || !token) return;
     setImporting(true);
@@ -203,16 +384,28 @@ export default function AnalyticsPage() {
         headers.forEach((h, idx) => { record[h] = values[idx] || ""; });
         records.push(record);
       }
-      await importOMData({ token, filename: importFile.name, data: records, recordCount: records.length });
+      // TODO: Implement full CSV import via Supabase Edge Function
+      // For now, insert import record directly
+      const { error } = await supabase.from("crm_om_imports").insert({
+        imported_by: user?.id || null,
+        filename: importFile.name,
+        file_type: "csv",
+        status: "pending",
+        data: records,
+        record_count: records.length,
+      });
+      if (error) throw new Error(error.message);
       setImportSuccess(`Imported ${records.length} records from ${importFile.name}`);
       setImportFile(null);
       setShowImport(false);
+      // Refresh imports list
+      fetchOMImports().then(setOmImports);
     } catch (err: any) {
       setImportError(err.message || "Import failed");
     } finally {
       setImporting(false);
     }
-  }, [importFile, token, importOMData]);
+  }, [importFile, token, user]);
 
   // ── Derived data ──
   const maxTrendRevenue = trend
@@ -268,7 +461,7 @@ export default function AnalyticsPage() {
             }} />
             <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
               Last synced: {syncStatusText}
-              {syncStatus ? ` · ${syncStatus.totalTransactionsSynced.toLocaleString()} transactions` : ""}
+              {syncStatus ? ` · ${(syncStatus.totalTransactionsSynced || 0).toLocaleString()} transactions` : ""}
             </span>
           </div>
         </div>

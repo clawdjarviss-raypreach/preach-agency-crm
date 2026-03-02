@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import QuickLogButton from "../../components/QuickLogButton";
 
 interface CrmUser {
@@ -40,7 +39,6 @@ const NAV_ITEMS = [
 export default function CrmLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const logout = useMutation(api.crm.auth.logout);
   const [token, setToken] = useState<string>("");
   const [user, setUser] = useState<CrmUser | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -84,7 +82,7 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
     const token = localStorage.getItem("crm_token");
     if (token) {
       try {
-        await logout({ token });
+        await supabase.from("crm_sessions").delete().eq("token", token);
       } catch {
         // ignore logout errors
       }

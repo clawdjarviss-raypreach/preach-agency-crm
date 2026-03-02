@@ -1,42 +1,39 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import { Id } from "../../../../convex/_generated/dataModel";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface RoleDoc {
-  _id: Id<"crm_roles">;
+  id: string;
   name: string;
   color: string;
   permissions: string[];
-  isSystem: boolean;
+  is_system: boolean;
 }
 
 interface MemberDoc {
-  _id: Id<"crm_chatters">;
+  id: string;
   name: string;
   username: string;
   email?: string;
   status: string;
-  assignedCreators: string[];
+  assigned_creators: string[];
   role: RoleDoc | null;
 }
 
-// NOTE: api.crm.creators.list returns `id` (not `_id`) and includes `accountId`
 interface CreatorDoc {
-  id: Id<"crm_creators">;
+  id: string;
   name: string;
-  accountId?: string;
+  platform_account_id?: string;
 }
 
 interface TrackingLinkDoc {
-  _id: Id<"crm_of_tracking_links">;
-  accountId: string;
+  id: string;
+  account_id: string;
   name: string;
   url: string;
-  creatorId?: Id<"crm_creators">;
+  creator_id?: string;
 }
 
 interface AccessAxes {
@@ -103,14 +100,14 @@ function RoleBadge({ role }: { role: RoleDoc | null }) {
 
 function CreatorAvatars({ ids, creators }: { ids: string[]; creators: CreatorDoc[] }) {
   const MAX = 3;
-  const mapped = ids.map((id) => creators.find((c) => String(c.id) === id)).filter(Boolean) as CreatorDoc[];
+  const mapped = ids.map((id) => creators.find((c) => c.id === id)).filter(Boolean) as CreatorDoc[];
   const shown = mapped.slice(0, MAX);
   const overflow = mapped.length - MAX;
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
       {shown.map((c, i) => (
-        <div key={String(c.id)} style={{ marginLeft: i > 0 ? -8 : 0, zIndex: MAX - i }}>
+        <div key={c.id} style={{ marginLeft: i > 0 ? -8 : 0, zIndex: MAX - i }}>
           <AvatarInitial name={c.name} size={26} />
         </div>
       ))}
@@ -210,7 +207,7 @@ export default function MembersPage() {
   const [search, setSearch] = useState("");
 
   const [editMember, setEditMember] = useState<MemberDoc | null>(null);
-  const [removeMember, setRemoveMember] = useState<MemberDoc | null>(null);
+  const [removeMemberTarget, setRemoveMemberTarget] = useState<MemberDoc | null>(null);
 
   const [editRoleId, setEditRoleId] = useState<string>("");
   const [editCreatorIds, setEditCreatorIds] = useState<string[]>([]);
@@ -220,6 +217,16 @@ export default function MembersPage() {
   const [editKey, setEditKey] = useState(0);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
+  // Data state
+  const [roles, setRoles] = useState<RoleDoc[] | undefined>(undefined);
+  const [members, setMembers] = useState<MemberDoc[] | undefined>(undefined);
+  const [allCreators, setAllCreators] = useState<CreatorDoc[] | undefined>(undefined);
+  const [inviteLink, setInviteLink] = useState<any>(null);
+  const [allTrackingLinks, setAllTrackingLinks] = useState<TrackingLinkDoc[] | undefined>(undefined);
+  const [currentAssignments, setCurrentAssignments] = useState<string[] | undefined>(undefined);
+  const [existingAccess, setExistingAccess] = useState<Record<string, AccessAxes> | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
@@ -227,48 +234,98 @@ export default function MembersPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const roles = useQuery(api.crm.teamManagement.listRoles, token ? { token } : "skip") as RoleDoc[] | undefined;
-  const members = useQuery(
-    api.crm.teamManagement.listMembers,
-    token
-      ? {
-          token,
-          ...(roleFilter !== "all" ? { roleId: roleFilter as Id<"crm_roles"> } : {}),
-          ...(creatorFilter !== "all" ? { creatorId: creatorFilter as Id<"crm_creators"> } : {}),
-          ...(search ? { search } : {}),
-        }
-      : "skip"
-  ) as MemberDoc[] | undefined;
-  const allCreators = useQuery(api.crm.creators.list, token ? { token } : "skip") as CreatorDoc[] | undefined;
-  const inviteLink = useQuery(api.crm.teamManagement.getInviteLink, token ? { token } : "skip");
+  // Fetch main data
+  const fetchData = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    let cancelled = false;
 
-  // Filter creators to only those with an OF API account (have accountId)
+    const [rolesRes, membersRes, creatorsRes, inviteLinkRes] = await Promise.all([
+      supabase.from("crm_roles").select("*"),
+      supabase.from("crm_chatters").select("*, role:crm_roles(*)").neq("status", "inactive"),
+      supabase.from("crm_creators").select("id, name, platform_account_id"),
+      supabase.from("crm_invite_link").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    ]);
+
+    if (cancelled) return;
+
+    if (rolesRes.data) setRoles(rolesRes.data as RoleDoc[]);
+
+    // Transform members: the joined role comes as an object or null
+    if (membersRes.data) {
+      const transformed = membersRes.data.map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        username: m.username,
+        email: m.email,
+        status: m.status,
+        assigned_creators: m.assigned_creators || [],
+        role: m.role || null,
+      }));
+
+      // Apply client-side filters
+      let filtered = transformed;
+      if (roleFilter !== "all") {
+        filtered = filtered.filter((m: MemberDoc) => m.role && m.role.id === roleFilter);
+      }
+      if (creatorFilter !== "all") {
+        filtered = filtered.filter((m: MemberDoc) => m.assigned_creators.includes(creatorFilter));
+      }
+      if (search) {
+        const q = search.toLowerCase();
+        filtered = filtered.filter((m: MemberDoc) =>
+          m.name.toLowerCase().includes(q) ||
+          m.username.toLowerCase().includes(q) ||
+          (m.email || "").toLowerCase().includes(q)
+        );
+      }
+      setMembers(filtered);
+    }
+
+    if (creatorsRes.data) setAllCreators(creatorsRes.data as CreatorDoc[]);
+    setInviteLink(inviteLinkRes.data || null);
+    setLoading(false);
+
+    return () => { cancelled = true; };
+  }, [token, roleFilter, creatorFilter, search]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Fetch edit-member-specific data when editing
+  const fetchEditMemberData = useCallback(async (memberId: string) => {
+    if (!token) return;
+    let cancelled = false;
+
+    const [trackingRes, assignmentsRes, accessRes] = await Promise.all([
+      supabase.from("crm_of_tracking_links").select("*"),
+      supabase.from("crm_tracking_link_assignments").select("tracking_link_id").eq("user_id", memberId),
+      supabase.from("crm_user_creator_access").select("*").eq("user_id", memberId),
+    ]);
+
+    if (cancelled) return;
+
+    if (trackingRes.data) setAllTrackingLinks(trackingRes.data as TrackingLinkDoc[]);
+    if (assignmentsRes.data) setCurrentAssignments(assignmentsRes.data.map((r: any) => r.tracking_link_id));
+
+    // Transform access rows into Record<creatorId, axes>
+    if (accessRes.data) {
+      const accessMap: Record<string, AccessAxes> = {};
+      for (const row of accessRes.data) {
+        accessMap[row.creator_id] = row.axes as AccessAxes;
+      }
+      setExistingAccess(accessMap);
+    }
+
+    return () => { cancelled = true; };
+  }, [token]);
+
+  // Filter creators to only those with a platform account
   const creators = useMemo(() => {
     if (!allCreators) return undefined;
-    return allCreators.filter((c) => !!c.accountId);
+    return allCreators.filter((c) => !!c.platform_account_id);
   }, [allCreators]);
-
-  // Tracking links queries (only when editing a member)
-  const allTrackingLinks = useQuery(
-    api.crm.trackingLinks.listTrackingLinksForAssignment,
-    token && editMember ? { token } : "skip"
-  ) as TrackingLinkDoc[] | undefined;
-
-  const currentAssignments = useQuery(
-    api.crm.trackingLinks.getAssignmentsForUser,
-    token && editMember ? { token, userId: editMember._id } : "skip"
-  ) as Id<"crm_of_tracking_links">[] | undefined;
-
-  const existingAccess = useQuery(
-    api.crm.teamManagement.getAllCreatorAccess,
-    token && editMember ? { token, userId: editMember._id } : "skip"
-  ) as Record<string, AccessAxes> | undefined;
-
-  const updateMemberMut = useMutation(api.crm.teamManagement.updateMember);
-  const doRemoveMember = useMutation(api.crm.teamManagement.removeMember);
-  const setCreatorAccessMut = useMutation(api.crm.teamManagement.setCreatorAccess);
-  const resetInviteLinkMut = useMutation(api.crm.teamManagement.resetInviteLink);
-  const setTrackingAssignmentsMut = useMutation(api.crm.trackingLinks.setAssignmentsForUser);
 
   const inviteUrl = useMemo(() => {
     if (!inviteLink?.token) return "";
@@ -283,12 +340,12 @@ export default function MembersPage() {
     for (const cid of editCreatorIds) {
       const axes = creatorAccess[cid];
       if (!axes?.trackingLinks) continue;
-      const creator = creators.find((c) => String(c.id) === cid);
+      const creator = creators.find((c) => c.id === cid);
       if (!creator) continue;
       const links = allTrackingLinks.filter((l) => {
-        if (l.creatorId && String(l.creatorId) === cid) return true;
-        // Backward-compatible fallback while older tracking links are backfilled with creatorId.
-        return !l.creatorId && !!creator.accountId && l.accountId === creator.accountId;
+        if (l.creator_id && l.creator_id === cid) return true;
+        // Backward-compatible fallback while older tracking links are backfilled with creator_id.
+        return !l.creator_id && !!creator.platform_account_id && l.account_id === creator.platform_account_id;
       });
       if (links.length === 0) continue;
       groups.push({ creatorId: cid, creatorName: creator.name, links });
@@ -298,12 +355,17 @@ export default function MembersPage() {
 
   const openEdit = (m: MemberDoc) => {
     setEditMember(m);
-    setEditRoleId(m.role ? String(m.role._id) : "");
+    setEditRoleId(m.role ? m.role.id : "");
     // Filter assigned creators to only OF API creators
-    const validCreatorIds = new Set((creators || []).map((c) => String(c.id)));
-    setEditCreatorIds((m.assignedCreators || []).filter((id: string) => validCreatorIds.has(id)));
+    const validCreatorIds = new Set((creators || []).map((c) => c.id));
+    setEditCreatorIds((m.assigned_creators || []).filter((id: string) => validCreatorIds.has(id)));
     setEditKey(k => k + 1);
     setEditTrackingLinkIds([]);
+    setAllTrackingLinks(undefined);
+    setCurrentAssignments(undefined);
+    setExistingAccess(undefined);
+    // Fetch edit-member specific data
+    fetchEditMemberData(m.id);
   };
 
   // Load existing creator access axes when they arrive
@@ -316,7 +378,7 @@ export default function MembersPage() {
   // Load current tracking link assignments when they arrive
   useEffect(() => {
     if (currentAssignments && editMember) {
-      setEditTrackingLinkIds(currentAssignments.map(String));
+      setEditTrackingLinkIds(currentAssignments);
     }
   }, [currentAssignments, editMember]);
 
@@ -324,27 +386,37 @@ export default function MembersPage() {
     if (!editMember) return;
     setSaving(true);
     try {
-      await updateMemberMut({
-        token,
-        chatterId: editMember._id,
-        ...(editRoleId ? { roleId: editRoleId as Id<"crm_roles"> } : {}),
-      });
+      // Update role
+      if (editRoleId) {
+        const { error } = await supabase.from("crm_chatters").update({ role_id: editRoleId }).eq("id", editMember.id);
+        if (error) throw error;
+      }
+
+      // Update creator access axes
       for (const cid of editCreatorIds) {
         const axes = creatorAccess[cid] || { socials: false, revenue: false, trackingLinks: false, subs: false };
-        await setCreatorAccessMut({
-          token,
-          userId: editMember._id,
-          creatorId: cid as Id<"crm_creators">,
-          axes,
-        });
+        const { error } = await supabase.from("crm_user_creator_access").upsert(
+          { user_id: editMember.id, creator_id: cid, axes },
+          { onConflict: "user_id,creator_id" }
+        );
+        if (error) throw error;
       }
-      // Save tracking link assignments
-      await setTrackingAssignmentsMut({
-        token,
-        userId: editMember._id,
-        trackingLinkIds: editTrackingLinkIds as Id<"crm_of_tracking_links">[],
-      });
+
+      // Save tracking link assignments: delete existing, insert new
+      const { error: delErr } = await supabase.from("crm_tracking_link_assignments").delete().eq("user_id", editMember.id);
+      if (delErr) throw delErr;
+
+      if (editTrackingLinkIds.length > 0) {
+        const rows = editTrackingLinkIds.map((tlId) => ({
+          user_id: editMember.id,
+          tracking_link_id: tlId,
+        }));
+        const { error: insErr } = await supabase.from("crm_tracking_link_assignments").insert(rows);
+        if (insErr) throw insErr;
+      }
+
       setEditMember(null);
+      await fetchData();
     } catch (err: any) {
       alert(err.message || "Failed to save");
     } finally {
@@ -353,11 +425,13 @@ export default function MembersPage() {
   };
 
   const handleRemove = async () => {
-    if (!removeMember) return;
+    if (!removeMemberTarget) return;
     setSaving(true);
     try {
-      await doRemoveMember({ token, chatterId: removeMember._id });
-      setRemoveMember(null);
+      const { error } = await supabase.from("crm_chatters").update({ status: "inactive" }).eq("id", removeMemberTarget.id);
+      if (error) throw error;
+      setRemoveMemberTarget(null);
+      await fetchData();
     } catch (err: any) {
       alert(err.message || "Failed to remove");
     } finally {
@@ -365,7 +439,27 @@ export default function MembersPage() {
     }
   };
 
+  const handleResetInviteLink = async () => {
+    try {
+      // Delete all existing invite links
+      const { error: delErr } = await supabase.from("crm_invite_link").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      if (delErr) throw delErr;
+
+      // Insert new one
+      const { error: insErr } = await supabase.from("crm_invite_link").insert({ token: crypto.randomUUID() });
+      if (insErr) throw insErr;
+
+      await fetchData();
+    } catch (err: any) {
+      alert(err.message || "Failed to reset invite link");
+    }
+  };
+
   if (!user) return null;
+
+  if (loading && !members) {
+    return <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Loading members...</div>;
+  }
 
   const activeMembers = (members || []).filter((m) => m.status !== "inactive");
 
@@ -378,18 +472,18 @@ export default function MembersPage() {
         <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Invite Link</span>
         <input readOnly value={inviteUrl} style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 13 }} />
         <button onClick={() => { navigator.clipboard.writeText(inviteUrl); setCopiedInvite(true); setTimeout(() => setCopiedInvite(false), 2000); }} style={btnStyle}>{copiedInvite ? "✓ Copied" : "📋 Copy"}</button>
-        <button onClick={() => resetInviteLinkMut({ token })} style={{ ...btnStyle, background: "#7f1d1d" }}>🔄 Reset</button>
+        <button onClick={handleResetInviteLink} style={{ ...btnStyle, background: "#7f1d1d" }}>🔄 Reset</button>
       </div>
 
       {/* Filters */}
       <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} style={selectStyle}>
           <option value="all">All Roles</option>
-          {(roles || []).map((r) => <option key={String(r._id)} value={String(r._id)}>{r.name}</option>)}
+          {(roles || []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
         <select value={creatorFilter} onChange={(e) => setCreatorFilter(e.target.value)} style={selectStyle}>
           <option value="all">All Creators</option>
-          {(creators || []).map((c) => <option key={String(c.id)} value={String(c.id)}>{c.name}</option>)}
+          {(creators || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <input placeholder="Search by name, username, email…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1, minWidth: 200, padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 13 }} />
       </div>
@@ -410,8 +504,8 @@ export default function MembersPage() {
                 <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "var(--text-muted)", padding: 32 }}>No members found</td></tr>
               )}
               {activeMembers.map((m, idx) => (
-                <tr key={String(m._id)} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
-                  <td style={{ ...tdStyle, fontSize: 12, color: "var(--text-muted)", fontFamily: "monospace" }}>{String(m._id).slice(-8)}</td>
+                <tr key={m.id} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
+                  <td style={{ ...tdStyle, fontSize: 12, color: "var(--text-muted)", fontFamily: "monospace" }}>{m.id.slice(-8)}</td>
                   <td style={tdStyle}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <AvatarInitial name={m.name || m.username} />
@@ -421,13 +515,13 @@ export default function MembersPage() {
                       </div>
                     </div>
                   </td>
-                  <td style={tdStyle}><CreatorAvatars ids={m.assignedCreators || []} creators={creators || []} /></td>
+                  <td style={tdStyle}><CreatorAvatars ids={m.assigned_creators || []} creators={creators || []} /></td>
                   <td style={{ ...tdStyle, fontSize: 13 }}>{m.email || "—"}</td>
                   <td style={tdStyle}><RoleBadge role={m.role} /></td>
                   <td style={tdStyle}>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button onClick={() => openEdit(m)} style={btnSmall}>✏️ Edit</button>
-                      <button onClick={() => setRemoveMember(m)} style={{ ...btnSmall, background: "#7f1d1d" }}>🗑️ Remove</button>
+                      <button onClick={() => setRemoveMemberTarget(m)} style={{ ...btnSmall, background: "#7f1d1d" }}>🗑️ Remove</button>
                     </div>
                   </td>
                 </tr>
@@ -445,13 +539,13 @@ export default function MembersPage() {
           <label style={labelStyle}>Role</label>
           <select value={editRoleId} onChange={(e) => setEditRoleId(e.target.value)} style={{ ...selectStyle, width: "100%", marginBottom: 16 }}>
             <option value="">No role</option>
-            {(roles || []).map((r) => <option key={String(r._id)} value={String(r._id)}>{r.name}</option>)}
+            {(roles || []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
 
           <label style={labelStyle}>Assigned Creators</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginBottom: 16, maxHeight: 200, overflowY: "auto" }}>
             {(creators || []).map((c) => {
-              const cid = String(c.id);
+              const cid = c.id;
               const checked = editCreatorIds.includes(cid);
               return (
                 <label key={cid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: `1px solid ${checked ? "#3b82f6" : "var(--border)"}`, background: checked ? "rgba(59,130,246,0.08)" : "transparent", cursor: "pointer", fontSize: 13 }}>
@@ -468,7 +562,7 @@ export default function MembersPage() {
               <label style={labelStyle}>Access Axes</label>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                 {editCreatorIds.map((cid) => {
-                  const creator = (creators || []).find((c) => String(c.id) === cid);
+                  const creator = (creators || []).find((c) => c.id === cid);
                   const axes = creatorAccess[cid] || { socials: false, revenue: false, trackingLinks: false, subs: false };
                   const update = (field: keyof AccessAxes) => setCreatorAccess((prev) => ({ ...prev, [cid]: { ...axes, [field]: !axes[field] } }));
                   return (
@@ -502,7 +596,7 @@ export default function MembersPage() {
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                       {group.links.map((link) => {
-                        const lid = String(link._id);
+                        const lid = link.id;
                         const checked = editTrackingLinkIds.includes(lid);
                         return (
                           <label key={lid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, border: `1px solid ${checked ? "#8b5cf6" : "var(--border)"}`, background: checked ? "rgba(139,92,246,0.08)" : "transparent", cursor: "pointer", fontSize: 12 }}>
@@ -527,14 +621,14 @@ export default function MembersPage() {
       )}
 
       {/* Remove Confirmation */}
-      {removeMember && (
-        <ModalOverlay onClose={() => setRemoveMember(null)}>
+      {removeMemberTarget && (
+        <ModalOverlay onClose={() => setRemoveMemberTarget(null)}>
           <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Remove Member</h2>
           <p style={{ color: "var(--text-secondary)", marginBottom: 20 }}>
-            Are you sure you want to deactivate <strong>{removeMember.name}</strong>? They will lose all role assignments and creator access.
+            Are you sure you want to deactivate <strong>{removeMemberTarget.name}</strong>? They will lose all role assignments and creator access.
           </p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-            <button onClick={() => setRemoveMember(null)} style={btnStyle}>Cancel</button>
+            <button onClick={() => setRemoveMemberTarget(null)} style={btnStyle}>Cancel</button>
             <button onClick={handleRemove} disabled={saving} style={{ ...btnStyle, background: "#ef4444", color: "#fff" }}>{saving ? "Removing…" : "Confirm Remove"}</button>
           </div>
         </ModalOverlay>

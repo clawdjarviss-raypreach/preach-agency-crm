@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { api } from "../../../../../convex/_generated/api";
-import { Id } from "../../../../../convex/_generated/dataModel";
+import { supabase } from "@/lib/supabase";
 import { type PipStatus, type PipMilestone } from "../../../../../components/PIPCard";
 
 type CrmUser = {
@@ -58,6 +56,9 @@ export default function PipDetailPage() {
   const [newMilestoneTitle, setNewMilestoneTitle] = useState("");
   const [newMilestoneDue, setNewMilestoneDue] = useState("");
 
+  const [pip, setPip] = useState<any | null | undefined>(undefined);
+  const [chatter, setChatter] = useState<any | null>(null);
+
   useEffect(() => {
     const t = localStorage.getItem("crm_token");
     const u = localStorage.getItem("crm_user");
@@ -67,43 +68,81 @@ export default function PipDetailPage() {
 
   const isSupervisor = isSupervisorRole(user?.role);
 
-  const pipsQuery = useQuery(
-    api.crm.coaching.getActivePips,
-    token ? { token } : "skip"
-  );
+  const loadData = useCallback(async () => {
+    if (!token || !pipId) return;
+    try {
+      const { data: pipData, error: pipError } = await supabase
+        .from("crm_coaching_pips")
+        .select("*")
+        .eq("id", pipId)
+        .single();
+      if (pipError) {
+        if (pipError.code === "PGRST116") {
+          setPip(null);
+        } else {
+          throw pipError;
+        }
+        return;
+      }
+      setPip(pipData);
 
-  const pip = pipsQuery?.find((p: any) => p._id === pipId);
+      if (pipData?.chatter_id) {
+        const { data: chatterData } = await supabase
+          .from("crm_chatters")
+          .select("*")
+          .eq("id", pipData.chatter_id)
+          .single();
+        setChatter(chatterData);
+      }
+    } catch (e) {
+      console.error("Failed to load PIP:", e);
+      setPip(null);
+    }
+  }, [token, pipId]);
 
-  const chattersQuery = useQuery(
-    api.crm.chatters.list,
-    token ? { token } : "skip"
-  );
-
-  const chatter = chattersQuery?.find((c: any) => c.id === pip?.chatterId);
-
-  const updateStatus = useMutation(api.crm.coaching.updatePipStatus);
-  const addMilestone = useMutation(api.crm.coaching.addPipMilestone);
+  useEffect(() => {
+    if (!token) return;
+    loadData();
+  }, [token, loadData]);
 
   const handleStatusChange = async (newStatus: PipStatus) => {
     if (!token || !pipId) return;
     try {
-      await updateStatus({ token, pipId: pipId as Id<"crm_coaching_pips">, status: newStatus });
+      const updateData: any = { status: newStatus, updated_at: new Date().toISOString() };
+      if (newStatus === "completed") {
+        updateData.completed_at = new Date().toISOString();
+      }
+      const { error } = await supabase
+        .from("crm_coaching_pips")
+        .update(updateData)
+        .eq("id", pipId);
+      if (error) throw error;
+      await loadData();
     } catch (e) {
       console.error("Failed to update status:", e);
     }
   };
 
   const handleAddMilestone = async () => {
-    if (!token || !pipId || !newMilestoneTitle.trim()) return;
+    if (!token || !pipId || !newMilestoneTitle.trim() || !pip) return;
     try {
-      await addMilestone({
-        token,
-        pipId: pipId as Id<"crm_coaching_pips">,
+      const existingMilestones: PipMilestone[] = pip.milestones || [];
+      const newMilestone: PipMilestone = {
+        id: crypto.randomUUID(),
         title: newMilestoneTitle.trim(),
         dueDate: newMilestoneDue ? new Date(newMilestoneDue).getTime() : Date.now() + 7 * 24 * 60 * 60 * 1000,
-      });
+        status: "pending",
+      };
+      const updatedMilestones = [...existingMilestones, newMilestone];
+
+      const { error } = await supabase
+        .from("crm_coaching_pips")
+        .update({ milestones: updatedMilestones, updated_at: new Date().toISOString() })
+        .eq("id", pipId);
+      if (error) throw error;
       setNewMilestoneTitle("");
       setNewMilestoneDue("");
+      await loadData();
     } catch (e) {
       console.error("Failed to add milestone:", e);
     }
@@ -121,6 +160,10 @@ export default function PipDetailPage() {
     );
   }
 
+  if (pip === undefined) {
+    return <div style={{ padding: 32 }}>Loading...</div>;
+  }
+
   if (!pip) {
     return (
       <div style={{ padding: 32 }}>
@@ -134,6 +177,8 @@ export default function PipDetailPage() {
 
   const milestones: PipMilestone[] = pip.milestones || [];
   const completedCount = milestones.filter((m) => m.status === "met").length;
+  const startDateTs = pip.start_date ? new Date(pip.start_date).getTime() : Date.now();
+  const endDateTs = pip.end_date ? new Date(pip.end_date).getTime() : Date.now();
 
   return (
     <div style={{ padding: 32, maxWidth: 900, margin: "0 auto" }}>
@@ -171,11 +216,11 @@ export default function PipDetailPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }}>
           <div>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Start Date</p>
-            <p style={{ fontWeight: 500 }}>{formatDate(pip.startDate)}</p>
+            <p style={{ fontWeight: 500 }}>{formatDate(startDateTs)}</p>
           </div>
           <div>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>End Date</p>
-            <p style={{ fontWeight: 500 }}>{formatDate(pip.endDate)}</p>
+            <p style={{ fontWeight: 500 }}>{formatDate(endDateTs)}</p>
           </div>
           <div>
             <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Progress</p>

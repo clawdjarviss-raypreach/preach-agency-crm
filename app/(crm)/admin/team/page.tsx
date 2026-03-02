@@ -1,14 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
+import { useEffect, useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
 export default function AdminTeamPage() {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<any>(null);
   const [selectedManager, setSelectedManager] = useState<string>("");
   const [selectedCreators, setSelectedCreators] = useState<Record<string, boolean>>({});
+
+  // Data state
+  const [managers, setManagers] = useState<any[] | undefined>(undefined);
+  const [chatters, setChatters] = useState<any[] | undefined>(undefined);
+  const [creators, setCreators] = useState<any[] | undefined>(undefined);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -17,23 +22,95 @@ export default function AdminTeamPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const managers = useQuery(api.crm.teamManagement.listManagers, token ? { token } : "skip");
-  const chatters = useQuery(api.crm.chatters.list, token ? { token } : "skip");
-  const creators = useQuery(api.crm.creators.list, token ? { token } : "skip");
+  const fetchData = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    let cancelled = false;
 
-  const assignRole = useMutation(api.crm.teamManagement.assignRole);
-  const assignCreators = useMutation(api.crm.teamManagement.assignCreators);
-  const removeManager = useMutation(api.crm.teamManagement.removeManager);
+    const [chattersRes, creatorsRes] = await Promise.all([
+      supabase.from("crm_chatters").select("*"),
+      supabase.from("crm_creators").select("*"),
+    ]);
+
+    if (cancelled) return;
+
+    const allChatters = chattersRes.data || [];
+    const allCreators = creatorsRes.data || [];
+
+    setChatters(allChatters.map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      username: c.username,
+      role: c.role,
+      status: c.status,
+      assigned_creators: c.assigned_creators,
+    })));
+    setCreators(allCreators.map((c: any) => ({
+      id: c.id,
+      name: c.name,
+    })));
+
+    // Build managers list: chatters with role = marketing_manager, enriched with creator names
+    const managerRows = allChatters.filter((c: any) => c.role === "marketing_manager");
+    const creatorMap = new Map(allCreators.map((c: any) => [c.id, c.name]));
+    const enrichedManagers = managerRows.map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      username: m.username,
+      status: m.status,
+      assigned_creators: m.assigned_creators || [],
+      assignedCreatorNames: (m.assigned_creators || []).map((cid: string) => creatorMap.get(cid) || cid),
+    }));
+    setManagers(enrichedManagers);
+    setLoading(false);
+
+    return () => { cancelled = true; };
+  }, [token]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleAssignRole = async (chatterId: string, role: string) => {
+    const { error } = await supabase.from("crm_chatters").update({ role }).eq("id", chatterId);
+    if (error) {
+      alert(error.message || "Failed to assign role");
+      return;
+    }
+    await fetchData();
+  };
+
+  const handleAssignCreators = async (chatterId: string, creatorIds: string[]) => {
+    const { error } = await supabase.from("crm_chatters").update({ assigned_creators: creatorIds }).eq("id", chatterId);
+    if (error) {
+      alert(error.message || "Failed to assign creators");
+      return;
+    }
+    await fetchData();
+  };
+
+  const handleRemoveManager = async (chatterId: string) => {
+    const { error } = await supabase.from("crm_chatters").update({ role: "chatter" }).eq("id", chatterId);
+    if (error) {
+      alert(error.message || "Failed to remove manager");
+      return;
+    }
+    await fetchData();
+  };
 
   if (!user) return null;
   if (user.role !== "admin") return <div style={{ padding: 24 }}>🔒 Admin only.</div>;
+
+  if (loading && !managers) {
+    return <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Loading team...</div>;
+  }
 
   const handlePickManager = (id: string) => {
     setSelectedManager(id);
     const m = managers?.find((x: any) => x.id === id);
     const initial: Record<string, boolean> = {};
     (creators || []).forEach((c: any) => {
-      initial[c.id] = (m?.assignedCreators || []).includes(c.id);
+      initial[c.id] = (m?.assigned_creators || []).includes(c.id);
     });
     setSelectedCreators(initial);
   };
@@ -48,7 +125,7 @@ export default function AdminTeamPage() {
           {(chatters || []).map((c: any) => (
             <button
               key={c.id}
-              onClick={() => assignRole({ token, chatterId: c.id, role: "marketing_manager" as any })}
+              onClick={() => handleAssignRole(c.id, "marketing_manager")}
               style={btnStyle}
             >
               Set {c.name} → marketing_manager
@@ -70,7 +147,7 @@ export default function AdminTeamPage() {
                 <td style={tdStyle}>{(m.assignedCreatorNames || []).join(", ") || "—"}</td>
                 <td style={tdStyle}>
                   <button onClick={() => handlePickManager(m.id)} style={btnStyle}>Assign creators</button>{" "}
-                  <button onClick={() => removeManager({ token, chatterId: m.id })} style={{ ...btnStyle, background: "#7f1d1d" }}>Deactivate</button>
+                  <button onClick={() => handleRemoveManager(m.id)} style={{ ...btnStyle, background: "#7f1d1d" }}>Deactivate</button>
                 </td>
               </tr>
             ))}
@@ -95,11 +172,10 @@ export default function AdminTeamPage() {
           <div style={{ marginTop: 10 }}>
             <button
               onClick={() =>
-                assignCreators({
-                  token,
-                  chatterId: selectedManager as any,
-                  creatorIds: Object.entries(selectedCreators).filter(([, v]) => v).map(([id]) => id),
-                })
+                handleAssignCreators(
+                  selectedManager,
+                  Object.entries(selectedCreators).filter(([, v]) => v).map(([id]) => id),
+                )
               }
               style={btnStyle}
             >

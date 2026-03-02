@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 import Link from "next/link";
 
 export default function ReportsPage() {
@@ -10,6 +9,8 @@ export default function ReportsPage() {
   const [user, setUser] = useState<any>(null);
   const [expandedReport, setExpandedReport] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState(() => new Date().toISOString().split("T")[0]);
+  const [reports, setReports] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const t = localStorage.getItem("crm_token") || "";
@@ -20,18 +21,38 @@ export default function ReportsPage() {
 
   const isAdmin = user?.role === "admin" || user?.role === "supervisor" || user?.role === "manager";
 
-  // Chatters see own reports; admins see all for a date
-  const ownReports = useQuery(
-    api.crm.salesReports.listByChatter,
-    token && !isAdmin ? { token } : "skip"
-  );
+  useEffect(() => {
+    if (!token || !user) return;
 
-  const allReports = useQuery(
-    api.crm.salesReports.listByDate,
-    token && isAdmin ? { token, date: dateFilter } : "skip"
-  );
+    const fetchReports = async () => {
+      setLoading(true);
+      try {
+        if (isAdmin) {
+          const { data, error } = await supabase
+            .from("crm_sales_reports")
+            .select("*, chatter:crm_chatters(name, avatar_emoji)")
+            .eq("date", dateFilter);
+          if (error) throw error;
+          setReports(data || []);
+        } else {
+          const { data, error } = await supabase
+            .from("crm_sales_reports")
+            .select("*")
+            .eq("chatter_id", user.id)
+            .order("date", { ascending: false });
+          if (error) throw error;
+          setReports(data || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch reports:", err);
+        setReports([]);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const reports = isAdmin ? allReports : ownReports;
+    fetchReports();
+  }, [token, user, isAdmin, dateFilter]);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -119,7 +140,7 @@ export default function ReportsPage() {
       )}
 
       {/* Reports list */}
-      {!reports || reports.length === 0 ? (
+      {loading || !reports || reports.length === 0 ? (
         <div
           style={{
             background: "var(--surface)",
@@ -131,32 +152,34 @@ export default function ReportsPage() {
         >
           <div style={{ fontSize: "48px", marginBottom: "16px" }}>📝</div>
           <h3 style={{ fontSize: "18px", fontWeight: "600", color: "var(--text)", marginBottom: "8px" }}>
-            No reports found
+            {loading ? "Loading reports..." : "No reports found"}
           </h3>
           <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "24px" }}>
-            {isAdmin ? "No reports for this date" : "Submit your first report to get started"}
+            {loading ? "Fetching data..." : isAdmin ? "No reports for this date" : "Submit your first report to get started"}
           </p>
-          <Link
-            href="/reports/submit"
-            style={{
-              display: "inline-block",
-              padding: "12px 24px",
-              fontSize: "15px",
-              fontWeight: "600",
-              color: "#ffffff",
-              background: "var(--accent)",
-              borderRadius: "12px",
-            }}
-          >
-            Submit Report
-          </Link>
+          {!loading && (
+            <Link
+              href="/reports/submit"
+              style={{
+                display: "inline-block",
+                padding: "12px 24px",
+                fontSize: "15px",
+                fontWeight: "600",
+                color: "#ffffff",
+                background: "var(--accent)",
+                borderRadius: "12px",
+              }}
+            >
+              Submit Report
+            </Link>
+          )}
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {reports.map((report: any) => {
             const badge = getStatusBadge(report.status);
-            const isExpanded = expandedReport === (report.id || report._id);
-            const reportId = report.id || report._id;
+            const isExpanded = expandedReport === report.id;
+            const reportId = report.id;
 
             return (
               <div
@@ -203,7 +226,7 @@ export default function ReportsPage() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                     <div style={{ fontSize: "20px", fontWeight: "700", color: "var(--accent)" }}>
-                      ${(report.totalSales || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      ${(report.total_sales || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div
                       style={{
@@ -240,7 +263,7 @@ export default function ReportsPage() {
                           Busyness
                         </div>
                         <div style={{ fontSize: "16px", fontWeight: "600", color: "var(--text)" }}>
-                          {report.busynessRating}/10
+                          {report.busyness_rating}/10
                         </div>
                       </div>
                       <div>
@@ -248,7 +271,7 @@ export default function ReportsPage() {
                           Spenders
                         </div>
                         <div style={{ fontSize: "16px", fontWeight: "600", color: "var(--text)" }}>
-                          {report.spenderCount || 0}
+                          {report.spender_count || 0}
                         </div>
                       </div>
                     </div>
