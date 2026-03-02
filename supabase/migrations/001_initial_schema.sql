@@ -3,6 +3,13 @@
 
 create extension if not exists pgcrypto;
 
+create table if not exists convex_id_map (
+  convex_id text primary key,
+  pg_id uuid not null,
+  table_name text not null,
+  created_at timestamptz not null default now()
+);
+
 -- =========================
 -- AUTH / IDENTITY
 -- =========================
@@ -21,6 +28,7 @@ create table if not exists crm_roles (
 
 create table if not exists crm_chatters (
   id uuid primary key default gen_random_uuid(),
+  supabase_auth_id uuid unique,
   name text not null,
   username text not null unique,
   pin_hash text not null,
@@ -1165,6 +1173,7 @@ create table if not exists crm_om_chatter_metrics (
 -- INDEXES
 -- =========================
 
+create index if not exists idx_chatters_supabase_auth_id on crm_chatters(supabase_auth_id);
 create index if not exists idx_chatters_username on crm_chatters(username);
 create index if not exists idx_chatters_role on crm_chatters(role);
 create index if not exists idx_chatters_status on crm_chatters(status);

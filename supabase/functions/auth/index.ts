@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { supabaseAdmin, json, getBearerToken } from '../_shared/supabase.ts';
+import { supabaseAdmin, supabaseAnon, json, getBearerToken } from '../_shared/supabase.ts';
 
 type AuthAction = 'register' | 'login' | 'logout' | 'session';
 
@@ -9,15 +9,19 @@ Deno.serve(async (req) => {
       return json({ error: 'Method not allowed' }, { status: 405 });
     }
 
-    const { action, email, password } = (await req.json()) as {
+    const { action, email, password, chatterId, username } = (await req.json()) as {
       action: AuthAction;
       email?: string;
       password?: string;
+      chatterId?: string;
+      username?: string;
     };
 
     switch (action) {
       case 'register': {
-        if (!email || !password) return json({ error: 'email and password required' }, { status: 400 });
+        if (!email || !password) {
+          return json({ error: 'email and password required' }, { status: 400 });
+        }
 
         const { data, error } = await supabaseAdmin.auth.admin.createUser({
           email,
@@ -26,14 +30,37 @@ Deno.serve(async (req) => {
         });
 
         if (error) return json({ error: error.message }, { status: 400 });
+
+        // Link Supabase Auth user to CRM chatter row for RLS (auth.uid() -> crm_chatters.supabase_auth_id)
+        if (data.user?.id) {
+          if (chatterId) {
+            const { error: linkError } = await supabaseAdmin
+              .from('crm_chatters')
+              .update({ supabase_auth_id: data.user.id, email })
+              .eq('id', chatterId);
+            if (linkError) return json({ error: linkError.message }, { status: 400 });
+          } else if (username) {
+            const { error: linkError } = await supabaseAdmin
+              .from('crm_chatters')
+              .update({ supabase_auth_id: data.user.id, email })
+              .eq('username', username);
+            if (linkError) return json({ error: linkError.message }, { status: 400 });
+          }
+        }
+
         return json({ user: data.user });
       }
 
       case 'login': {
-        if (!email || !password) return json({ error: 'email and password required' }, { status: 400 });
+        if (!email || !password) {
+          return json({ error: 'email and password required' }, { status: 400 });
+        }
 
-        const anonClient = supabaseAdmin;
-        const { data, error } = await anonClient.auth.signInWithPassword({ email, password });
+        if (!supabaseAnon) {
+          return json({ error: 'SUPABASE_ANON_KEY not configured' }, { status: 500 });
+        }
+
+        const { data, error } = await supabaseAnon.auth.signInWithPassword({ email, password });
         if (error) return json({ error: error.message }, { status: 401 });
 
         return json({
@@ -58,7 +85,12 @@ Deno.serve(async (req) => {
         const token = getBearerToken(req);
         if (!token) return json({ ok: true });
 
-        const { error } = await supabaseAdmin.auth.admin.signOut(token);
+        const { data: userData, error: userError } = await supabaseAdmin.auth.getUser(token);
+        if (userError || !userData.user?.id) {
+          return json({ ok: true });
+        }
+
+        const { error } = await supabaseAdmin.auth.admin.signOut(userData.user.id);
         if (error) return json({ error: error.message }, { status: 400 });
 
         return json({ ok: true });

@@ -1,5 +1,5 @@
 -- 003_pg_cron.sql
--- Phase 1 scheduled jobs: OF sync + reconciliation + maintenance
+-- Phase 1 scheduled jobs: CRM cron parity via pg_cron + Edge Functions
 
 BEGIN;
 
@@ -63,15 +63,127 @@ BEGIN
 END;
 $$;
 
--- Daily OF earnings sync (02:00 UTC)
+-- 01 evaluate-streaks
 SELECT public.crm_schedule_edge_job(
-  'crm-of-sync-earnings-daily',
-  '0 2 * * *',
-  'of-sync',
-  jsonb_build_object('job', 'earnings', 'range', 'yesterday')
+  'crm-evaluate-streaks',
+  '0 6 * * *',
+  'analytics',
+  jsonb_build_object('job', 'evaluate_streaks')
 );
 
--- Transactions sync every hour
+-- 02 reset-freezes
+SELECT public.crm_schedule_edge_job(
+  'crm-reset-freezes',
+  '0 0 * * 1',
+  'analytics',
+  jsonb_build_object('job', 'reset_freezes')
+);
+
+-- 03 evaluate-achievements
+SELECT public.crm_schedule_edge_job(
+  'crm-evaluate-achievements',
+  '0 2 * * *',
+  'analytics',
+  jsonb_build_object('job', 'evaluate_achievements')
+);
+
+-- 04 update-target-progress
+SELECT public.crm_schedule_edge_job(
+  'crm-update-target-progress',
+  '0 6 * * *',
+  'analytics',
+  jsonb_build_object('job', 'update_target_progress')
+);
+
+-- 05 evaluate-weekly-bonuses
+SELECT public.crm_schedule_edge_job(
+  'crm-evaluate-weekly-bonuses',
+  '0 0 * * 1',
+  'payroll-rollup',
+  jsonb_build_object('job', 'evaluate_weekly_bonuses')
+);
+
+-- 06 compute-sales-commission
+SELECT public.crm_schedule_edge_job(
+  'crm-compute-sales-commission',
+  '5 6 * * *',
+  'payroll-rollup',
+  jsonb_build_object('job', 'compute_sales_commission')
+);
+
+-- 07 warnings-late-clock-in-check
+SELECT public.crm_schedule_edge_job(
+  'crm-warnings-late-clockin',
+  '*/5 * * * *',
+  'analytics',
+  jsonb_build_object('job', 'warnings_late_clockin')
+);
+
+-- 08 warnings-missed-report-check
+SELECT public.crm_schedule_edge_job(
+  'crm-warnings-missed-report',
+  '*/5 * * * *',
+  'analytics',
+  jsonb_build_object('job', 'warnings_missed_report')
+);
+
+-- 09 check-queue-sla
+SELECT public.crm_schedule_edge_job(
+  'crm-queue-sla-check',
+  '*/2 * * * *',
+  'queue-sla',
+  jsonb_build_object('job', 'check_sla')
+);
+
+-- 10 snapshot-queue-stats
+SELECT public.crm_schedule_edge_job(
+  'crm-queue-snapshot-stats',
+  '0 * * * *',
+  'queue-sla',
+  jsonb_build_object('job', 'snapshot_stats')
+);
+
+-- 11 of-daily-reconciliation
+SELECT public.crm_schedule_edge_job(
+  'crm-of-daily-reconciliation',
+  '0 4 * * *',
+  'of-sync',
+  jsonb_build_object('job', 'reconciliation', 'range', 'yesterday')
+);
+
+-- 12 of-sync-fans
+SELECT public.crm_schedule_edge_job(
+  'crm-of-sync-fans',
+  '0 0 * * *',
+  'of-sync',
+  jsonb_build_object('job', 'fans', 'range', '24h')
+);
+
+-- 13 of-sync-chats
+SELECT public.crm_schedule_edge_job(
+  'crm-of-sync-chats',
+  '0 * * * *',
+  'of-sync',
+  jsonb_build_object('job', 'chats', 'range', 'hourly')
+);
+
+-- 14 of-sync-forecast
+SELECT public.crm_schedule_edge_job(
+  'crm-of-sync-forecast',
+  '0 */6 * * *',
+  'of-sync',
+  jsonb_build_object('job', 'forecast', 'range', '6h')
+);
+
+-- 15 of-sync-tracking-links
+SELECT public.crm_schedule_edge_job(
+  'crm-of-sync-tracking-links',
+  '0 */3 * * *',
+  'of-sync',
+  jsonb_build_object('job', 'tracking_links', 'range', '3h')
+);
+
+-- 16 of-sync-transactions-hourly
 SELECT public.crm_schedule_edge_job(
   'crm-of-sync-transactions-hourly',
   '0 * * * *',
@@ -79,31 +191,23 @@ SELECT public.crm_schedule_edge_job(
   jsonb_build_object('job', 'transactions', 'range', 'hourly')
 );
 
--- Chargebacks sync every 6h
+-- 17 om-revenue-sync
 SELECT public.crm_schedule_edge_job(
-  'crm-of-sync-chargebacks-6h',
-  '0 */6 * * *',
-  'of-sync',
-  jsonb_build_object('job', 'chargebacks', 'range', '6h')
-);
-
--- Reconciliation daily (04:00 UTC)
-SELECT public.crm_schedule_edge_job(
-  'crm-of-reconciliation-daily',
-  '0 4 * * *',
-  'of-sync',
-  jsonb_build_object('job', 'reconciliation', 'range', 'yesterday')
-);
-
--- Analytics materialization / warm cache (every 30 min)
-SELECT public.crm_schedule_edge_job(
-  'crm-analytics-refresh-30m',
+  'crm-om-revenue-sync',
   '*/30 * * * *',
   'analytics',
-  jsonb_build_object('job', 'refresh_cache')
+  jsonb_build_object('job', 'om_revenue_sync')
 );
 
--- Invite token expiration (daily 03:00 UTC, SQL-native)
+-- 18 om-aggregate-recompute
+SELECT public.crm_schedule_edge_job(
+  'crm-om-aggregate-recompute',
+  '2/30 * * * *',
+  'analytics',
+  jsonb_build_object('job', 'om_aggregate_recompute')
+);
+
+-- SQL-only maintenance: expire invite tokens
 PERFORM cron.unschedule(jobid)
 FROM cron.job
 WHERE jobname = 'crm-expire-invite-tokens';
