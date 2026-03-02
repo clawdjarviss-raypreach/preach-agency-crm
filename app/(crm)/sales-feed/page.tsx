@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 type FilterType = "all" | "ppv" | "tip" | "new_sub" | "rebill" | "stream";
 
@@ -75,32 +74,75 @@ export default function SalesFeedPage() {
     }
   }, []);
 
-  // Real-time subscription — Convex auto-updates when new rows are inserted
-  const result = useQuery(
-    (api as any).crm.ofQueries.getOfTransactions,
-    {
-      limit: 200,
-      offset: 0,
-      ...(filter !== "all" ? { type: filter } : {}),
+  const [items, setItems] = useState<any[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      let query = supabase
+        .from("crm_of_transactions")
+        .select("id, account_id, amount, type, fan_id, fan_username, timestamp", { count: "exact" })
+        .order("timestamp", { ascending: false })
+        .limit(200);
+
+      if (filter !== "all") {
+        query = query.eq("type", filter);
+      }
+
+      const { data, count, error } = await query;
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed loading sales feed", error);
+        setItems([]);
+        setTotalCount(0);
+      } else {
+        setItems(data ?? []);
+        setTotalCount(count ?? 0);
+      }
+      setLoading(false);
     }
-  );
 
-  const items = useMemo(() => {
-    if (!result?.items) return [];
-    return result.items; // already sorted desc by timestamp
-  }, [result]);
+    load();
 
-  const totalCount = result?.total ?? 0;
+    const channel = supabase
+      .channel(`sales-feed-${filter}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "crm_of_transactions" },
+        (payload) => {
+          const row: any = payload.new;
+          if (!row?.id) return;
+          if (filter !== "all" && row.type !== filter) return;
+
+          setItems((prev) => {
+            const exists = prev.some((p) => p.id === row.id);
+            if (exists) return prev;
+            return [row, ...prev].slice(0, 200);
+          });
+          setTotalCount((c) => c + 1);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [filter]);
 
   // Track new items for animation
   useEffect(() => {
     if (!items.length) return;
-    const currentIds = new Set<string>(items.map((i: any) => i._id));
+    const currentIds = new Set<string>(items.map((i: any) => i.id));
     const prevIds = prevIdsRef.current;
     if (prevIds.size > 0) {
-      const fresh = items.filter((i: any) => !prevIds.has(i._id));
+      const fresh = items.filter((i: any) => !prevIds.has(i.id));
       if (fresh.length > 0) {
-        setNewIds(new Set<string>(fresh.map((i: any) => i._id)));
+        setNewIds(new Set<string>(fresh.map((i: any) => i.id)));
         const list = listRef.current;
         const atTop = !list || list.scrollTop < 40;
         if (!atTop) setNewCount((c) => c + fresh.length);
@@ -121,15 +163,15 @@ export default function SalesFeedPage() {
     todayStart.setHours(0, 0, 0, 0);
     const ts = todayStart.getTime();
     return items
-      .filter((i: any) => i.timestamp >= ts)
-      .reduce((sum: number, i: any) => sum + (i.amount || 0), 0);
+      .filter((i: any) => new Date(i.timestamp).getTime() >= ts)
+      .reduce((sum: number, i: any) => sum + Number(i.amount || 0), 0);
   }, [items]);
 
   const todayCount = useMemo(() => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const ts = todayStart.getTime();
-    return items.filter((i: any) => i.timestamp >= ts).length;
+    return items.filter((i: any) => new Date(i.timestamp).getTime() >= ts).length;
   }, [items]);
 
   const onScroll = () => {
@@ -252,7 +294,7 @@ export default function SalesFeedPage() {
           gap: 8,
         }}
       >
-        {!result ? (
+        {loading ? (
           <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "30px 10px" }}>Loading transactions...</div>
         ) : visibleItems.length === 0 ? (
           <div style={{ textAlign: "center", color: "var(--text-muted)", padding: "30px 10px" }}>No transactions found.</div>
@@ -260,14 +302,16 @@ export default function SalesFeedPage() {
           <>
             {visibleItems.map((txn: any) => {
               const meta = typeMeta(txn.type);
-              const fan = txn.fanUsername || txn.fanId || "Unknown";
-              const isNew = newIds.has(txn._id);
+              const fan = txn.fan_username || txn.fan_id || "Unknown";
+              const isNew = newIds.has(txn.id);
+              const amount = Number(txn.amount || 0);
+              const timestampMs = new Date(txn.timestamp).getTime();
               // OF takes 20% platform fee — show estimated net
-              const netAmount = txn.amount * 0.8;
+              const netAmount = amount * 0.8;
 
               return (
                 <div
-                  key={txn._id}
+                  key={txn.id}
                   style={{
                     borderRadius: 12,
                     border: "1px solid var(--border)",
@@ -290,7 +334,7 @@ export default function SalesFeedPage() {
 
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 800, color: "var(--text)", fontSize: 16 }}>{formatMoney(txn.amount)}</span>
+                      <span style={{ fontWeight: 800, color: "var(--text)", fontSize: 16 }}>{formatMoney(amount)}</span>
                       <span style={{ fontWeight: 500, color: "var(--text-muted)", fontSize: 12 }}>
                         (net ~{formatMoney(netAmount)})
                       </span>
@@ -303,13 +347,13 @@ export default function SalesFeedPage() {
                     </div>
                     <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       @{fan}
-                      {(txn.creatorName || txn.accountId) && <span style={{ color: "var(--text-muted)" }}> · {txn.creatorName ?? txn.accountId}</span>}
+                      {txn.account_id && <span style={{ color: "var(--text-muted)" }}> · {txn.account_id}</span>}
                     </div>
                   </div>
 
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap" }}>{relativeTime(txn.timestamp)}</div>
-                    <div style={{ color: "var(--text-muted)", fontSize: 11, whiteSpace: "nowrap", marginTop: 2 }}>{formatTimestamp(txn.timestamp)}</div>
+                    <div style={{ color: "var(--text-muted)", fontSize: 12, whiteSpace: "nowrap" }}>{relativeTime(timestampMs)}</div>
+                    <div style={{ color: "var(--text-muted)", fontSize: 11, whiteSpace: "nowrap", marginTop: 2 }}>{formatTimestamp(timestampMs)}</div>
                   </div>
                 </div>
               );
