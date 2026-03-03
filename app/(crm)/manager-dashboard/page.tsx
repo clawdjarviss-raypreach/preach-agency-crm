@@ -237,12 +237,25 @@ export default function ManagerDashboardPage() {
         accountToCreator.set((row as any).account_id, name);
       }
 
-      const { data: subsTx } = await supabase
-        .from("crm_of_transactions")
-        .select("account_id,type,timestamp")
-        .in("type", ["new_sub", "subscription", "rebill"])
-        .gte("timestamp", `${dateRange.start}T00:00:00`)
-        .lte("timestamp", `${dateRange.end}T23:59:59`);
+      // Paginate to fetch ALL new_sub transactions (Supabase defaults to 1000 rows)
+      const subsTx: any[] = [];
+      {
+        let from = 0;
+        const pageSize = 1000;
+        while (true) {
+          const { data } = await supabase
+            .from("crm_of_transactions")
+            .select("account_id,type,timestamp")
+            .eq("type", "new_sub")
+            .gte("timestamp", `${dateRange.start}T00:00:00`)
+            .lte("timestamp", `${dateRange.end}T23:59:59`)
+            .range(from, from + pageSize - 1);
+          if (!data || data.length === 0) break;
+          subsTx.push(...data);
+          if (data.length < pageSize) break;
+          from += pageSize;
+        }
+      }
 
       const accMap = new Map<string, { accountId: string; creatorName: string; newSubsInRange: number }>();
       for (const tx of subsTx ?? []) {
@@ -259,12 +272,25 @@ export default function ManagerDashboardPage() {
       startTrend.setDate(startTrend.getDate() - (days - 1));
       const trendStart = toDateOnly(startTrend);
 
-      const { data: trendTx } = await supabase
-        .from("crm_of_transactions")
-        .select("timestamp,type")
-        .in("type", ["new_sub", "subscription", "rebill"])
-        .gte("timestamp", `${trendStart}T00:00:00`)
-        .lte("timestamp", `${toDateOnly(new Date())}T23:59:59`);
+      // Paginate trend data too — only new_sub
+      const trendTx: any[] = [];
+      {
+        let from = 0;
+        const pageSize = 1000;
+        while (true) {
+          const { data } = await supabase
+            .from("crm_of_transactions")
+            .select("timestamp,type")
+            .eq("type", "new_sub")
+            .gte("timestamp", `${trendStart}T00:00:00`)
+            .lte("timestamp", `${toDateOnly(new Date())}T23:59:59`)
+            .range(from, from + pageSize - 1);
+          if (!data || data.length === 0) break;
+          trendTx.push(...data);
+          if (data.length < pageSize) break;
+          from += pageSize;
+        }
+      }
 
       const trendMap = new Map<string, number>();
       for (const tx of trendTx ?? []) {
