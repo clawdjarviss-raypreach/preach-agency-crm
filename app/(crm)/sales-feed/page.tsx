@@ -77,6 +77,27 @@ export default function SalesFeedPage() {
   const [items, setItems] = useState<any[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [creatorMap, setCreatorMap] = useState<Record<string, string>>({});
+
+  // Load account → creator name mapping
+  useEffect(() => {
+    async function loadCreatorMap() {
+      const [{ data: accounts }, { data: creators }] = await Promise.all([
+        supabase.from("crm_of_accounts").select("account_id, creator_id"),
+        supabase.from("crm_creators").select("id, name"),
+      ]);
+      const creatorNames: Record<string, string> = {};
+      for (const c of creators ?? []) {
+        creatorNames[c.id] = c.name;
+      }
+      const map: Record<string, string> = {};
+      for (const a of accounts ?? []) {
+        map[a.account_id] = creatorNames[a.creator_id] ?? a.account_id;
+      }
+      setCreatorMap(map);
+    }
+    loadCreatorMap();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -347,7 +368,7 @@ export default function SalesFeedPage() {
                     </div>
                     <div style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       @{fan}
-                      {txn.account_id && <span style={{ color: "var(--text-muted)" }}> · {txn.account_id}</span>}
+                      {txn.account_id && <span style={{ color: "var(--text-muted)" }}> · {creatorMap[txn.account_id] || txn.account_id}</span>}
                     </div>
                   </div>
 
