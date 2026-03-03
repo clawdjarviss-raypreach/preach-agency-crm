@@ -633,6 +633,20 @@ export default function ManagerDashboardPage() {
     return showAllIgAccounts ? filteredIgRows : filteredIgRows.slice(0, 10);
   }, [filteredIgRows, showAllIgAccounts]);
 
+  // Filter reel curves by selected creator
+  const filteredReelCurves = useMemo(() => {
+    if (selectedIgCreator === "all") return igReelCurves;
+    // Get account IDs that belong to the selected creator
+    const creatorAccountIds = new Set(
+      igRows.filter((row: any) => String(row.creatorId ?? "") === selectedIgCreator).map((row: any) => row.accountId)
+    );
+    return igReelCurves.filter((reel: any) => {
+      // Match by account username → find the account row
+      const matchingAccount = igRows.find((row: any) => row.username === reel.accountUsername);
+      return matchingAccount && creatorAccountIds.has(matchingAccount.accountId);
+    });
+  }, [igReelCurves, selectedIgCreator, igRows]);
+
   const igDonutData = useMemo(() => {
     const rows = filteredIgRows.slice(0, 30);
     const viewsData = rows.map((row: any, i: number) => ({
@@ -958,13 +972,13 @@ export default function ManagerDashboardPage() {
           🎬 Reel 30-Day Performance Curves (daily deltas from cumulative snapshots)
         </div>
 
-        {igReelCurves.length === 0 ? (
+        {filteredReelCurves.length === 0 ? (
           <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "40px 0" }}>
             No reels in selected IG range
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px" }}>
-            {igReelCurves.map((reel: any) => (
+            {filteredReelCurves.map((reel: any) => (
               <div key={reel.reelId} style={{ border: "1px solid #2a2a2a", borderRadius: "12px", padding: "12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", marginBottom: "8px" }}>
                   <div>
