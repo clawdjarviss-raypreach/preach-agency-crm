@@ -7,6 +7,14 @@ type SortField = "views" | "likes" | "date";
 
 interface Props {
   token: string;
+  startDate: string;
+  endDate: string;
+}
+
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
 }
 
 function formatNumber(n: number): string {
@@ -24,7 +32,6 @@ function ReelCard({ reel }: { reel: any }) {
       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#444"; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "#2a2a2a"; }}
     >
-      {/* Thumbnail */}
       {reel.thumbnail_url ? (
         <div style={{
           width: "100%", aspectRatio: "9/16", background: "#0a0a0a",
@@ -37,7 +44,7 @@ function ReelCard({ reel }: { reel: any }) {
             background: "rgba(0,0,0,0.7)", borderRadius: "6px",
             padding: "4px 8px", fontSize: "13px", fontWeight: "700", color: "#fff",
           }}>
-            👁 {formatNumber(reel.views ?? 0)}
+            👁 +{formatNumber(reel.viewsGained ?? 0)}
           </div>
         </div>
       ) : (
@@ -49,11 +56,10 @@ function ReelCard({ reel }: { reel: any }) {
           🎬
         </div>
       )}
-      {/* Stats */}
       <div style={{ padding: "12px" }}>
         <div style={{ display: "flex", gap: "12px", fontSize: "12px", color: "#a0a0a0" }}>
-          <span>❤️ {formatNumber(reel.likes ?? 0)}</span>
-          <span>💬 {formatNumber(reel.comments ?? 0)}</span>
+          <span>❤️ +{formatNumber(reel.likesGained ?? 0)}</span>
+          <span>💬 +{formatNumber(reel.commentsGained ?? 0)}</span>
         </div>
         {reel.posted_at && (
           <div style={{ fontSize: "11px", color: "#666", marginTop: "6px" }}>
@@ -69,10 +75,14 @@ function AccountReelsSection({
   token,
   account,
   sortBy,
+  startDate,
+  endDate,
 }: {
   token: string;
   account: any;
   sortBy: SortField;
+  startDate: string;
+  endDate: string;
 }) {
   const [expanded, setExpanded] = useState(true);
   const [reels, setReels] = useState<any[] | null>(null);
@@ -81,18 +91,70 @@ function AccountReelsSection({
     if (!token || !account?.id) return;
 
     async function fetchReels() {
-      const orderCol = sortBy === "date" ? "posted_at" : sortBy;
-      const { data } = await supabase
+      const endPlusOne = addDays(endDate, 1);
+
+      const { data: baseReels } = await supabase
         .from("crm_ig_reels")
-        .select("*")
+        .select("id,ig_account_id,supabase_reel_id,thumbnail_url,posted_at")
         .eq("ig_account_id", account.id)
-        .order(orderCol, { ascending: false })
-        .limit(50);
-      setReels(data || []);
+        .lte("posted_at", `${endDate}T23:59:59`)
+        .limit(80);
+
+      const reelsList = baseReels || [];
+      if (reelsList.length === 0) {
+        setReels([]);
+        return;
+      }
+
+      const reelIds = reelsList.map((r: any) => r.id);
+      const { data: snapshots } = await supabase
+        .from("crm_ig_reel_daily_snapshots")
+        .select("ig_reel_id,snapshot_date,views,likes,comments")
+        .in("ig_reel_id", reelIds)
+        .gte("snapshot_date", startDate)
+        .lte("snapshot_date", endPlusOne);
+
+      const byReel = new Map<string, any[]>();
+      for (const snap of snapshots ?? []) {
+        const reelId = (snap as any).ig_reel_id;
+        if (!byReel.has(reelId)) byReel.set(reelId, []);
+        byReel.get(reelId)!.push(snap);
+      }
+
+      const hydrated = reelsList.map((reel: any) => {
+        const rows = (byReel.get(reel.id) ?? []).sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
+        const byDate = new Map(rows.map((r) => [String((r as any).snapshot_date), r]));
+        const startSnap = byDate.get(startDate);
+        const endSnap = byDate.get(endPlusOne) ?? (rows.length ? rows[rows.length - 1] : null);
+
+        const startViews = Number(startSnap?.views || 0);
+        const endViews = Number(endSnap?.views || 0);
+        const startLikes = Number(startSnap?.likes || 0);
+        const endLikes = Number(endSnap?.likes || 0);
+        const startComments = Number(startSnap?.comments || 0);
+        const endComments = Number(endSnap?.comments || 0);
+
+        return {
+          ...reel,
+          viewsGained: endViews - startViews,
+          likesGained: endLikes - startLikes,
+          commentsGained: endComments - startComments,
+        };
+      });
+
+      const sorted = hydrated.sort((a: any, b: any) => {
+        if (sortBy === "date") {
+          return new Date(b.posted_at || 0).getTime() - new Date(a.posted_at || 0).getTime();
+        }
+        if (sortBy === "views") return (b.viewsGained || 0) - (a.viewsGained || 0);
+        return (b.likesGained || 0) - (a.likesGained || 0);
+      });
+
+      setReels(sorted.slice(0, 50));
     }
 
     fetchReels();
-  }, [token, account?.id, sortBy]);
+  }, [token, account?.id, sortBy, startDate, endDate]);
 
   return (
     <div style={{ marginBottom: "16px" }}>
@@ -149,7 +211,7 @@ function AccountReelsSection({
   );
 }
 
-export default function ReelsGrid({ token }: Props) {
+export default function ReelsGrid({ token, startDate, endDate }: Props) {
   const [sortBy, setSortBy] = useState<SortField>("views");
   const [accounts, setAccounts] = useState<any[] | null>(null);
 
@@ -157,7 +219,7 @@ export default function ReelsGrid({ token }: Props) {
     if (!token) return;
 
     async function fetchAccounts() {
-      const { data } = await supabase.from("crm_ig_accounts").select("*");
+      const { data } = await supabase.from("crm_ig_accounts").select("id,username");
       setAccounts(data || []);
     }
 
@@ -179,7 +241,7 @@ export default function ReelsGrid({ token }: Props) {
           fontSize: "13px", color: "#a0a0a0", fontWeight: "500",
           textTransform: "uppercase", letterSpacing: "0.5px",
         }}>
-          🎬 Reels Performance
+          🎬 Reels Performance (Range Gains)
         </div>
         <div style={{ display: "flex", gap: "4px" }}>
           {(["views", "likes", "date"] as SortField[]).map((field) => (
@@ -212,6 +274,8 @@ export default function ReelsGrid({ token }: Props) {
           token={token}
           account={account}
           sortBy={sortBy}
+          startDate={startDate}
+          endDate={endDate}
         />
       ))}
     </div>

@@ -9,6 +9,12 @@ interface Props {
   endDate: string;
 }
 
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
 function StatCard({ label, value, icon, isEmpty }: { label: string; value: string; icon: string; isEmpty?: boolean }) {
   return (
     <div style={{
@@ -41,47 +47,66 @@ export default function IgOverviewCards({ token, startDate, endDate }: Props) {
     if (!token) return;
 
     async function fetchOverview() {
-      // Aggregate from crm_ig_daily_snapshots for date range
-      const { data: snapshots } = await supabase
-        .from("crm_ig_daily_snapshots")
-        .select("followers, followers_delta, views, likes, comments")
-        .gte("date", startDate)
-        .lte("date", endDate);
+      const endPlusOne = addDays(endDate, 1);
 
-      if (!snapshots || snapshots.length === 0) {
-        setOverview({
-          totalFollowers: 0,
-          totalFollowerDelta: 0,
-          totalViews: 0,
-          totalLikes: 0,
-          totalComments: 0,
-        });
-        return;
+      const [{ data: accounts }, { data: snapshots }] = await Promise.all([
+        supabase.from("crm_ig_accounts").select("id"),
+        supabase
+          .from("crm_ig_daily_snapshots")
+          .select("ig_account_id,date,followers,views,likes,comments")
+          .gte("date", startDate)
+          .lte("date", endPlusOne),
+      ]);
+
+      const byAccount = new Map<string, any[]>();
+      for (const snap of snapshots ?? []) {
+        const accountId = (snap as any).ig_account_id;
+        if (!byAccount.has(accountId)) byAccount.set(accountId, []);
+        byAccount.get(accountId)!.push(snap);
       }
 
-      // Get latest followers total (max from the snapshots)
-      const { data: latestSnapshots } = await supabase
-        .from("crm_ig_daily_snapshots")
-        .select("followers")
-        .lte("date", endDate)
-        .order("date", { ascending: false })
-        .limit(50);
+      let totalFollowersStart = 0;
+      let totalFollowersEnd = 0;
+      let totalViews = 0;
+      let totalLikes = 0;
+      let totalComments = 0;
 
-      // Sum up deltas and engagement
-      const totalFollowerDelta = snapshots.reduce((s, r) => s + (r.followers_delta || 0), 0);
-      const totalViews = snapshots.reduce((s, r) => s + (r.views || 0), 0);
-      const totalLikes = snapshots.reduce((s, r) => s + (r.likes || 0), 0);
-      const totalComments = snapshots.reduce((s, r) => s + (r.comments || 0), 0);
+      for (const account of accounts ?? []) {
+        const accountId = (account as any).id;
+        const rows = (byAccount.get(accountId) ?? []).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        const byDate = new Map(rows.map((r) => [String((r as any).date), r]));
 
-      // Get unique latest followers per account from the latest snapshots
-      const totalFollowers = (latestSnapshots || []).reduce((max, s) => Math.max(max, s.followers || 0), 0);
+        const startSnap = byDate.get(startDate);
+        const endSnap = byDate.get(endPlusOne) ?? (rows.length ? rows[rows.length - 1] : null);
+
+        const startFollowers = Number(startSnap?.followers || 0);
+        const endFollowers = Number(endSnap?.followers || 0);
+        const startViews = Number(startSnap?.views || 0);
+        const endViews = Number(endSnap?.views || 0);
+        const startLikes = Number(startSnap?.likes || 0);
+        const endLikes = Number(endSnap?.likes || 0);
+        const startComments = Number(startSnap?.comments || 0);
+        const endComments = Number(endSnap?.comments || 0);
+
+        totalFollowersStart += startFollowers;
+        totalFollowersEnd += endFollowers;
+        totalViews += endViews - startViews;
+        totalLikes += endLikes - startLikes;
+        totalComments += endComments - startComments;
+      }
+
+      const totalFollowerDelta = totalFollowersEnd - totalFollowersStart;
+      const followerGrowthPct = totalFollowersStart > 0
+        ? ((totalFollowerDelta / totalFollowersStart) * 100)
+        : null;
 
       setOverview({
-        totalFollowers,
+        totalFollowers: totalFollowersEnd,
         totalFollowerDelta,
         totalViews,
         totalLikes,
         totalComments,
+        followerGrowthPct,
       });
     }
 
@@ -96,6 +121,7 @@ export default function IgOverviewCards({ token, startDate, endDate }: Props) {
     totalViews,
     totalLikes,
     totalComments,
+    followerGrowthPct,
   } = overview;
 
   const totalEngagements = totalLikes + totalComments;
@@ -104,6 +130,7 @@ export default function IgOverviewCards({ token, startDate, endDate }: Props) {
     : "—";
 
   const deltaSign = totalFollowerDelta >= 0 ? "+" : "";
+  const growthSign = followerGrowthPct !== null && followerGrowthPct >= 0 ? "+" : "";
 
   return (
     <div style={{
@@ -118,7 +145,7 @@ export default function IgOverviewCards({ token, startDate, endDate }: Props) {
       <StatCard
         icon="📈"
         label="Follower Growth"
-        value={`${deltaSign}${totalFollowerDelta.toLocaleString()}`}
+        value={`${deltaSign}${totalFollowerDelta.toLocaleString()}${followerGrowthPct !== null ? ` (${growthSign}${followerGrowthPct.toFixed(1)}%)` : ""}`}
         isEmpty={totalFollowers === 0 && totalFollowerDelta === 0}
       />
       <StatCard

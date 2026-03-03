@@ -24,6 +24,22 @@ interface Props {
   endDate: string;
 }
 
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
+function enumerateDates(start: string, end: string): string[] {
+  const out: string[] = [];
+  const s = new Date(`${start}T12:00:00`);
+  const e = new Date(`${end}T12:00:00`);
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    out.push(d.toISOString().split("T")[0]);
+  }
+  return out;
+}
+
 function ChartTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
@@ -47,33 +63,32 @@ export default function FollowerGrowthChart({ token, startDate, endDate }: Props
   const [accounts, setAccounts] = useState<any[] | null>(null);
   const [allSnapshots, setAllSnapshots] = useState<Map<string, any[]>>(new Map());
 
-  // Fetch accounts
   useEffect(() => {
     if (!token) return;
 
     async function fetchAccounts() {
-      const { data } = await supabase.from("crm_ig_accounts").select("*");
+      const { data } = await supabase.from("crm_ig_accounts").select("id,username");
       setAccounts(data || []);
     }
 
     fetchAccounts();
   }, [token]);
 
-  // Fetch snapshots for all accounts in a single useEffect
   useEffect(() => {
     if (!token || !accounts || accounts.length === 0) return;
 
     async function fetchAllSnapshots() {
       const snapshotMap = new Map<string, any[]>();
+      const endPlusOne = addDays(endDate, 1);
 
       await Promise.all(
         accounts!.slice(0, 10).map(async (account) => {
           const { data } = await supabase
             .from("crm_ig_daily_snapshots")
-            .select("*")
+            .select("date,followers")
             .eq("ig_account_id", account.id)
             .gte("date", startDate)
-            .lte("date", endDate)
+            .lte("date", endPlusOne)
             .order("date");
           snapshotMap.set(account.id, data || []);
         })
@@ -90,29 +105,35 @@ export default function FollowerGrowthChart({ token, startDate, endDate }: Props
   const padded = accounts.slice(0, 10);
 
   const chartData = useMemo(() => {
-    const dateMap = new Map<string, any>();
+    const rowsByDate = new Map<string, any>();
+    const dates = enumerateDates(startDate, endDate);
+
+    for (const date of dates) {
+      rowsByDate.set(date, {
+        date,
+        label: new Date(date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      });
+    }
 
     padded.forEach((account) => {
-      const snapshots = allSnapshots.get(account.id);
-      if (!snapshots) return;
-      const name = account.username || `Account`;
+      const snapshots = allSnapshots.get(account.id) || [];
+      const name = account.username || "Account";
+      const byDate = new Map(snapshots.map((s: any) => [String(s.date), s]));
+      const baseline = Number(byDate.get(startDate)?.followers || 0);
 
-      for (const snap of snapshots) {
-        if (!dateMap.has(snap.date)) {
-          dateMap.set(snap.date, { date: snap.date });
-        }
-        const row = dateMap.get(snap.date)!;
-        row[name] = snap.followers ?? 0;
-      }
+      dates.forEach((date) => {
+        const endpoint = addDays(date, 1);
+        const endpointRow = byDate.get(endpoint);
+        const endpointFollowers = Number(endpointRow?.followers || 0);
+        const gained = endpointFollowers - baseline;
+        rowsByDate.get(date)![name] = gained;
+      });
     });
 
-    return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date)).map((row) => ({
-      ...row,
-      date: new Date(row.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-    }));
-  }, [padded, allSnapshots]);
+    return Array.from(rowsByDate.values()).map((r) => ({ ...r, date: r.label }));
+  }, [padded, allSnapshots, startDate, endDate]);
 
-  const accountNames = padded.map((a) => a.username || `Account`);
+  const accountNames = padded.map((a) => a.username || "Account");
 
   return (
     <div style={{
@@ -123,7 +144,7 @@ export default function FollowerGrowthChart({ token, startDate, endDate }: Props
         fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
         textTransform: "uppercase", letterSpacing: "0.5px",
       }}>
-        📊 Follower Growth
+        📊 Follower Growth (Snapshot Endpoint Formula)
       </div>
       {chartData.length === 0 ? (
         <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "60px 0" }}>
@@ -136,9 +157,7 @@ export default function FollowerGrowthChart({ token, startDate, endDate }: Props
             <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
             <Tooltip content={<ChartTooltip />} />
-            <Legend
-              wrapperStyle={{ fontSize: "12px", color: "#a0a0a0" }}
-            />
+            <Legend wrapperStyle={{ fontSize: "12px", color: "#a0a0a0" }} />
             {accountNames.map((name, i) => (
               <Line
                 key={name}

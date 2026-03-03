@@ -22,10 +22,36 @@ function toDateOnly(d: Date) {
   return d.toISOString().split("T")[0];
 }
 
+function addDays(date: string, days: number) {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return toDateOnly(d);
+}
+
 function getDaysAgoRange(days: number) {
   const now = new Date();
   const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   return { start: toDateOnly(start), end: toDateOnly(now) };
+}
+
+function getYesterdayDateOnly() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return toDateOnly(d);
+}
+
+function getLast7DaysEndingYesterday() {
+  const end = new Date();
+  end.setDate(end.getDate() - 1);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 6);
+  return { start: toDateOnly(start), end: toDateOnly(end) };
+}
+
+function clampRangeToMax(range: DateRange, maxDate: string): DateRange {
+  const end = range.end > maxDate ? maxDate : range.end;
+  const start = range.start > end ? end : range.start;
+  return { start, end };
 }
 
 function formatNumber(n: number): string {
@@ -74,6 +100,7 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
 export default function ManagerDashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(6));
+  const [igDateRange, setIgDateRange] = useState<DateRange>(() => getLast7DaysEndingYesterday());
   const [loading, setLoading] = useState(true);
 
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -169,45 +196,64 @@ export default function ManagerDashboardPage() {
         creatorName: creatorNameById.get(l.creator_id) || "Unknown",
       }));
 
+      const igEndPlusOne = addDays(igDateRange.end, 1);
       const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }] = await Promise.all([
         supabase.from("crm_ig_accounts").select("id,creator_id,username,followers").order("followers", { ascending: false }),
         supabase
           .from("crm_ig_daily_snapshots")
-          .select("ig_account_id,followers_delta,views,likes,comments,reels_posted,date")
-          .gte("date", dateRange.start)
-          .lte("date", dateRange.end),
+          .select("ig_account_id,date,followers,views,likes,comments")
+          .gte("date", igDateRange.start)
+          .lte("date", igEndPlusOne),
         supabase
           .from("crm_ig_reels")
           .select("ig_account_id")
-          .gte("posted_at", `${dateRange.start}T00:00:00`)
-          .lte("posted_at", `${dateRange.end}T23:59:59`),
+          .gte("posted_at", `${igDateRange.start}T00:00:00`)
+          .lte("posted_at", `${igDateRange.end}T23:59:59`),
       ]);
 
-      const snapByAccount = new Map<string, any>();
+      const snapByAccount = new Map<string, any[]>();
       for (const s of igSnapshots ?? []) {
         const id = (s as any).ig_account_id;
-        if (!snapByAccount.has(id)) snapByAccount.set(id, { followersDelta: 0, views: 0, likes: 0, comments: 0, reelCount: 0 });
-        const row = snapByAccount.get(id);
-        row.followersDelta += Number((s as any).followers_delta || 0);
-        row.views += Number((s as any).views || 0);
-        row.likes += Number((s as any).likes || 0);
-        row.comments += Number((s as any).comments || 0);
-        row.reelCount += Number((s as any).reels_posted || 0);
+        if (!snapByAccount.has(id)) snapByAccount.set(id, []);
+        snapByAccount.get(id)!.push(s);
       }
+
+      const reelCountByAccount = new Map<string, number>();
       for (const r of igReels ?? []) {
         const id = (r as any).ig_account_id;
-        if (!snapByAccount.has(id)) snapByAccount.set(id, { followersDelta: 0, views: 0, likes: 0, comments: 0, reelCount: 0 });
-        snapByAccount.get(id).reelCount += 1;
+        reelCountByAccount.set(id, (reelCountByAccount.get(id) || 0) + 1);
       }
 
       const igRowsData = (igAccounts ?? []).map((a: any) => {
-        const s = snapByAccount.get(a.id) || { followersDelta: 0, views: 0, likes: 0, comments: 0, reelCount: 0 };
+        const rows = (snapByAccount.get(a.id) ?? []).sort((x, y) => String(x.date).localeCompare(String(y.date)));
+        const byDate = new Map(rows.map((r) => [String((r as any).date), r]));
+
+        const startSnap = byDate.get(igDateRange.start);
+        const endSnap = byDate.get(igEndPlusOne) ?? (rows.length ? rows[rows.length - 1] : null);
+
+        const startFollowers = Number(startSnap?.followers || 0);
+        const endFollowers = Number(endSnap?.followers || 0);
+        const startViews = Number(startSnap?.views || 0);
+        const endViews = Number(endSnap?.views || 0);
+        const startLikes = Number(startSnap?.likes || 0);
+        const endLikes = Number(endSnap?.likes || 0);
+        const startComments = Number(startSnap?.comments || 0);
+        const endComments = Number(endSnap?.comments || 0);
+
+        const followersDelta = endFollowers - startFollowers;
+        const followerGrowthPct = startFollowers > 0 ? ((followersDelta / startFollowers) * 100) : null;
+
         return {
           accountId: a.id,
           creatorName: creatorNameById.get(a.creator_id) || "Unknown",
           username: a.username,
-          followers: Number(a.followers || 0),
-          ...s,
+          followers: endFollowers,
+          followersDelta,
+          followerGrowthPct,
+          views: endViews - startViews,
+          likes: endLikes - startLikes,
+          comments: endComments - startComments,
+          reelCount: reelCountByAccount.get(a.id) || 0,
         };
       }).sort((a: any, b: any) => b.views - a.views);
 
@@ -223,7 +269,7 @@ export default function ManagerDashboardPage() {
 
     loadData();
     return () => { cancelled = true; };
-  }, [dateRange.start, dateRange.end, trendPeriod]);
+  }, [dateRange.start, dateRange.end, igDateRange.start, igDateRange.end, trendPeriod]);
 
   if (!user) return null;
   if (user.role !== "marketing_manager" && user.role !== "admin") {
@@ -234,7 +280,9 @@ export default function ManagerDashboardPage() {
     );
   }
 
+  const maxIgEnd = getYesterdayDateOnly();
   const rangeLabelText = `${new Date(dateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(dateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+  const igRangeLabelText = `${new Date(igDateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(igDateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 
   return (
     <div style={{ maxWidth: "1400px" }}>
@@ -373,13 +421,29 @@ export default function ManagerDashboardPage() {
       </Card>
 
       <Card style={{ overflowX: "auto" }}>
-        <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, marginBottom: "12px", textTransform: "uppercase" }}>
-          📸 Instagram Analytics
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "12px",
+          marginBottom: "12px",
+          flexWrap: "wrap",
+        }}>
+          <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, textTransform: "uppercase" }}>
+            📸 Instagram Analytics ({igRangeLabelText})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px", alignItems: "flex-end" }}>
+            <DateRangePicker
+              value={igDateRange}
+              onChange={(next) => setIgDateRange(clampRangeToMax(next, maxIgEnd))}
+            />
+            <span style={{ fontSize: "11px", color: "#666" }}>IG max end date: yesterday ({maxIgEnd})</span>
+          </div>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "860px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "980px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {["Creator", "Account", "Views", "Likes", "Comments", "New Followers", "Reels"].map((h) => (
+              {["Creator", "Account", "Views", "Likes", "Comments", "New Followers", "Growth %", "Reels"].map((h) => (
                 <th key={h} style={{ padding: "10px", fontSize: "12px", color: "#a0a0a0" }}>{h}</th>
               ))}
             </tr>
@@ -393,6 +457,7 @@ export default function ManagerDashboardPage() {
                 <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.likes || 0)}</td>
                 <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.comments || 0)}</td>
                 <td style={{ padding: "10px", color: r.followersDelta >= 0 ? "#22c55e" : "#ef4444" }}>{r.followersDelta >= 0 ? "+" : ""}{formatNumber(r.followersDelta || 0)}</td>
+                <td style={{ padding: "10px", color: "#fff" }}>{r.followerGrowthPct === null ? "—" : `${r.followerGrowthPct >= 0 ? "+" : ""}${r.followerGrowthPct.toFixed(1)}%`}</td>
                 <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.reelCount || 0)}</td>
               </tr>
             ))}
