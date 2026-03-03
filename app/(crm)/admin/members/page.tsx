@@ -412,11 +412,17 @@ export default function MembersPage() {
       if (delErr) throw delErr;
 
       if (editTrackingLinkIds.length > 0) {
+        // assigned_by references crm_chatters(id), so look up current user's chatter ID
         const { data: { user: currentUser } } = await supabase.auth.getUser();
+        let assignedBy = editMember.id; // fallback to the member being edited
+        if (currentUser?.id) {
+          const { data: chatter } = await supabase.from("crm_chatters").select("id").eq("supabase_auth_id", currentUser.id).single();
+          if (chatter?.id) assignedBy = chatter.id;
+        }
         const rows = editTrackingLinkIds.map((tlId) => ({
           user_id: editMember.id,
           tracking_link_id: tlId,
-          assigned_by: currentUser?.id ?? editMember.id,
+          assigned_by: assignedBy,
         }));
         const { error: insErr } = await supabase.from("crm_tracking_link_assignments").insert(rows);
         if (insErr) throw insErr;

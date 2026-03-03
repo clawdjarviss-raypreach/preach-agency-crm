@@ -189,6 +189,7 @@ export default function ManagerDashboardPage() {
   const [igCreatorOptions, setIgCreatorOptions] = useState<{ id: string; name: string }[]>([]);
   const [selectedIgCreator, setSelectedIgCreator] = useState<string>("all");
   const [showAllIgAccounts, setShowAllIgAccounts] = useState(false);
+  const [showAllTrackingLinks, setShowAllTrackingLinks] = useState(false);
   const [selectedIgAccount, setSelectedIgAccount] = useState<any | null>(null);
   const [selectedIgAccountReels, setSelectedIgAccountReels] = useState<any[] | null>(null);
 
@@ -747,6 +748,7 @@ export default function ManagerDashboardPage() {
           </button>
         </div>
         {activeOfTab === "tracking_links" && (
+        <>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "760px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
@@ -763,7 +765,7 @@ export default function ManagerDashboardPage() {
             </tr>
           </thead>
           <tbody>
-            {trackingLinks.slice(0, 40).map((l: any) => (
+            {trackingLinks.slice(0, showAllTrackingLinks ? trackingLinks.length : 10).map((l: any) => (
               <tr key={l.id} style={{ borderBottom: "1px solid #242424" }}>
                 <td style={{ padding: "10px", color: "#fff" }}>{l.name}</td>
                 <td style={{ padding: "10px", color: "#a0a0a0" }}>{l.creatorName}</td>
@@ -775,6 +777,15 @@ export default function ManagerDashboardPage() {
             ))}
           </tbody>
         </table>
+        {!showAllTrackingLinks && trackingLinks.length > 10 && (
+          <button
+            onClick={() => setShowAllTrackingLinks(true)}
+            style={{ display: "block", margin: "12px auto 0", padding: "8px 20px", borderRadius: 8, border: "1px solid var(--border, #333)", background: "transparent", color: "#a0a0a0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+          >
+            Show More ({trackingLinks.length - 10} more)
+          </button>
+        )}
+        </>
         )}
       </Card>
 
