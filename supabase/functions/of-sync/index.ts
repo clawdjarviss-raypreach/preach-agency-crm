@@ -136,65 +136,125 @@ function buildEmptyDailyEarnings(accountId: string, date: string) {
   };
 }
 
+function toNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function listDates(startDate: string, endDate: string): string[] {
+  const out: string[] = [];
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return out;
+
+  const cur = new Date(start);
+  while (cur <= end) {
+    out.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  return out;
+}
+
+async function getChargebackTotalsByDate(accountId: string, startDate: string, endDate: string) {
+  const payload = await fetchOf(`/api/${accountId}/chargebacks`, {
+    query: {
+      start_date: startDate,
+      end_date: endDate,
+      limit: 100,
+    },
+  });
+
+  const totals = new Map<string, { amount: number; count: number }>();
+
+  for (const item of listFromPayload(payload)) {
+    const date = parseDate(item?.payment?.createdAt ?? item?.createdAt ?? item?.timestamp);
+    if (!date) continue;
+
+    const amount = Math.abs(toNumber(item?.payment?.net ?? item?.payment?.amount ?? item?.amount ?? 0));
+    const current = totals.get(date) ?? { amount: 0, count: 0 };
+    current.amount += amount;
+    current.count += 1;
+    totals.set(date, current);
+  }
+
+  return totals;
+}
+
 async function syncEarnings(accountId: string) {
   return withSyncState(accountId, 'earnings', async () => {
     const range = getDefaultAnalyticsRange();
-    const rowsByDate = new Map<string, any>();
+    const dates = listDates(range.start_date, range.end_date);
+    if (dates.length === 0) return { inserted: 0 };
 
-    const ensureRow = (date: string) => {
-      if (!rowsByDate.has(date)) rowsByDate.set(date, buildEmptyDailyEarnings(accountId, date));
-      return rowsByDate.get(date)!;
-    };
+    const chargebackTotals = await getChargebackTotalsByDate(accountId, range.start_date, range.end_date);
+    const rows: any[] = [];
 
-    const typeMappings = [
-      { type: 'subscribes', payloadKey: 'subscribes', earningsKey: 'subscription_earnings', countKey: 'subscription_count' },
-      { type: 'tips', payloadKey: 'tips', earningsKey: 'tip_earnings', countKey: 'tip_count' },
-      { type: 'messages', payloadKey: 'chat_messages', earningsKey: 'message_earnings', countKey: 'message_count' },
-      { type: 'post', payloadKey: 'post', earningsKey: 'message_earnings', countKey: 'message_count' },
-      { type: 'stream', payloadKey: 'stream', earningsKey: 'stream_earnings', countKey: null },
-    ] as const;
+    for (const date of dates) {
+      const [earningsSummary, byTypeSummary, txSummary] = await Promise.all([
+        fetchOf('/api/analytics/summary/earnings', {
+          method: 'POST',
+          body: {
+            account_id: accountId,
+            start_date: date,
+            end_date: date,
+          },
+        }),
+        fetchOf('/api/analytics/financial/transactions/by-type', {
+          method: 'POST',
+          body: {
+            account_ids: [accountId],
+            start_date: date,
+            end_date: date,
+          },
+        }),
+        fetchOf('/api/analytics/financial/transactions/summary', {
+          method: 'POST',
+          body: {
+            account_ids: [accountId],
+            start_date: date,
+            end_date: date,
+          },
+        }),
+      ]);
 
-    for (const mapping of typeMappings) {
-      const payload = await fetchOf(`/api/${accountId}/statistics/statements/earnings`, {
-        query: {
-          start_date: range.start_date,
-          end_date: range.end_date,
-          type: mapping.type,
-        },
+      const ed = earningsSummary?.data ?? earningsSummary ?? {};
+      const bd = byTypeSummary?.data ?? byTypeSummary ?? {};
+      const sd = txSummary?.data ?? txSummary ?? {};
+      const chargeback = chargebackTotals.get(date) ?? { amount: 0, count: 0 };
+
+      const subscriptionEarnings = toNumber(bd?.new_subscription?.net) + toNumber(bd?.recurring_subscription?.net);
+      const tipEarnings = toNumber(bd?.tip?.net);
+      const messageEarnings = toNumber(bd?.message?.net);
+      const streamEarnings = toNumber(ed?.stream_earnings ?? ed?.streams ?? 0);
+      const referralEarnings = toNumber(ed?.referral_earnings ?? ed?.referrals ?? 0);
+
+      const transactionCount = Object.values(bd).reduce((sum: number, value: any) => {
+        if (value && typeof value === 'object') return sum + toNumber(value?.count);
+        return sum;
+      }, 0);
+
+      const totalEarnings = toNumber(ed?.total_earnings ?? ed?.total ?? 0);
+      const txNet = toNumber(sd?.total_net);
+
+      rows.push({
+        ...buildEmptyDailyEarnings(accountId, date),
+        total_earnings: totalEarnings,
+        subscription_earnings: subscriptionEarnings,
+        tip_earnings: tipEarnings,
+        message_earnings: messageEarnings,
+        stream_earnings: streamEarnings,
+        referral_earnings: referralEarnings,
+        transaction_count: transactionCount,
+        subscription_count: toNumber(bd?.new_subscription?.count),
+        tip_count: toNumber(bd?.tip?.count),
+        message_count: toNumber(bd?.message?.count),
+        chargeback_amount: chargeback.amount,
+        chargeback_count: chargeback.count,
+        net_earnings: (txNet > 0 ? txNet : totalEarnings) - chargeback.amount,
+        synced_at: new Date().toISOString(),
       });
-
-      const typedPayload = payload?.data?.[mapping.payloadKey] ?? payload?.data?.total ?? null;
-      const amountSeries = Array.isArray(typedPayload?.chartAmount) ? typedPayload.chartAmount : [];
-      const countSeries = Array.isArray(typedPayload?.chartCount) ? typedPayload.chartCount : [];
-
-      for (const item of amountSeries) {
-        const date = parseDate(item?.date);
-        if (!date) continue;
-        const row = ensureRow(date);
-        const amount = Number(item?.count ?? 0);
-        row[mapping.earningsKey] += amount;
-      }
-
-      for (const item of countSeries) {
-        const date = parseDate(item?.date);
-        if (!date) continue;
-        const row = ensureRow(date);
-        const count = Number(item?.count ?? 0);
-        row.transaction_count += count;
-        if (mapping.countKey) row[mapping.countKey] += count;
-      }
     }
-
-    const rows = Array.from(rowsByDate.values()).map((row) => {
-      row.total_earnings = Number(row.subscription_earnings ?? 0)
-        + Number(row.tip_earnings ?? 0)
-        + Number(row.message_earnings ?? 0)
-        + Number(row.stream_earnings ?? 0)
-        + Number(row.referral_earnings ?? 0);
-      row.net_earnings = row.total_earnings - Number(row.chargeback_amount ?? 0);
-      row.synced_at = new Date().toISOString();
-      return row;
-    });
 
     if (rows.length === 0) return { inserted: 0 };
 

@@ -62,6 +62,15 @@ function normalizeRevenueTxType(type: unknown): "subscription" | "message" | "ti
   return "other";
 }
 
+function isNewSubscriptionTxType(type: unknown): boolean {
+  const raw = String(type ?? "").trim().toLowerCase();
+  return raw === "new_sub"
+    || raw === "new_subscription"
+    || raw === "subscription"
+    || raw === "subscribes"
+    || raw === "subscribe";
+}
+
 function getGreeting(): string {
   const h = new Date().getHours();
   if (h < 12) return "Good Morning";
@@ -234,7 +243,9 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
             switch (normalizeRevenueTxType(tx.type)) {
               case "subscription":
                 row.subscription_earnings += amount;
-                row.subscription_count += 1;
+                if (isNewSubscriptionTxType(tx.type)) {
+                  row.subscription_count += 1;
+                }
                 break;
               case "message":
                 row.message_earnings += amount;
