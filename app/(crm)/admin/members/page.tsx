@@ -213,6 +213,7 @@ export default function MembersPage() {
   const [editCreatorIds, setEditCreatorIds] = useState<string[]>([]);
   const [creatorAccess, setCreatorAccess] = useState<Record<string, AccessAxes>>({});
   const [editTrackingLinkIds, setEditTrackingLinkIds] = useState<string[]>([]);
+  const [expandedTrackingCreators, setExpandedTrackingCreators] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [editKey, setEditKey] = useState(0);
   const [copiedInvite, setCopiedInvite] = useState(false);
@@ -391,6 +392,10 @@ export default function MembersPage() {
         const { error } = await supabase.from("crm_chatters").update({ role_id: editRoleId }).eq("id", editMember.id);
         if (error) throw error;
       }
+
+      // Save assigned creators to crm_chatters
+      const { error: creatorsErr } = await supabase.from("crm_chatters").update({ assigned_creators: editCreatorIds }).eq("id", editMember.id);
+      if (creatorsErr) throw creatorsErr;
 
       // Update creator access axes
       for (const cid of editCreatorIds) {
@@ -595,17 +600,34 @@ export default function MembersPage() {
                       {group.creatorName}
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {group.links.map((link) => {
-                        const lid = link.id;
-                        const checked = editTrackingLinkIds.includes(lid);
+                      {(() => {
+                        const expanded = expandedTrackingCreators.has(group.creatorId);
+                        const visibleLinks = expanded ? group.links : group.links.slice(0, 10);
+                        const hasMore = group.links.length > 10;
                         return (
-                          <label key={lid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, border: `1px solid ${checked ? "#8b5cf6" : "var(--border)"}`, background: checked ? "rgba(139,92,246,0.08)" : "transparent", cursor: "pointer", fontSize: 12 }}>
-                            <input type="checkbox" checked={checked} onChange={() => setEditTrackingLinkIds((prev) => checked ? prev.filter((x) => x !== lid) : [...prev, lid])} />
-                            <span style={{ fontWeight: 500 }}>{link.name}</span>
-                            <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: "auto" }}>{link.url}</span>
-                          </label>
+                          <>
+                            {visibleLinks.map((link) => {
+                              const lid = link.id;
+                              const checked = editTrackingLinkIds.includes(lid);
+                              return (
+                                <label key={lid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, border: `1px solid ${checked ? "#8b5cf6" : "var(--border)"}`, background: checked ? "rgba(139,92,246,0.08)" : "transparent", cursor: "pointer", fontSize: 12 }}>
+                                  <input type="checkbox" checked={checked} onChange={() => setEditTrackingLinkIds((prev) => checked ? prev.filter((x) => x !== lid) : [...prev, lid])} />
+                                  <span style={{ fontWeight: 500 }}>{link.name}</span>
+                                  <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: "auto" }}>{link.url}</span>
+                                </label>
+                              );
+                            })}
+                            {hasMore && !expanded && (
+                              <button
+                                onClick={() => setExpandedTrackingCreators((prev) => { const next = new Set(prev); next.add(group.creatorId); return next; })}
+                                style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "center" }}
+                              >
+                                Show More ({group.links.length - 10} more)
+                              </button>
+                            )}
+                          </>
                         );
-                      })}
+                      })()}
                     </div>
                   </div>
                 ))}
