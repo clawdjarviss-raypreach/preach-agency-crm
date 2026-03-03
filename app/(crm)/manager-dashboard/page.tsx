@@ -650,12 +650,12 @@ export default function ManagerDashboardPage() {
   const igDonutData = useMemo(() => {
     const rows = filteredIgRows.slice(0, 30);
     const viewsData = rows.map((row: any, i: number) => ({
-      name: row.creatorName || `@${row.username}`,
+      name: `${row.creatorName !== "Unknown" ? row.creatorName : ""}@${row.username}`.trim(),
       value: Math.max(0, Number(row.views || 0)),
       color: CREATOR_COLORS[i % CREATOR_COLORS.length],
     }));
     const followersData = rows.map((row: any, i: number) => ({
-      name: row.creatorName || `@${row.username}`,
+      name: `${row.creatorName !== "Unknown" ? row.creatorName : ""}@${row.username}`.trim(),
       value: Math.max(0, Number(row.followersDelta || 0)),
       color: CREATOR_COLORS[i % CREATOR_COLORS.length],
     }));
