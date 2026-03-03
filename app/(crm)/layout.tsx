@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import QuickLogButton from "../../components/QuickLogButton";
 
@@ -36,6 +37,11 @@ const NAV_ITEMS = [
   { href: "/admin/socials", label: "Socials", emoji: "📱", enabled: true, roles: ["admin"] },
 ];
 
+function clearLocalAuth() {
+  localStorage.removeItem("crm_token");
+  localStorage.removeItem("crm_user");
+}
+
 export default function CrmLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -45,22 +51,84 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    const token = localStorage.getItem("crm_token");
-    const userData = localStorage.getItem("crm_user");
+    let active = true;
 
-    if (!token || !userData) {
-      router.replace("/login");
-      return;
-    }
+    const hydrateFromSession = async (session: Session) => {
+      if (!active) return;
 
-    setToken(token);
+      const authUserId = session.user.id;
+      const { data: chatter, error: chatterError } = await supabase
+        .from("crm_chatters")
+        .select("id,name,username,role,avatar_emoji,profile_picture_url,assigned_creators")
+        .eq("supabase_auth_id", authUserId)
+        .maybeSingle();
 
-    try {
-      setUser(JSON.parse(userData));
-    } catch {
-      router.replace("/login");
-    }
+      if (!active) return;
+
+      if (chatterError || !chatter) {
+        clearLocalAuth();
+        setToken("");
+        setUser(null);
+        await supabase.auth.signOut();
+        router.replace("/login");
+        return;
+      }
+
+      const crmUser: CrmUser = {
+        id: chatter.id,
+        name: chatter.name,
+        username: chatter.username,
+        role: chatter.role,
+        avatarEmoji: chatter.avatar_emoji,
+        profilePictureUrl: chatter.profile_picture_url,
+        assignedCreators: chatter.assigned_creators ?? [],
+      };
+
+      localStorage.setItem("crm_token", session.access_token);
+      localStorage.setItem("crm_user", JSON.stringify(crmUser));
+      setToken(session.access_token);
+      setUser(crmUser);
+    };
+
+    const initializeAuth = async () => {
+      setMounted(true);
+      const { data, error } = await supabase.auth.getSession();
+      if (!active) return;
+
+      const session = data?.session;
+      if (error || !session?.user) {
+        clearLocalAuth();
+        setToken("");
+        setUser(null);
+        router.replace("/login");
+        return;
+      }
+
+      await hydrateFromSession(session);
+    };
+
+    void initializeAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+
+      if (!session?.user) {
+        clearLocalAuth();
+        setToken("");
+        setUser(null);
+        router.replace("/login");
+        return;
+      }
+
+      void hydrateFromSession(session);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, [router]);
 
   useEffect(() => {
@@ -79,17 +147,10 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
   }, [user, pathname, router]);
 
   const handleLogout = async () => {
-    const token = localStorage.getItem("crm_token");
-    if (token) {
-      try {
-        await supabase.from("crm_sessions").delete().eq("token", token);
-      } catch {
-        // ignore logout errors
-      }
-    }
-    localStorage.removeItem("crm_token");
-    localStorage.removeItem("crm_user");
+    await supabase.auth.signOut();
+    clearLocalAuth();
     setToken("");
+    setUser(null);
     router.replace("/login");
   };
 

@@ -4,10 +4,38 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
+interface CrmUser {
+  id: string;
+  name: string;
+  username: string;
+  role: string;
+  avatarEmoji?: string;
+  profilePictureUrl?: string;
+  assignedCreators: string[];
+}
+
+function getLoginErrorMessage(message?: string) {
+  const normalized = (message || "").toLowerCase();
+
+  if (
+    normalized.includes("invalid login credentials") ||
+    normalized.includes("email not confirmed") ||
+    normalized.includes("invalid")
+  ) {
+    return "Invalid email or password.";
+  }
+
+  if (normalized.includes("too many requests")) {
+    return "Too many login attempts. Please wait a minute and try again.";
+  }
+
+  return "Login failed. Please try again.";
+}
+
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
-  const [pin, setPin] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -17,74 +45,42 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // 1. Look up the chatter by username
-      const { data: chatter, error: lookupError } = await supabase
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (signInError || !signInData.session?.user?.id) {
+        throw new Error(getLoginErrorMessage(signInError?.message));
+      }
+
+      const authUserId = signInData.session.user.id;
+      const { data: chatter, error: chatterError } = await supabase
         .from("crm_chatters")
-        .select("*")
-        .eq("username", username)
-        .single();
+        .select("id,name,username,role,avatar_emoji,profile_picture_url,assigned_creators")
+        .eq("supabase_auth_id", authUserId)
+        .maybeSingle();
 
-      if (lookupError || !chatter) {
-        throw new Error("Invalid username or PIN");
+      if (chatterError || !chatter) {
+        throw new Error("Your account is not linked to a CRM user yet. Please contact an admin.");
       }
 
-      // 2. Verify PIN
-      // TODO: PIN verification should happen server-side in an edge function.
-      // For now we hash client-side and compare. This is NOT secure for production.
-      const encoder = new TextEncoder();
-      const data = encoder.encode(pin);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const pinHash = hashArray
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
+      const crmUser: CrmUser = {
+        id: chatter.id,
+        name: chatter.name,
+        username: chatter.username,
+        role: chatter.role,
+        avatarEmoji: chatter.avatar_emoji,
+        profilePictureUrl: chatter.profile_picture_url,
+        assignedCreators: chatter.assigned_creators ?? [],
+      };
 
-      if (pinHash !== chatter.pin_hash) {
-        throw new Error("Invalid username or PIN");
-      }
+      localStorage.setItem("crm_token", signInData.session.access_token);
+      localStorage.setItem("crm_user", JSON.stringify(crmUser));
 
-      // 3. Create a session
-      const sessionToken = crypto.randomUUID();
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 30);
-
-      const { data: session, error: sessionError } = await supabase
-        .from("crm_sessions")
-        .insert({
-          chatter_id: chatter.id,
-          token: sessionToken,
-          expires_at: expiresAt.toISOString(),
-        })
-        .select()
-        .single();
-
-      if (sessionError) {
-        throw new Error("Failed to create session");
-      }
-
-      // 4. Store token and user data
-      localStorage.setItem("crm_token", sessionToken);
-      localStorage.setItem(
-        "crm_user",
-        JSON.stringify({
-          id: chatter.id,
-          name: chatter.name,
-          username: chatter.username,
-          role: chatter.role,
-          avatarEmoji: chatter.avatar_emoji,
-          profilePictureUrl: chatter.profile_picture_url,
-          assignedCreators: chatter.assigned_creators,
-        })
-      );
-
-      // 5. Role-based redirect
-      router.push(
-        chatter.role === "marketing_manager"
-          ? "/manager-dashboard"
-          : "/dashboard"
-      );
+      router.push("/dashboard");
     } catch (err: any) {
-      setError(err.message || "Login failed. Please try again.");
+      setError(err?.message || "Login failed. Please try again.");
       setLoading(false);
     }
   };
@@ -114,7 +110,6 @@ export default function LoginPage() {
             boxShadow: "0 4px 6px rgba(0, 0, 0, 0.05)",
           }}
         >
-          {/* Header */}
           <div style={{ textAlign: "center", marginBottom: "32px" }}>
             <h1
               style={{
@@ -136,11 +131,10 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* Form */}
           <form onSubmit={handleSubmit}>
             <div style={{ marginBottom: "20px" }}>
               <label
-                htmlFor="username"
+                htmlFor="email"
                 style={{
                   display: "block",
                   fontSize: "14px",
@@ -149,13 +143,14 @@ export default function LoginPage() {
                   marginBottom: "8px",
                 }}
               >
-                Username
+                Email
               </label>
               <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
                 required
                 style={{
                   width: "100%",
@@ -167,13 +162,13 @@ export default function LoginPage() {
                   color: "var(--mc-text)",
                   outline: "none",
                 }}
-                placeholder="Enter your username"
+                placeholder="you@company.com"
               />
             </div>
 
             <div style={{ marginBottom: "24px" }}>
               <label
-                htmlFor="pin"
+                htmlFor="password"
                 style={{
                   display: "block",
                   fontSize: "14px",
@@ -182,13 +177,14 @@ export default function LoginPage() {
                   marginBottom: "8px",
                 }}
               >
-                PIN
+                Password
               </label>
               <input
-                id="pin"
+                id="password"
                 type="password"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
                 required
                 style={{
                   width: "100%",
@@ -200,7 +196,7 @@ export default function LoginPage() {
                   color: "var(--mc-text)",
                   outline: "none",
                 }}
-                placeholder="Enter your PIN"
+                placeholder="Enter your password"
               />
             </div>
 
@@ -228,9 +224,7 @@ export default function LoginPage() {
                 fontSize: "16px",
                 fontWeight: "600",
                 color: "#1a1a1a",
-                background: loading
-                  ? "var(--mc-text-muted)"
-                  : "var(--mc-accent)",
+                background: loading ? "var(--mc-text-muted)" : "var(--mc-accent)",
                 border: "none",
                 borderRadius: "12px",
                 cursor: loading ? "not-allowed" : "pointer",
