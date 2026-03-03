@@ -106,7 +106,7 @@ export default function SalesFeedPage() {
       setLoading(true);
       let query = supabase
         .from("crm_of_transactions")
-        .select("id, account_id, amount, type, fan_id, fan_username, timestamp", { count: "exact" })
+        .select("id, account_id, amount, type, fan_id, fan_username, timestamp, metadata", { count: "exact" })
         .order("timestamp", { ascending: false })
         .limit(200);
 
@@ -323,7 +323,7 @@ export default function SalesFeedPage() {
           <>
             {visibleItems.map((txn: any) => {
               const meta = typeMeta(txn.type);
-              const fan = txn.fan_username || txn.fan_id || "Unknown";
+              const fan = txn.fan_username || txn.metadata?.user?.username || txn.metadata?.user?.name || txn.fan_id || "Unknown";
               const isNew = newIds.has(txn.id);
               const amount = Number(txn.amount || 0);
               const timestampMs = new Date(txn.timestamp).getTime();
