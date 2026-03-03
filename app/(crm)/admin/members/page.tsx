@@ -412,9 +412,11 @@ export default function MembersPage() {
       if (delErr) throw delErr;
 
       if (editTrackingLinkIds.length > 0) {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
         const rows = editTrackingLinkIds.map((tlId) => ({
           user_id: editMember.id,
           tracking_link_id: tlId,
+          assigned_by: currentUser?.id ?? editMember.id,
         }));
         const { error: insErr } = await supabase.from("crm_tracking_link_assignments").insert(rows);
         if (insErr) throw insErr;
