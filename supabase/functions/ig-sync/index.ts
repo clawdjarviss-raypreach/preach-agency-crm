@@ -10,6 +10,7 @@ const TOM_SUPABASE_EMAIL = Deno.env.get('TOM_SUPABASE_EMAIL') ?? 'niklas@1clickc
 const TOM_SUPABASE_PASSWORD = Deno.env.get('NIKLAS_SUPABASE_PASSWORD') ?? '';
 
 const PAGE_SIZE = 1000;
+const SNAPSHOT_DAYS_BACK = 7;
 const SYNC_TABLES = {
   accounts: 'instagram_accounts',
   accountDaily: 'am_account_daily_snapshots',
@@ -48,6 +49,13 @@ function normalizeHandle(handle: string | null | undefined): string {
     .trim()
     .replace(/^@/, '')
     .toLowerCase();
+}
+
+function isoDateDaysAgo(daysAgo: number): string {
+  const date = new Date();
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() - daysAgo);
+  return date.toISOString().slice(0, 10);
 }
 
 async function ensureSourceSession(force = false) {
@@ -101,6 +109,7 @@ async function fetchPagedRows(options: {
   select: string;
   orderBy: string;
   cursor?: string | null;
+  gte?: string | null;
   limit?: number;
 }) {
   const allRows: any[] = [];
@@ -119,6 +128,10 @@ async function fetchPagedRows(options: {
         query = query.gt(options.orderBy, options.cursor);
       }
 
+      if (options.gte) {
+        query = query.gte(options.orderBy, options.gte);
+      }
+
       const { data, error } = await query;
       if (error) throw new Error(`[${options.table}] ${error.message}`);
       return data ?? [];
@@ -132,17 +145,6 @@ async function fetchPagedRows(options: {
   }
 
   return allRows;
-}
-
-async function getSyncState(sourceTable: string): Promise<SyncStateRow | null> {
-  const { data, error } = await supabaseAdmin
-    .from('crm_ig_sync_state')
-    .select('source_table,cursor_value,last_synced_at,metadata')
-    .eq('source_table', sourceTable)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data as SyncStateRow | null;
 }
 
 async function setSyncState(sourceTable: string, cursorValue: string | null, metadata: Record<string, unknown>) {
@@ -204,7 +206,7 @@ async function fetchReelIdMap() {
   return map;
 }
 
-async function syncAccounts(forceFull = false) {
+async function syncAccounts() {
   const startedAt = Date.now();
   const creatorMap = await fetchCreatorMap();
 
@@ -238,7 +240,7 @@ async function syncAccounts(forceFull = false) {
   }
 
   await setSyncState(SYNC_TABLES.accounts, null, {
-    forceFull,
+    mode: 'full',
     pulled: sourceRows.length,
     upserted: rows.length,
     durationMs: Date.now() - startedAt,
@@ -249,14 +251,13 @@ async function syncAccounts(forceFull = false) {
 
 async function syncAccountSnapshots(forceFull = false) {
   const startedAt = Date.now();
-  const state = forceFull ? null : await getSyncState(SYNC_TABLES.accountDaily);
-  const cursor = state?.cursor_value ?? null;
+  const windowStart = forceFull ? null : isoDateDaysAgo(SNAPSHOT_DAYS_BACK);
 
   const sourceRows = await fetchPagedRows({
     table: SYNC_TABLES.accountDaily,
-    select: 'internal_account_id,date,followers,following,views,likes,comments,reels_posted',
+    select: 'internal_account_id,date,followers,following,views,likes,comments,reels_posted,feed_posted,stories_posted',
     orderBy: 'date',
-    cursor,
+    gte: windowStart,
   });
 
   const accountMap = await fetchAccountIdMap();
@@ -278,6 +279,8 @@ async function syncAccountSnapshots(forceFull = false) {
         likes: toInt(row.likes),
         comments: toInt(row.comments),
         reels_posted: toInt(row.reels_posted),
+        feed_posted: toInt(row.feed_posted),
+        stories_posted: toInt(row.stories_posted),
         last_synced_at: nowIso,
       };
     })
@@ -290,29 +293,24 @@ async function syncAccountSnapshots(forceFull = false) {
     if (error) throw error;
   }
 
-  const nextCursor = sourceRows.length > 0 ? String(sourceRows[sourceRows.length - 1].date) : cursor;
-  await setSyncState(SYNC_TABLES.accountDaily, nextCursor, {
-    forceFull,
-    previousCursor: cursor,
-    nextCursor,
+  await setSyncState(SYNC_TABLES.accountDaily, null, {
+    mode: forceFull ? 'full' : 'last_7_days',
+    windowStart,
     pulled: sourceRows.length,
     upserted: rows.length,
     durationMs: Date.now() - startedAt,
   });
 
-  return { cursor, nextCursor, pulled: sourceRows.length, upserted: rows.length };
+  return { windowStart, pulled: sourceRows.length, upserted: rows.length };
 }
 
-async function syncReels(forceFull = false) {
+async function syncReels() {
   const startedAt = Date.now();
-  const state = forceFull ? null : await getSyncState(SYNC_TABLES.reels);
-  const cursor = state?.cursor_value ?? null;
 
   const sourceRows = await fetchPagedRows({
     table: SYNC_TABLES.reels,
     select: 'id,internal_account_id,username,shortcode,posted_at,caption,views,likes,comments,shares',
     orderBy: 'posted_at',
-    cursor,
   });
 
   const accountMap = await fetchAccountIdMap();
@@ -347,29 +345,25 @@ async function syncReels(forceFull = false) {
     if (error) throw error;
   }
 
-  const nextCursor = sourceRows.length > 0 ? String(sourceRows[sourceRows.length - 1].posted_at ?? '') : cursor;
-  await setSyncState(SYNC_TABLES.reels, nextCursor || cursor, {
-    forceFull,
-    previousCursor: cursor,
-    nextCursor: nextCursor || cursor,
+  await setSyncState(SYNC_TABLES.reels, null, {
+    mode: 'full',
     pulled: sourceRows.length,
     upserted: rows.length,
     durationMs: Date.now() - startedAt,
   });
 
-  return { cursor, nextCursor: nextCursor || cursor, pulled: sourceRows.length, upserted: rows.length };
+  return { pulled: sourceRows.length, upserted: rows.length };
 }
 
 async function syncReelSnapshots(forceFull = false) {
   const startedAt = Date.now();
-  const state = forceFull ? null : await getSyncState(SYNC_TABLES.reelDaily);
-  const cursor = state?.cursor_value ?? null;
+  const windowStart = forceFull ? null : isoDateDaysAgo(SNAPSHOT_DAYS_BACK);
 
   const sourceRows = await fetchPagedRows({
     table: SYNC_TABLES.reelDaily,
     select: 'reel_id,shortcode,internal_account_id,snapshot_date,views,likes,comments,shares',
     orderBy: 'snapshot_date',
-    cursor,
+    gte: windowStart,
   });
 
   const reelMap = await fetchReelIdMap();
@@ -411,18 +405,16 @@ async function syncReelSnapshots(forceFull = false) {
     if (error) throw error;
   }
 
-  const nextCursor = sourceRows.length > 0 ? String(sourceRows[sourceRows.length - 1].snapshot_date) : cursor;
-  await setSyncState(SYNC_TABLES.reelDaily, nextCursor, {
-    forceFull,
-    previousCursor: cursor,
-    nextCursor,
+  await setSyncState(SYNC_TABLES.reelDaily, null, {
+    mode: forceFull ? 'full' : 'last_7_days',
+    windowStart,
     pulled: sourceRows.length,
     upserted: rows.length,
     skippedMissingReel,
     durationMs: Date.now() - startedAt,
   });
 
-  return { cursor, nextCursor, pulled: sourceRows.length, upserted: rows.length, skippedMissingReel };
+  return { windowStart, pulled: sourceRows.length, upserted: rows.length, skippedMissingReel };
 }
 
 Deno.serve(async (req) => {
@@ -431,9 +423,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const forceFull = Boolean(body?.forceFullSync);
 
-    const accountStats = await syncAccounts(forceFull);
+    const accountStats = await syncAccounts();
     const accountDailyStats = await syncAccountSnapshots(forceFull);
-    const reelsStats = await syncReels(forceFull);
+    const reelsStats = await syncReels();
     const reelDailyStats = await syncReelSnapshots(forceFull);
 
     return json({
