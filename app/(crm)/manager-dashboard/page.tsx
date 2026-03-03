@@ -9,6 +9,9 @@ import {
   BarChart,
   Bar,
   CartesianGrid,
+  LineChart,
+  Line,
+  Legend,
 } from "recharts";
 import DateRangePicker, { DateRange } from "../../../components/DateRangePicker";
 import { supabase } from "@/lib/supabase";
@@ -26,6 +29,16 @@ function addDays(date: string, days: number) {
   const d = new Date(`${date}T12:00:00`);
   d.setDate(d.getDate() + days);
   return toDateOnly(d);
+}
+
+function enumerateDates(start: string, end: string): string[] {
+  const out: string[] = [];
+  const s = new Date(`${start}T12:00:00`);
+  const e = new Date(`${end}T12:00:00`);
+  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+    out.push(toDateOnly(d));
+  }
+  return out;
 }
 
 function getDaysAgoRange(days: number) {
@@ -79,7 +92,7 @@ function ChartTooltip({ active, payload, label }: any) {
       {payload.map((p: any) => (
         <div key={p.name} style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
           <div style={{ width: "8px", height: "8px", borderRadius: "2px", background: p.color }} />
-          <span>{p.name}: {p.value}</span>
+          <span>{p.name}: {Number(p.value || 0).toLocaleString()}</span>
         </div>
       ))}
     </div>
@@ -108,6 +121,8 @@ export default function ManagerDashboardPage() {
   const [chartData, setChartData] = useState<any[]>([]);
   const [trackingLinks, setTrackingLinks] = useState<any[]>([]);
   const [igRows, setIgRows] = useState<any[]>([]);
+  const [igDailyGains, setIgDailyGains] = useState<any[]>([]);
+  const [igReelCurves, setIgReelCurves] = useState<any[]>([]);
 
   useEffect(() => {
     const u = localStorage.getItem("crm_user");
@@ -206,7 +221,7 @@ export default function ManagerDashboardPage() {
           .lte("date", igEndPlusOne),
         supabase
           .from("crm_ig_reels")
-          .select("ig_account_id")
+          .select("id,ig_account_id,posted_at,thumbnail_url")
           .gte("posted_at", `${igDateRange.start}T00:00:00`)
           .lte("posted_at", `${igDateRange.end}T23:59:59`),
       ]);
@@ -257,12 +272,111 @@ export default function ManagerDashboardPage() {
         };
       }).sort((a: any, b: any) => b.views - a.views);
 
+      const accountDailyGainRows = enumerateDates(igDateRange.start, igDateRange.end).map((day) => {
+        const next = addDays(day, 1);
+        let views = 0;
+        let likes = 0;
+        let comments = 0;
+
+        for (const account of igAccounts ?? []) {
+          const rows = (snapByAccount.get((account as any).id) ?? []).sort((x, y) => String(x.date).localeCompare(String(y.date)));
+          const byDate = new Map(rows.map((r) => [String((r as any).date), r]));
+          const startSnap = byDate.get(day);
+          const endSnap = byDate.get(next);
+          views += Number(endSnap?.views || 0) - Number(startSnap?.views || 0);
+          likes += Number(endSnap?.likes || 0) - Number(startSnap?.likes || 0);
+          comments += Number(endSnap?.comments || 0) - Number(startSnap?.comments || 0);
+        }
+
+        return {
+          date: new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          Views: views,
+          Likes: likes,
+          Comments: comments,
+        };
+      });
+
+      const accountUsernameById = new Map<string, string>((igAccounts ?? []).map((a: any) => [a.id, a.username || "unknown"]));
+      const curveUpperBound = addDays(getYesterdayDateOnly(), 1);
+      const reelsForCurve = (igReels ?? []).slice(0, 60);
+
+      let reelCurveRows: any[] = [];
+      if (reelsForCurve.length > 0) {
+        const reelIds = reelsForCurve.map((r: any) => r.id);
+        const earliestPosted = reelsForCurve
+          .map((r: any) => String((r.posted_at || "").split("T")[0]))
+          .filter(Boolean)
+          .sort()[0];
+
+        const latestCurveEnd = reelsForCurve
+          .map((r: any) => {
+            const posted = String((r.posted_at || "").split("T")[0]);
+            return posted ? addDays(posted, 30) : igDateRange.end;
+          })
+          .sort()
+          .slice(-1)[0];
+
+        const curveQueryEnd = latestCurveEnd > curveUpperBound ? curveUpperBound : latestCurveEnd;
+
+        const { data: reelSnapshots } = await supabase
+          .from("crm_ig_reel_daily_snapshots")
+          .select("ig_reel_id,snapshot_date,views,likes,comments")
+          .in("ig_reel_id", reelIds)
+          .gte("snapshot_date", earliestPosted)
+          .lte("snapshot_date", curveQueryEnd);
+
+        const snapshotsByReel = new Map<string, any[]>();
+        for (const row of reelSnapshots ?? []) {
+          const reelId = (row as any).ig_reel_id;
+          if (!snapshotsByReel.has(reelId)) snapshotsByReel.set(reelId, []);
+          snapshotsByReel.get(reelId)!.push(row);
+        }
+
+        reelCurveRows = reelsForCurve.map((reel: any) => {
+          const postedDay = String((reel.posted_at || "").split("T")[0]);
+          const snapshots = (snapshotsByReel.get(reel.id) ?? []).sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
+          const byDate = new Map(snapshots.map((s) => [String((s as any).snapshot_date), s]));
+
+          const points = Array.from({ length: 30 }, (_, idx) => {
+            const startDay = addDays(postedDay, idx);
+            const endDay = addDays(postedDay, idx + 1);
+            if (endDay > curveUpperBound) {
+              return {
+                day: `D${idx + 1}`,
+                Views: null,
+                Likes: null,
+                Comments: null,
+              };
+            }
+            const startSnap = byDate.get(startDay);
+            const endSnap = byDate.get(endDay);
+            return {
+              day: `D${idx + 1}`,
+              Views: Number(endSnap?.views || 0) - Number(startSnap?.views || 0),
+              Likes: Number(endSnap?.likes || 0) - Number(startSnap?.likes || 0),
+              Comments: Number(endSnap?.comments || 0) - Number(startSnap?.comments || 0),
+            };
+          });
+
+          return {
+            reelId: reel.id,
+            accountUsername: accountUsernameById.get(reel.ig_account_id) || "unknown",
+            postedAt: reel.posted_at,
+            thumbnailUrl: reel.thumbnail_url,
+            totalViews30d: points.reduce((sum, p) => sum + Number(p.Views || 0), 0),
+            points,
+          };
+        }).sort((a, b) => b.totalViews30d - a.totalViews30d).slice(0, 8);
+      }
+
       if (!cancelled) {
         setAccounts(accountsRows);
         setTotals({ newSubsInRange: accountsRows.reduce((s, a) => s + a.newSubsInRange, 0) });
         setChartData(trendRows);
         setTrackingLinks(linksRows);
         setIgRows(igRowsData);
+        setIgDailyGains(accountDailyGainRows);
+        setIgReelCurves(reelCurveRows);
         setLoading(false);
       }
     }
@@ -420,7 +534,7 @@ export default function ManagerDashboardPage() {
         </table>
       </Card>
 
-      <Card style={{ overflowX: "auto" }}>
+      <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
         <div style={{
           display: "flex",
           justifyContent: "space-between",
@@ -463,6 +577,77 @@ export default function ManagerDashboardPage() {
             ))}
           </tbody>
         </table>
+      </Card>
+
+      <Card style={{ marginBottom: "24px" }}>
+        <div style={{
+          fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
+          textTransform: "uppercase", letterSpacing: "0.5px",
+        }}>
+          📈 IG Account Daily Gains (sum of account deltas: snapshot[day+1]-snapshot[day])
+        </div>
+        {igDailyGains.length > 0 ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={igDailyGains}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+              <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip content={<ChartTooltip />} />
+              <Legend wrapperStyle={{ fontSize: "12px", color: "#a0a0a0" }} />
+              <Line type="monotone" dataKey="Views" stroke="#3b82f6" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="Likes" stroke="#22c55e" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="Comments" stroke="#f59e0b" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "60px 0" }}>
+            No IG daily gain data for this range
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <div style={{
+          fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
+          textTransform: "uppercase", letterSpacing: "0.5px",
+        }}>
+          🎬 Reel 30-Day Performance Curves (daily deltas from cumulative snapshots)
+        </div>
+
+        {igReelCurves.length === 0 ? (
+          <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "40px 0" }}>
+            No reels in selected IG range
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px" }}>
+            {igReelCurves.map((reel: any) => (
+              <div key={reel.reelId} style={{ border: "1px solid #2a2a2a", borderRadius: "12px", padding: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", marginBottom: "8px" }}>
+                  <div>
+                    <div style={{ color: "#fff", fontWeight: 600, fontSize: "13px" }}>@{reel.accountUsername}</div>
+                    <div style={{ color: "#888", fontSize: "11px" }}>
+                      Posted {reel.postedAt ? new Date(reel.postedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                    </div>
+                  </div>
+                  <div style={{ color: "#3b82f6", fontSize: "12px", fontWeight: 600 }}>
+                    30d Views: +{formatNumber(reel.totalViews30d || 0)}
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={170}>
+                  <LineChart data={reel.points}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+                    <XAxis dataKey="day" tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} interval={4} />
+                    <YAxis tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Line type="monotone" dataKey="Views" stroke="#3b82f6" strokeWidth={2} dot={false} connectNulls />
+                    <Line type="monotone" dataKey="Likes" stroke="#22c55e" strokeWidth={1.75} dot={false} connectNulls />
+                    <Line type="monotone" dataKey="Comments" stroke="#f59e0b" strokeWidth={1.75} dot={false} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );
