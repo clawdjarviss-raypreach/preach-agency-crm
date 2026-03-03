@@ -651,7 +651,7 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "980px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {['Creator', 'Total Revenue', 'New Fans', 'Sales Revenue', 'Subscription Revenue', 'Avg Fan Spend'].map((h) => <th key={h} style={{ padding: "12px 10px", fontSize: "12px", color: "#a0a0a0", fontWeight: 600 }}>{h}</th>)}
+              {['Creator', 'Total Revenue', 'New Subs', 'Sales Revenue', 'Subscription Revenue', 'Avg Fan Spend'].map((h) => <th key={h} style={{ padding: "12px 10px", fontSize: "12px", color: "#a0a0a0", fontWeight: 600 }}>{h}</th>)}
             </tr>
           </thead>
           <tbody>

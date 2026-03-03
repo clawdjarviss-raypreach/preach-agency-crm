@@ -181,39 +181,41 @@ async function getChargebackTotalsByDate(accountId: string, startDate: string, e
   return totals;
 }
 
-async function syncEarnings(accountId: string) {
+async function syncEarnings(accountId: string, startDate?: string, endDate?: string) {
   return withSyncState(accountId, 'earnings', async () => {
-    const range = getDefaultAnalyticsRange();
-    const dates = listDates(range.start_date, range.end_date);
+    const date = startDate ?? new Date().toISOString().slice(0, 10);
+    const end = endDate ?? date;
+    const dates = listDates(date, end);
     if (dates.length === 0) return { inserted: 0 };
 
-    const chargebackTotals = await getChargebackTotalsByDate(accountId, range.start_date, range.end_date);
+    const chargebackTotals = await getChargebackTotalsByDate(accountId, date, end);
     const rows: any[] = [];
 
-    for (const date of dates) {
+    for (const currentDate of dates) {
       const [earningsSummary, byTypeSummary, txSummary] = await Promise.all([
         fetchOf('/api/analytics/summary/earnings', {
           method: 'POST',
           body: {
             account_id: accountId,
-            start_date: date,
-            end_date: date,
+            account_ids: [accountId],
+            start_date: currentDate,
+            end_date: currentDate,
           },
         }),
         fetchOf('/api/analytics/financial/transactions/by-type', {
           method: 'POST',
           body: {
             account_ids: [accountId],
-            start_date: date,
-            end_date: date,
+            start_date: currentDate,
+            end_date: currentDate,
           },
         }),
         fetchOf('/api/analytics/financial/transactions/summary', {
           method: 'POST',
           body: {
             account_ids: [accountId],
-            start_date: date,
-            end_date: date,
+            start_date: currentDate,
+            end_date: currentDate,
           },
         }),
       ]);
@@ -221,7 +223,7 @@ async function syncEarnings(accountId: string) {
       const ed = earningsSummary?.data ?? earningsSummary ?? {};
       const bd = byTypeSummary?.data ?? byTypeSummary ?? {};
       const sd = txSummary?.data ?? txSummary ?? {};
-      const chargeback = chargebackTotals.get(date) ?? { amount: 0, count: 0 };
+      const chargeback = chargebackTotals.get(currentDate) ?? { amount: 0, count: 0 };
 
       const subscriptionEarnings = toNumber(bd?.new_subscription?.net) + toNumber(bd?.recurring_subscription?.net);
       const tipEarnings = toNumber(bd?.tip?.net);
@@ -238,7 +240,7 @@ async function syncEarnings(accountId: string) {
       const txNet = toNumber(sd?.total_net);
 
       rows.push({
-        ...buildEmptyDailyEarnings(accountId, date),
+        ...buildEmptyDailyEarnings(accountId, currentDate),
         total_earnings: totalEarnings,
         subscription_earnings: subscriptionEarnings,
         tip_earnings: tipEarnings,
@@ -263,7 +265,7 @@ async function syncEarnings(accountId: string) {
       .upsert(rows, { onConflict: 'account_id,date' });
 
     if (error) throw error;
-    return { inserted: rows.length };
+    return { inserted: rows.length, startDate: date, endDate: end };
   });
 }
 
@@ -324,15 +326,96 @@ async function syncTransactions(accountId: string) {
 
 async function syncChargebacks(accountId: string) {
   return withSyncState(accountId, 'chargebacks', async () => {
-    const payload = await fetchOf(`/api/${accountId}/chargebacks`);
-    return { count: listFromPayload(payload).length };
+    const date = new Date().toISOString().slice(0, 10);
+    const totalsByDate = await getChargebackTotalsByDate(accountId, date, date);
+    const chargebacks = totalsByDate.get(date) ?? { amount: 0, count: 0 };
+
+    const { data: existing, error: existingError } = await supabaseAdmin
+      .from('crm_of_daily_earnings')
+      .select('id,total_earnings')
+      .eq('account_id', accountId)
+      .eq('date', date)
+      .maybeSingle();
+    if (existingError) throw existingError;
+
+    if (existing?.id) {
+      const { error: updateError } = await supabaseAdmin
+        .from('crm_of_daily_earnings')
+        .update({
+          chargeback_amount: chargebacks.amount,
+          chargeback_count: chargebacks.count,
+          net_earnings: toNumber(existing.total_earnings) - chargebacks.amount,
+          synced_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+      if (updateError) throw updateError;
+    } else {
+      const { error: insertError } = await supabaseAdmin
+        .from('crm_of_daily_earnings')
+        .upsert({
+          ...buildEmptyDailyEarnings(accountId, date),
+          chargeback_amount: chargebacks.amount,
+          chargeback_count: chargebacks.count,
+          net_earnings: 0 - chargebacks.amount,
+          synced_at: new Date().toISOString(),
+        }, { onConflict: 'account_id,date' });
+      if (insertError) throw insertError;
+    }
+
+    return { date, chargebackCount: chargebacks.count, chargebackAmount: chargebacks.amount };
   });
 }
 
 async function syncFans(accountId: string) {
   return withSyncState(accountId, 'fans', async () => {
-    const payload = await fetchOf(`/api/${accountId}/fans/all`);
-    return { count: listFromPayload(payload).length };
+    let offset = 0;
+    let totalSynced = 0;
+
+    while (true) {
+      const payload = await fetchOf(`/api/${accountId}/fans/all`, {
+        query: {
+          limit: 20,
+          offset,
+        },
+      });
+      const fans = listFromPayload(payload);
+      if (fans.length === 0) break;
+
+      const rows = fans
+        .map((fan: any) => {
+          const fanId = fan?.id ?? fan?.fan_id ?? fan?.user?.id;
+          if (!fanId) return null;
+
+          return {
+            account_id: accountId,
+            fan_id: String(fanId),
+            username: String(fan?.username ?? fan?.user?.username ?? 'unknown'),
+            display_name: fan?.display_name ?? fan?.displayName ?? fan?.user?.name ?? null,
+            total_spend: Number(fan?.totalSpend ?? fan?.total_spend ?? fan?.spending?.total ?? 0),
+            subscribed_at: fan?.subscribed_at ? new Date(fan.subscribed_at).toISOString() : null,
+            expired_at: fan?.expired_at ? new Date(fan.expired_at).toISOString() : null,
+            renews_at: fan?.renews_at ? new Date(fan.renews_at).toISOString() : null,
+            subscription_price: fan?.subscription_price ? Number(fan.subscription_price) : null,
+            is_subscribed: fan?.is_subscribed ?? fan?.isSubscribed ?? null,
+            is_active: Boolean(fan?.is_active ?? fan?.isActive ?? true),
+            last_seen: fan?.last_seen ? new Date(fan.last_seen).toISOString() : null,
+          };
+        })
+        .filter(Boolean);
+
+      if (rows.length > 0) {
+        const { error } = await supabaseAdmin
+          .from('crm_of_fans')
+          .upsert(rows, { onConflict: 'fan_id' });
+        if (error) throw error;
+      }
+
+      totalSynced += rows.length;
+      if (fans.length < 20) break;
+      offset += 20;
+    }
+
+    return { synced: totalSynced };
   });
 }
 
@@ -444,9 +527,26 @@ async function syncForecast(accountId: string) {
       method: 'POST',
       body: {
         account_id: accountId,
+        account_ids: [accountId],
+        metric: 'revenue',
+        model: 'linear_regression',
+        historical_days: 30,
+        forecast_days: 90,
       },
     });
-    return { generatedAt: payload?.generated_at ?? null };
+
+    const now = new Date().toISOString();
+    const { error } = await supabaseAdmin
+      .from('crm_of_forecast_cache')
+      .upsert({
+        account_id: accountId,
+        forecast_data: payload,
+        generated_at: now,
+        synced_at: now,
+      }, { onConflict: 'account_id' });
+    if (error) throw error;
+
+    return { ok: true };
   });
 }
 
@@ -489,55 +589,18 @@ async function syncTrackingLinks(accountId: string) {
       const linkId = String(link?.id ?? link?.link_id ?? link?.trackingLinkId ?? '').trim();
       if (!linkId) continue;
 
-      let analytics: any = null;
-      try {
-        analytics = await fetchOf(`/api/${accountId}/tracking-links/${linkId}/analytics`);
-      } catch {
-        analytics = null;
-      }
-
-      const analyticsData = analytics?.data ?? analytics ?? {};
-      const clicks = Number(
-        link?.clicksCount
-          ?? analyticsData?.clicks
-          ?? analyticsData?.totalClicks
-          ?? analyticsData?.visits
-          ?? analyticsData?.stats?.clicks
-          ?? link?.clicks
-          ?? link?.click_count
-          ?? 0,
-      );
-      const subscribers = Number(
-        link?.subscribersCount
-          ?? analyticsData?.subscribers
-          ?? analyticsData?.totalSubscribers
-          ?? analyticsData?.conversions
-          ?? analyticsData?.stats?.subscribers
-          ?? link?.subscribers
-          ?? link?.subscriber_count
-          ?? 0,
-      );
-      const conversionRate = Number(
-        analyticsData?.revenue?.subscriberConversionRate
-          ?? analyticsData?.revenue?.conversionRate
-          ?? analyticsData?.revenue?.conversion_rate
-          ?? analyticsData?.subscriberConversionRate
-          ?? analyticsData?.conversion_rate
-          ?? analyticsData?.conversionRate
-          ?? analyticsData?.stats?.conversionRate
-          ?? (clicks > 0 ? subscribers / clicks : 0),
-      );
-
-      const url = String(link?.campaignUrl ?? link?.url ?? link?.tracking_url ?? link?.trackingUrl ?? '').trim();
-      const rawName = link?.campaignName ?? link?.name ?? link?.title ?? link?.slug ?? url ?? linkId;
-      const name = String(rawName).trim();
+      const name = String(link?.campaignName ?? link?.name ?? link?.title ?? 'Unnamed link').trim();
+      const url = String(link?.campaignUrl ?? link?.url ?? link?.trackingUrl ?? '').trim();
+      const clicks = Number(link?.clicksCount ?? link?.clicks ?? 0);
+      const subscribers = Number(link?.subscribersCount ?? link?.subscribers ?? 0);
+      const conversionRate = clicks > 0 ? subscribers / clicks : 0;
 
       linkRows.push({
         account_id: accountId,
         creator_id: ofAccount?.creator_id ?? null,
         link_id: linkId,
-        name: name || linkId,
-        url: url || linkId,
+        name,
+        url,
         clicks: Number.isFinite(clicks) ? clicks : 0,
         subscribers: Number.isFinite(subscribers) ? subscribers : 0,
         conversion_rate: Number.isFinite(conversionRate) ? conversionRate : 0,
@@ -552,7 +615,7 @@ async function syncTrackingLinks(accountId: string) {
         subscribers: Number.isFinite(subscribers) ? subscribers : 0,
         conversion_rate: Number.isFinite(conversionRate) ? conversionRate : 0,
         snapshot_at: nowIso,
-        analytics_payload: analyticsData,
+        analytics_payload: link,
       });
     }
 
@@ -722,7 +785,7 @@ Deno.serve(async (req) => {
 
     for (const row of accounts ?? []) {
       const accountId = row.account_id as string;
-      if (job === 'earnings') results.push({ accountId, ...(await syncEarnings(accountId)) });
+      if (job === 'earnings') results.push({ accountId, ...(await syncEarnings(accountId, body?.startDate, body?.endDate)) });
       if (job === 'transactions') results.push({ accountId, ...(await syncTransactions(accountId)) });
       if (job === 'chargebacks') results.push({ accountId, ...(await syncChargebacks(accountId)) });
       if (job === 'fans') results.push({ accountId, ...(await syncFans(accountId)) });

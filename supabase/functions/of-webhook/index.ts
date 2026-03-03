@@ -144,7 +144,7 @@ async function upsertMessageFromWebhook(accountId: string, event: string, payloa
 
 async function handleTransaction(accountId: string, payload: any) {
   const ofTxId = String(payload?.id ?? payload?.transactionId ?? `${accountId}:${Date.now()}`);
-  const amount = Number(payload?.amount ?? payload?.net ?? payload?.price ?? 0);
+  const amount = Number(payload?.net_amount ?? payload?.netAmount ?? payload?.net ?? payload?.amount ?? 0);
   const type = mapTransactionType(payload?.type);
   const createdAt = payload?.createdAt ?? payload?.created_at ?? payload?.timestamp;
   const timestamp = createdAt ? new Date(createdAt).toISOString() : new Date().toISOString();
@@ -176,7 +176,7 @@ async function handleTransaction(accountId: string, payload: any) {
 
   // Update daily earnings
   const date = toYmd(timestamp);
-  const netAmount = Number(payload?.net ?? amount);
+  const netAmount = amount;
 
   const { data: existing } = await supabaseAdmin
     .from("crm_of_daily_earnings")
@@ -253,10 +253,25 @@ async function handleTransaction(accountId: string, payload: any) {
 }
 
 async function handleSubscription(accountId: string, payload: any, isRenewal: boolean) {
-  const amount = Number(payload?.amount ?? payload?.price ?? payload?.subscriptionPrice ?? 0);
-  const type = isRenewal ? "rebill" : "new_sub";
-  const txPayload = { ...payload, type, amount };
-  return handleTransaction(accountId, txPayload);
+  await upsertFanFromPayload(accountId, payload);
+
+  const fanId = payload?.user?.id ? String(payload.user.id) : null;
+  if (fanId) {
+    await supabaseAdmin.from("crm_of_fans").upsert(
+      {
+        account_id: accountId,
+        fan_id: fanId,
+        username: payload?.user?.username ?? `fan_${fanId}`,
+        display_name: payload?.user?.name ?? null,
+        is_subscribed: true,
+        is_active: true,
+        last_seen: new Date().toISOString(),
+      },
+      { onConflict: "fan_id" }
+    );
+  }
+
+  return { ok: true, action: "subscription", isRenewal };
 }
 
 Deno.serve(async (req) => {
