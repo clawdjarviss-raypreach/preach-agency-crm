@@ -12,6 +12,9 @@ import {
   LineChart,
   Line,
   Legend,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import DateRangePicker, { DateRange } from "../../../components/DateRangePicker";
 import { supabase } from "@/lib/supabase";
@@ -106,6 +109,65 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
       border: "1px solid #2a2a2a", ...style,
     }}>
       {children}
+    </div>
+  );
+}
+
+function DonutWithLegend({
+  title,
+  data,
+}: {
+  title: string;
+  data: { name: string; value: number; color: string }[];
+}) {
+  const safeData = data.filter((d) => d.value > 0);
+  const total = safeData.reduce((sum, d) => sum + d.value, 0);
+
+  return (
+    <div style={{ flex: 1, minWidth: "300px" }}>
+      <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 600, marginBottom: "12px" }}>
+        {title}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+        <div style={{ width: "160px", height: "160px", flexShrink: 0 }}>
+          {total > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={safeData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={45}
+                  outerRadius={72}
+                  strokeWidth={0}
+                >
+                  {safeData.map((entry, i) => (
+                    <Cell key={`${entry.name}-${i}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => formatNumber(Number(value ?? 0))} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ color: "#666", fontSize: "12px", textAlign: "center", paddingTop: "70px" }}>No data</div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px" }}>
+          {safeData.map((entry) => (
+            <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
+              <span style={{ color: "#ccc", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+              <span style={{ color: "#f1ae38", fontWeight: 600, flexShrink: 0 }}>{formatNumber(entry.value)}</span>
+              <span style={{ color: "#666", flexShrink: 0, fontSize: "11px" }}>
+                {total > 0 ? Math.round((entry.value / total) * 100) : 0}%
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -398,6 +460,21 @@ export default function ManagerDashboardPage() {
   const rangeLabelText = `${new Date(dateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(dateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
   const igRangeLabelText = `${new Date(igDateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(igDateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 
+  const igDonutData = useMemo(() => {
+    const rows = igRows.slice(0, 30);
+    const viewsData = rows.map((row: any, i: number) => ({
+      name: row.creatorName || `@${row.username}`,
+      value: Math.max(0, Number(row.views || 0)),
+      color: CREATOR_COLORS[i % CREATOR_COLORS.length],
+    }));
+    const followersData = rows.map((row: any, i: number) => ({
+      name: row.creatorName || `@${row.username}`,
+      value: Math.max(0, Number(row.followersDelta || 0)),
+      color: CREATOR_COLORS[i % CREATOR_COLORS.length],
+    }));
+    return { viewsData, followersData };
+  }, [igRows]);
+
   return (
     <div style={{ maxWidth: "1400px" }}>
       <div style={{
@@ -554,6 +631,22 @@ export default function ManagerDashboardPage() {
             <span style={{ fontSize: "11px", color: "#666" }}>IG max end date: yesterday ({maxIgEnd})</span>
           </div>
         </div>
+
+        {(igDonutData.viewsData.length > 0 || igDonutData.followersData.length > 0) && (
+          <div style={{
+            background: "#1C2A3A",
+            borderRadius: "14px",
+            padding: "24px",
+            border: "1px solid #253545",
+            marginBottom: "16px",
+          }}>
+            <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
+              <DonutWithLegend title="Views Comparison" data={igDonutData.viewsData} />
+              <DonutWithLegend title="New Followers Comparison" data={igDonutData.followersData} />
+            </div>
+          </div>
+        )}
+
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "980px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
