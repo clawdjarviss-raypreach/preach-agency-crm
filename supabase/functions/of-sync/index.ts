@@ -498,7 +498,8 @@ async function syncTrackingLinks(accountId: string) {
 
       const analyticsData = analytics?.data ?? analytics ?? {};
       const clicks = Number(
-        analyticsData?.clicks
+        link?.clicksCount
+          ?? analyticsData?.clicks
           ?? analyticsData?.totalClicks
           ?? analyticsData?.visits
           ?? analyticsData?.stats?.clicks
@@ -507,7 +508,8 @@ async function syncTrackingLinks(accountId: string) {
           ?? 0,
       );
       const subscribers = Number(
-        analyticsData?.subscribers
+        link?.subscribersCount
+          ?? analyticsData?.subscribers
           ?? analyticsData?.totalSubscribers
           ?? analyticsData?.conversions
           ?? analyticsData?.stats?.subscribers
@@ -516,14 +518,18 @@ async function syncTrackingLinks(accountId: string) {
           ?? 0,
       );
       const conversionRate = Number(
-        analyticsData?.conversion_rate
+        analyticsData?.revenue?.subscriberConversionRate
+          ?? analyticsData?.revenue?.conversionRate
+          ?? analyticsData?.revenue?.conversion_rate
+          ?? analyticsData?.subscriberConversionRate
+          ?? analyticsData?.conversion_rate
           ?? analyticsData?.conversionRate
           ?? analyticsData?.stats?.conversionRate
           ?? (clicks > 0 ? subscribers / clicks : 0),
       );
 
-      const url = String(link?.url ?? link?.tracking_url ?? link?.trackingUrl ?? '').trim();
-      const rawName = link?.name ?? link?.title ?? link?.slug ?? link?.campaignName ?? url ?? linkId;
+      const url = String(link?.campaignUrl ?? link?.url ?? link?.tracking_url ?? link?.trackingUrl ?? '').trim();
+      const rawName = link?.campaignName ?? link?.name ?? link?.title ?? link?.slug ?? url ?? linkId;
       const name = String(rawName).trim();
 
       linkRows.push({
