@@ -648,19 +648,35 @@ export default function ManagerDashboardPage() {
   }, [igReelCurves, selectedIgCreator, igRows]);
 
   const igDonutData = useMemo(() => {
-    const rows = filteredIgRows.slice(0, 30);
-    const viewsData = rows.map((row: any, i: number) => ({
-      name: `${row.creatorName !== "Unknown" ? row.creatorName : ""}@${row.username}`.trim(),
-      value: Math.max(0, Number(row.views || 0)),
-      color: CREATOR_COLORS[i % CREATOR_COLORS.length],
-    }));
-    const followersData = rows.map((row: any, i: number) => ({
-      name: `${row.creatorName !== "Unknown" ? row.creatorName : ""}@${row.username}`.trim(),
-      value: Math.max(0, Number(row.followersDelta || 0)),
-      color: CREATOR_COLORS[i % CREATOR_COLORS.length],
-    }));
+    const rows = filteredIgRows;
+    if (selectedIgCreator !== "all") {
+      // Single creator selected → show per-account breakdown
+      const viewsData = rows.slice(0, 30).map((row: any, i: number) => ({
+        name: `@${row.username}`,
+        value: Math.max(0, Number(row.views || 0)),
+        color: CREATOR_COLORS[i % CREATOR_COLORS.length],
+      }));
+      const followersData = rows.slice(0, 30).map((row: any, i: number) => ({
+        name: `@${row.username}`,
+        value: Math.max(0, Number(row.followersDelta || 0)),
+        color: CREATOR_COLORS[i % CREATOR_COLORS.length],
+      }));
+      return { viewsData, followersData };
+    }
+    // All creators → aggregate by creator
+    const byCreator = new Map<string, { views: number; followers: number }>();
+    for (const row of rows) {
+      const key = row.creatorName || "Unknown";
+      if (!byCreator.has(key)) byCreator.set(key, { views: 0, followers: 0 });
+      const c = byCreator.get(key)!;
+      c.views += Math.max(0, Number(row.views || 0));
+      c.followers += Math.max(0, Number(row.followersDelta || 0));
+    }
+    const entries = Array.from(byCreator.entries()).sort((a, b) => b[1].views - a[1].views);
+    const viewsData = entries.map(([name, d], i) => ({ name, value: d.views, color: CREATOR_COLORS[i % CREATOR_COLORS.length] }));
+    const followersData = entries.map(([name, d], i) => ({ name, value: d.followers, color: CREATOR_COLORS[i % CREATOR_COLORS.length] }));
     return { viewsData, followersData };
-  }, [filteredIgRows]);
+  }, [filteredIgRows, selectedIgCreator]);
 
   if (!user) return null;
   if (user.role !== "marketing_manager" && user.role !== "admin") {
