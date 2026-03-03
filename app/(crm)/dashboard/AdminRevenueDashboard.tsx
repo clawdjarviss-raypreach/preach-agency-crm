@@ -33,6 +33,35 @@ function formatCurrency(n: number): string {
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function normalizeRevenueTxType(type: unknown): "subscription" | "message" | "tip" | "stream" | "other" {
+  const raw = String(type ?? "").trim().toLowerCase();
+  if (!raw) return "other";
+  if (raw.includes("tip")) return "tip";
+  if (
+    raw.includes("stream") ||
+    raw.includes("live")
+  ) return "stream";
+  if (
+    raw === "new_sub" ||
+    raw === "new_subscription" ||
+    raw === "subscription" ||
+    raw === "subscribes" ||
+    raw === "subscribe" ||
+    raw === "rebill" ||
+    raw.includes("renewal") ||
+    raw.includes("recurring")
+  ) return "subscription";
+  if (
+    raw === "message" ||
+    raw === "messages" ||
+    raw === "chat_messages" ||
+    raw === "ppv" ||
+    raw === "post" ||
+    raw.includes("ppv")
+  ) return "message";
+  return "other";
+}
+
 function getGreeting(): string {
   const h = new Date().getHours();
   if (h < 12) return "Good Morning";
@@ -161,7 +190,73 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
         .gte("date", comparisonRange.start)
         .lte("date", comparisonRange.end);
 
-      const rowsCur = (earningsCur ?? []).filter((r: any) => !accountMap.size || accountMap.has(r.account_id));
+      const today = toDateOnly(new Date());
+      const includesToday = effectiveDateRange.start <= today && effectiveDateRange.end >= today;
+      let earningsCurRows = earningsCur ?? [];
+
+      if (includesToday) {
+        const todayEarningsRows = earningsCurRows.filter((r: any) => r.date === today);
+        const todayNet = todayEarningsRows.reduce((sum: number, r: any) => sum + Number(r.net_earnings || 0), 0);
+
+        if (todayEarningsRows.length === 0 || todayNet === 0) {
+          const { data: todayTx } = await supabase
+            .from("crm_of_transactions")
+            .select("account_id,type,amount,timestamp")
+            .gte("timestamp", `${today}T00:00:00`)
+            .lte("timestamp", `${today}T23:59:59`);
+
+          const txFiltered = (todayTx ?? []).filter((r: any) => !accountMap.size || accountMap.has(r.account_id));
+          const todayByAccount = new Map<string, any>();
+
+          for (const tx of txFiltered) {
+            const accountId = String(tx.account_id ?? "").trim();
+            if (!accountId) continue;
+            if (!todayByAccount.has(accountId)) {
+              todayByAccount.set(accountId, {
+                account_id: accountId,
+                date: today,
+                total_earnings: 0,
+                net_earnings: 0,
+                subscription_earnings: 0,
+                message_earnings: 0,
+                tip_earnings: 0,
+                transaction_count: 0,
+                subscription_count: 0,
+              });
+            }
+
+            const row = todayByAccount.get(accountId)!;
+            const amount = Number(tx.amount || 0);
+            row.total_earnings += amount;
+            row.net_earnings += amount;
+            row.transaction_count += 1;
+
+            switch (normalizeRevenueTxType(tx.type)) {
+              case "subscription":
+                row.subscription_earnings += amount;
+                row.subscription_count += 1;
+                break;
+              case "message":
+                row.message_earnings += amount;
+                break;
+              case "tip":
+                row.tip_earnings += amount;
+                break;
+              default:
+                break;
+            }
+          }
+
+          const todayFallbackRows = Array.from(todayByAccount.values());
+          if (todayFallbackRows.length > 0) {
+            const replaceAccountIds = new Set(todayFallbackRows.map((r) => r.account_id));
+            earningsCurRows = earningsCurRows.filter((r: any) => !(r.date === today && replaceAccountIds.has(r.account_id)));
+            earningsCurRows.push(...todayFallbackRows);
+          }
+        }
+      }
+
+      const rowsCur = earningsCurRows.filter((r: any) => !accountMap.size || accountMap.has(r.account_id));
       const rowsPrev = (earningsPrev ?? []).filter((r: any) => !accountMap.size || accountMap.has(r.account_id));
 
       const dashboardAgg = rowsCur.reduce((acc: any, r: any) => {
