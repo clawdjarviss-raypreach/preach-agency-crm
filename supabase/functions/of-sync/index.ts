@@ -71,6 +71,29 @@ async function withSyncState<T>(accountId: string, endpoint: Exclude<SyncEndpoin
   }
 }
 
+function listFromPayload<T = any>(payload: any): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  if (Array.isArray(payload?.data?.list)) return payload.data.list as T[];
+  if (Array.isArray(payload?.data?.items)) return payload.data.items as T[];
+  if (Array.isArray(payload?.data)) return payload.data as T[];
+  if (Array.isArray(payload?.items)) return payload.items as T[];
+  if (Array.isArray(payload?.results)) return payload.results as T[];
+  return [];
+}
+
+function normalizeTransactionType(input: unknown): 'ppv' | 'tip' | 'subscription' | 'new_sub' | 'rebill' | 'stream' {
+  const raw = String(input ?? '').toLowerCase();
+
+  if (raw.includes('tip')) return 'tip';
+  if (raw.includes('stream')) return 'stream';
+  if (raw === 'new_subscription' || raw === 'new_sub' || raw === 'subscribes' || raw === 'subscribe') return 'new_sub';
+  if (raw.includes('rebill') || raw === 'renewal' || raw === 'subscription_renewal') return 'rebill';
+  if (raw === 'post' || raw === 'chat_messages' || raw === 'message' || raw === 'messages' || raw === 'ppv') return 'ppv';
+  if (raw === 'subscription') return 'subscription';
+
+  return 'subscription';
+}
+
 function getDefaultAnalyticsRange() {
   const end = new Date();
   const start = new Date(end);
@@ -88,10 +111,11 @@ async function syncEarnings(accountId: string) {
       method: 'POST',
       body: {
         account_id: accountId,
+        account_ids: [accountId],
         ...range,
       },
     });
-    const rows = (payload?.data ?? []).map((r: any) => ({
+    const rows = listFromPayload(payload).map((r: any) => ({
       account_id: accountId,
       date: r.date,
       total_earnings: r.total_earnings ?? 0,
@@ -123,17 +147,47 @@ async function syncEarnings(accountId: string) {
 
 async function syncTransactions(accountId: string) {
   return withSyncState(accountId, 'transactions', async () => {
-    const payload = await fetchOf(`/api/${accountId}/transactions`);
-    const rows = (payload?.data ?? []).map((r: any) => ({
-      account_id: accountId,
-      of_transaction_id: String(r.id),
-      amount: r.amount ?? 0,
-      type: r.type ?? 'subscription',
-      fan_id: r.fan_id ?? null,
-      fan_username: r.fan_username ?? null,
-      timestamp: r.timestamp ?? new Date().toISOString(),
-      metadata: r,
-    }));
+    const all: any[] = [];
+    const seenMarkers = new Set<string>();
+    let marker: string | undefined;
+
+    while (true) {
+      const payload = await fetchOf(`/api/${accountId}/transactions`, {
+        query: {
+          limit: 100,
+          marker,
+        },
+      });
+
+      const items = listFromPayload(payload);
+      all.push(...items);
+
+      const nextMarker = payload?.data?.nextMarker
+        ?? payload?.data?.next_marker
+        ?? payload?.nextMarker
+        ?? payload?.next_marker
+        ?? payload?.marker;
+
+      if (!nextMarker || seenMarkers.has(String(nextMarker)) || items.length === 0) {
+        break;
+      }
+
+      seenMarkers.add(String(nextMarker));
+      marker = String(nextMarker);
+    }
+
+    const rows = all
+      .filter((r: any) => r?.id)
+      .map((r: any) => ({
+        account_id: accountId,
+        of_transaction_id: String(r.id),
+        amount: r.amount ?? 0,
+        type: normalizeTransactionType(r.type),
+        fan_id: r.fan_id ?? null,
+        fan_username: r.fan_username ?? null,
+        timestamp: r.timestamp ?? new Date().toISOString(),
+        metadata: r,
+      }));
 
     if (rows.length === 0) return { inserted: 0 };
 
@@ -149,21 +203,21 @@ async function syncTransactions(accountId: string) {
 async function syncChargebacks(accountId: string) {
   return withSyncState(accountId, 'chargebacks', async () => {
     const payload = await fetchOf(`/api/${accountId}/chargebacks`);
-    return { count: (payload?.data ?? []).length };
+    return { count: listFromPayload(payload).length };
   });
 }
 
 async function syncFans(accountId: string) {
   return withSyncState(accountId, 'fans', async () => {
     const payload = await fetchOf(`/api/${accountId}/fans/all`);
-    return { count: (payload?.data ?? []).length };
+    return { count: listFromPayload(payload).length };
   });
 }
 
 async function syncChats(accountId: string) {
   return withSyncState(accountId, 'chats', async () => {
     const payload = await fetchOf(`/api/${accountId}/chats`);
-    return { count: (payload?.data ?? []).length };
+    return { count: listFromPayload(payload).length };
   });
 }
 
@@ -182,7 +236,7 @@ async function syncForecast(accountId: string) {
 async function syncTrackingLinks(accountId: string) {
   return withSyncState(accountId, 'tracking_links', async () => {
     const payload = await fetchOf(`/api/${accountId}/tracking-links`);
-    return { count: (payload?.data ?? []).length };
+    return { count: listFromPayload(payload).length };
   });
 }
 
@@ -251,7 +305,11 @@ Deno.serve(async (req) => {
 
     return json({ ok: true, job, results });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'unknown error';
+    const message = err instanceof Error
+      ? err.message
+      : typeof err === 'string'
+        ? err
+        : JSON.stringify(err);
     return json({ error: message }, { status: 500 });
   }
 });
