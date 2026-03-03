@@ -138,7 +138,7 @@ type CreatorRow = {
 };
 
 export default function AdminRevenueDashboard({ user, filterCreatorNames }: { user: any; token: string; filterCreatorNames?: string[] }) {
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(29));
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(0));
   const [drillDate, setDrillDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
