@@ -447,15 +447,6 @@ export default function ManagerDashboardPage() {
     return () => { cancelled = true; };
   }, [dateRange.start, dateRange.end, igDateRange.start, igDateRange.end, trendPeriod]);
 
-  if (!user) return null;
-  if (user.role !== "marketing_manager" && user.role !== "admin") {
-    return (
-      <div style={{ padding: 24, color: "var(--text)" }}>
-        🔒 This dashboard is for marketing managers only.
-      </div>
-    );
-  }
-
   const maxIgEnd = getYesterdayDateOnly();
   const rangeLabelText = `${new Date(dateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(dateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
   const igRangeLabelText = `${new Date(igDateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(igDateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
@@ -474,6 +465,15 @@ export default function ManagerDashboardPage() {
     }));
     return { viewsData, followersData };
   }, [igRows]);
+
+  if (!user) return null;
+  if (user.role !== "marketing_manager" && user.role !== "admin") {
+    return (
+      <div style={{ padding: 24, color: "var(--text)" }}>
+        🔒 This dashboard is for marketing managers only.
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: "1400px" }}>
