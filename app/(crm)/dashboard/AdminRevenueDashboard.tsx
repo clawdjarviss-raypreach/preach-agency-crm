@@ -352,24 +352,36 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
         })
         .sort((a, b) => b.totalRevenue - a.totalRevenue);
 
-      const [{ data: txCur }, { data: txPrev }] = await Promise.all([
-        supabase
-          .from("crm_of_transactions")
-          .select("account_id,type,amount,timestamp")
-          .gte("timestamp", `${effectiveDateRange.start}T00:00:00`)
-          .lte("timestamp", `${effectiveDateRange.end}T23:59:59`),
-        supabase
-          .from("crm_of_transactions")
-          .select("account_id,type,amount,timestamp")
-          .gte("timestamp", `${comparisonRange.start}T00:00:00`)
-          .lte("timestamp", `${comparisonRange.end}T23:59:59`),
+      // Fetch ALL transactions for the date range (Supabase defaults to 1000 rows which truncates data)
+      const fetchAllTx = async (start: string, end: string) => {
+        const all: any[] = [];
+        let from = 0;
+        const pageSize = 1000;
+        while (true) {
+          const { data } = await supabase
+            .from("crm_of_transactions")
+            .select("account_id,type,amount,timestamp")
+            .gte("timestamp", `${start}T00:00:00`)
+            .lte("timestamp", `${end}T23:59:59`)
+            .range(from, from + pageSize - 1);
+          if (!data || data.length === 0) break;
+          all.push(...data);
+          if (data.length < pageSize) break;
+          from += pageSize;
+        }
+        return all;
+      };
+
+      const [txCur, txPrev] = await Promise.all([
+        fetchAllTx(effectiveDateRange.start, effectiveDateRange.end),
+        fetchAllTx(comparisonRange.start, comparisonRange.end),
       ]);
 
       const txCurFiltered = (txCur ?? []).filter((r: any) => !accountMap.size || accountMap.has(r.account_id));
       const txPrevFiltered = (txPrev ?? []).filter((r: any) => !accountMap.size || accountMap.has(r.account_id));
 
       const calcSubs = (rows: any[]) => {
-        const newSubsRows = rows.filter((r) => r.type === "new_sub" || r.type === "subscription");
+        const newSubsRows = rows.filter((r) => r.type === "new_sub" || r.type === "new_subscription");
         const rebillRows = rows.filter((r) => r.type === "rebill");
         const sum = (list: any[]) => list.reduce((s, r) => s + Number(r.amount || 0), 0);
         return {
