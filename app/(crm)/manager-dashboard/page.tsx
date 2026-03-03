@@ -314,7 +314,21 @@ export default function ManagerDashboardPage() {
         .select("id,name,url,clicks,subscribers,conversion_rate,last_synced_at,creator_id")
         .order("clicks", { ascending: false });
 
-      const linksRows = (links ?? []).map((l: any) => ({
+      // For non-admin users, filter tracking links to only those assigned to them
+      const u = localStorage.getItem("crm_user");
+      const currentUserRole = u ? JSON.parse(u)?.role : null;
+      const currentUserId = u ? JSON.parse(u)?.id : null;
+      let filteredLinks = links ?? [];
+      if (currentUserRole !== "admin" && currentUserId) {
+        const { data: assignments } = await supabase
+          .from("crm_tracking_link_assignments")
+          .select("tracking_link_id")
+          .eq("user_id", currentUserId);
+        const assignedIds = new Set((assignments ?? []).map((a: any) => a.tracking_link_id));
+        filteredLinks = (links ?? []).filter((l: any) => assignedIds.has(l.id));
+      }
+
+      const linksRows = filteredLinks.map((l: any) => ({
         ...l,
         creatorName: creatorNameById.get(l.creator_id) || "Unknown",
       }));
