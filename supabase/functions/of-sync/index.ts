@@ -278,7 +278,50 @@ async function syncForecast(accountId: string) {
 async function syncTrackingLinks(accountId: string) {
   return withSyncState(accountId, 'tracking_links', async () => {
     const payload = await fetchOf(`/api/${accountId}/tracking-links`);
-    return { count: listFromPayload(payload).length };
+    const items = listFromPayload(payload);
+
+    if (items.length === 0) return { inserted: 0 };
+
+    const { data: ofAccount, error: accountError } = await supabaseAdmin
+      .from('crm_of_accounts')
+      .select('creator_id')
+      .eq('account_id', accountId)
+      .maybeSingle();
+
+    if (accountError) throw accountError;
+
+    const rows = items
+      .map((link: any) => {
+        const linkId = String(link?.id ?? link?.link_id ?? link?.trackingLinkId ?? '').trim();
+        if (!linkId) return null;
+
+        const url = String(link?.url ?? link?.tracking_url ?? link?.trackingUrl ?? '').trim();
+        const rawName = link?.name ?? link?.title ?? link?.slug ?? url ?? linkId;
+        const name = String(rawName).trim();
+
+        return {
+          account_id: accountId,
+          creator_id: ofAccount?.creator_id ?? null,
+          link_id: linkId,
+          name: name || linkId,
+          url: url || linkId,
+          clicks: Number(link?.clicks ?? link?.click_count ?? link?.visits ?? 0),
+          subscribers: Number(link?.subscribers ?? link?.subscriber_count ?? link?.conversions ?? 0),
+          conversion_rate: Number(link?.conversion_rate ?? link?.conversionRate ?? 0),
+          last_synced_at: new Date().toISOString(),
+        };
+      })
+      .filter(Boolean);
+
+    if (rows.length === 0) return { inserted: 0 };
+
+    const { error } = await supabaseAdmin
+      .from('crm_of_tracking_links')
+      .upsert(rows, { onConflict: 'account_id,link_id' });
+
+    if (error) throw error;
+
+    return { inserted: rows.length };
   });
 }
 

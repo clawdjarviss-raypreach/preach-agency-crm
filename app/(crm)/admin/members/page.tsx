@@ -242,7 +242,7 @@ export default function MembersPage() {
 
     const [rolesRes, membersRes, creatorsRes, inviteLinkRes] = await Promise.all([
       supabase.from("crm_roles").select("*"),
-      supabase.from("crm_chatters").select("*, role:crm_roles(*)").neq("status", "inactive"),
+      supabase.from("crm_chatters").select("*, role:crm_roles!crm_chatters_role_id_fkey(*)").neq("status", "inactive"),
       supabase.from("crm_creators").select("id, name, platform_account_id"),
       supabase.from("crm_invite_link").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ]);

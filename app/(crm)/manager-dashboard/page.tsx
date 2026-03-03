@@ -174,7 +174,7 @@ function DonutWithLegend({
 
 export default function ManagerDashboardPage() {
   const [user, setUser] = useState<any>(null);
-  const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(6));
+  const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(29));
   const [igDateRange, setIgDateRange] = useState<DateRange>(() => getLast7DaysEndingYesterday());
   const [loading, setLoading] = useState(true);
 
