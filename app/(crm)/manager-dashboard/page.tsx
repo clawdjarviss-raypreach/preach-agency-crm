@@ -334,7 +334,7 @@ export default function ManagerDashboardPage() {
       }));
 
       const igEndPlusOne = addDays(igDateRange.end, 1);
-      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }] = await Promise.all([
+      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }, { data: reelStats }] = await Promise.all([
         supabase.from("crm_ig_accounts").select("id,creator_id,username,followers").order("followers", { ascending: false }),
         supabase
           .from("crm_ig_daily_snapshots")
@@ -346,7 +346,20 @@ export default function ManagerDashboardPage() {
           .select("id,ig_account_id,posted_at,thumbnail_url")
           .gte("posted_at", `${igDateRange.start}T00:00:00`)
           .lte("posted_at", `${igDateRange.end}T23:59:59`),
+        supabase.rpc("ig_account_reel_stats", { p_start_date: igDateRange.start, p_end_date: igEndPlusOne }),
       ]);
+
+      // Build reel stats lookup: ig_account_id → date → { views, likes, comments }
+      const reelStatsByAccount = new Map<string, Map<string, { views: number; likes: number; comments: number }>>();
+      for (const rs of reelStats ?? []) {
+        const aid = rs.ig_account_id;
+        if (!reelStatsByAccount.has(aid)) reelStatsByAccount.set(aid, new Map());
+        reelStatsByAccount.get(aid)!.set(rs.snapshot_date, {
+          views: Number(rs.total_views || 0),
+          likes: Number(rs.total_likes || 0),
+          comments: Number(rs.total_comments || 0),
+        });
+      }
 
       const snapByAccount = new Map<string, any[]>();
       for (const s of igSnapshots ?? []) {
@@ -370,15 +383,17 @@ export default function ManagerDashboardPage() {
 
         const startFollowers = Number(startSnap?.followers || 0);
         const endFollowers = Number(endSnap?.followers || 0);
-        const startViews = Number(startSnap?.views || 0);
-        const endViews = Number(endSnap?.views || 0);
-        const startLikes = Number(startSnap?.likes || 0);
-        const endLikes = Number(endSnap?.likes || 0);
-        const startComments = Number(startSnap?.comments || 0);
-        const endComments = Number(endSnap?.comments || 0);
 
         const followersDelta = endFollowers - startFollowers;
         const followerGrowthPct = startFollowers > 0 ? ((followersDelta / startFollowers) * 100) : null;
+
+        // Views/likes/comments from aggregated reel stats (cumulative → delta)
+        const accountReelStats = reelStatsByAccount.get(a.id);
+        const startRS = accountReelStats?.get(igDateRange.start);
+        const endRS = accountReelStats?.get(igEndPlusOne) ?? (accountReelStats ? Array.from(accountReelStats.values()).pop() : null);
+        const viewsDelta = (endRS?.views || 0) - (startRS?.views || 0);
+        const likesDelta = (endRS?.likes || 0) - (startRS?.likes || 0);
+        const commentsDelta = (endRS?.comments || 0) - (startRS?.comments || 0);
 
         const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
         const mappedCreator = creatorByInstagram.get(usernameKey);
@@ -393,9 +408,9 @@ export default function ManagerDashboardPage() {
           followers: endFollowers,
           followersDelta,
           followerGrowthPct,
-          views: endViews - startViews,
-          likes: endLikes - startLikes,
-          comments: endComments - startComments,
+          views: viewsDelta,
+          likes: likesDelta,
+          comments: commentsDelta,
           reelCount: reelCountByAccount.get(a.id) || 0,
         };
       }).sort((a: any, b: any) => b.views - a.views);
@@ -406,14 +421,15 @@ export default function ManagerDashboardPage() {
         let likes = 0;
         let comments = 0;
 
+        // Aggregate views/likes/comments from reel stats across all accounts
         for (const account of igAccounts ?? []) {
-          const rows = (snapByAccount.get((account as any).id) ?? []).sort((x, y) => String(x.date).localeCompare(String(y.date)));
-          const byDate = new Map(rows.map((r) => [String((r as any).date), r]));
-          const startSnap = byDate.get(day);
-          const endSnap = byDate.get(next);
-          views += Number(endSnap?.views || 0) - Number(startSnap?.views || 0);
-          likes += Number(endSnap?.likes || 0) - Number(startSnap?.likes || 0);
-          comments += Number(endSnap?.comments || 0) - Number(startSnap?.comments || 0);
+          const accountRS = reelStatsByAccount.get((account as any).id);
+          if (!accountRS) continue;
+          const dayRS = accountRS.get(day);
+          const nextRS = accountRS.get(next);
+          views += (nextRS?.views || 0) - (dayRS?.views || 0);
+          likes += (nextRS?.likes || 0) - (dayRS?.likes || 0);
+          comments += (nextRS?.comments || 0) - (dayRS?.comments || 0);
         }
 
         return {
