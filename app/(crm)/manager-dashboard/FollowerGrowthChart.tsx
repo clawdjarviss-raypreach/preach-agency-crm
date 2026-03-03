@@ -119,13 +119,12 @@ export default function FollowerGrowthChart({ token, startDate, endDate }: Props
       const snapshots = allSnapshots.get(account.id) || [];
       const name = account.username || "Account";
       const byDate = new Map(snapshots.map((s: any) => [String(s.date), s]));
-      const baseline = Number(byDate.get(startDate)?.followers || 0);
 
       dates.forEach((date) => {
         const endpoint = addDays(date, 1);
-        const endpointRow = byDate.get(endpoint);
-        const endpointFollowers = Number(endpointRow?.followers || 0);
-        const gained = endpointFollowers - baseline;
+        const startFollowers = Number(byDate.get(date)?.followers || 0);
+        const endpointFollowers = Number(byDate.get(endpoint)?.followers || 0);
+        const gained = endpointFollowers - startFollowers;
         rowsByDate.get(date)![name] = gained;
       });
     });
@@ -144,7 +143,7 @@ export default function FollowerGrowthChart({ token, startDate, endDate }: Props
         fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
         textTransform: "uppercase", letterSpacing: "0.5px",
       }}>
-        📊 Follower Growth (Snapshot Endpoint Formula)
+        📊 Daily Follower Gains (snapshot[day+1] - snapshot[day])
       </div>
       {chartData.length === 0 ? (
         <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "60px 0" }}>
