@@ -1,11 +1,67 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
+import * as XLSX from "xlsx";
+import { supabase } from "@/lib/supabase";
+
+type ImportRow = {
+  id: string;
+  filename: string;
+  file_type: "transactions" | "dashboard";
+  status: string;
+  record_count: number;
+  imported_at: string;
+};
+
+type Chatter = { id: string; name: string };
+
+function normalizeHeader(input: string) {
+  return input
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[\-_]/g, " ")
+    .trim();
+}
+
+function getField(row: Record<string, any>, keys: string[], fallback = "") {
+  const normalized = Object.entries(row).reduce<Record<string, any>>((acc, [k, v]) => {
+    acc[normalizeHeader(k)] = v;
+    return acc;
+  }, {});
+  for (const key of keys) {
+    const v = normalized[normalizeHeader(key)];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return v;
+  }
+  return fallback;
+}
+
+function toNum(v: any) {
+  if (typeof v === "number") return v;
+  const parsed = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toInt(v: any) {
+  return Math.round(toNum(v));
+}
+
+function toDate(v: any): string | null {
+  if (!v) return null;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  const parsed = new Date(v);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().slice(0, 10);
+}
+
+async function parseSpreadsheet(file: File): Promise<Record<string, any>[]> {
+  const buf = await file.arrayBuffer();
+  const workbook = XLSX.read(buf, { type: "array" });
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) as Record<string, any>[];
+  return rows;
+}
 
 export default function ImportsPage() {
-  const [token, setToken] = useState("");
   const [user, setUser] = useState<any>(null);
   const [transactionsFile, setTransactionsFile] = useState<File | null>(null);
   const [dashboardFile, setDashboardFile] = useState<File | null>(null);
@@ -14,33 +70,87 @@ export default function ImportsPage() {
   const [success, setSuccess] = useState("");
   const [selectedImportId, setSelectedImportId] = useState<string>("");
 
-  const omApi = (api as any).crm.omImport;
-  const omActionApi = (api as any).crm.omImportAction;
+  const [imports, setImports] = useState<ImportRow[] | null>(null);
+  const [chatters, setChatters] = useState<Chatter[]>([]);
+  const [unmatchedChatters, setUnmatchedChatters] = useState<string[]>([]);
 
   useEffect(() => {
-    const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
-    setToken(t);
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const imports = useQuery(omApi.listImports, token ? { token, limit: 50 } : "skip");
-  const importDetails = useQuery(
-    omApi.getImportDetails,
-    token && selectedImportId ? { token, importId: selectedImportId } : "skip"
-  );
-  const chatters = useQuery((api as any).crm.chatters.list, token ? { token } : "skip");
+  const loadImports = async () => {
+    const { data, error } = await supabase
+      .from("crm_om_imports")
+      .select("id, filename, file_type, status, record_count, imported_at")
+      .order("imported_at", { ascending: false })
+      .limit(50);
 
-  const generateUploadUrl = useMutation(omApi.generateUploadUrl);
-  const processImport = useAction(omActionApi.processImport);
-  const deleteImport = useMutation(omApi.deleteImport);
-  const remapChatter = useMutation(omApi.remapChatter);
+    if (error) {
+      console.error("Failed loading imports", error);
+      setImports([]);
+      return;
+    }
+
+    const rows = (data ?? []) as ImportRow[];
+    setImports(rows);
+    if (!selectedImportId && rows.length > 0) setSelectedImportId(rows[0].id);
+  };
+
+  const loadChatters = async () => {
+    const { data, error } = await supabase.from("crm_chatters").select("id, name").order("name", { ascending: true });
+    if (error) {
+      console.error("Failed loading chatters", error);
+      setChatters([]);
+      return;
+    }
+    setChatters((data ?? []) as Chatter[]);
+  };
+
+  useEffect(() => {
+    loadImports();
+    loadChatters();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDetails() {
+      if (!selectedImportId) {
+        setUnmatchedChatters([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("crm_om_chatter_metrics")
+        .select("chatter_om_name")
+        .eq("import_id", selectedImportId)
+        .is("chatter_id", null)
+        .limit(5000);
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed loading import details", error);
+        setUnmatchedChatters([]);
+        return;
+      }
+
+      const unique = Array.from(new Set((data ?? []).map((r: any) => String(r.chatter_om_name || "").trim()).filter(Boolean)));
+      setUnmatchedChatters(unique);
+    }
+
+    loadDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedImportId]);
 
   const lastImport = imports?.[0];
 
-  const unmatchedNames = useMemo(() => {
-    return importDetails?.unmatchedChatters || [];
-  }, [importDetails]);
+  const importDetails = useMemo(() => {
+    return {
+      unmatchedChatters,
+    };
+  }, [unmatchedChatters]);
 
   if (!user) return null;
   if (user.role !== "admin") {
@@ -57,31 +167,84 @@ export default function ImportsPage() {
     setError("");
     setSuccess("");
     setBusyType(fileType);
-    try {
-      const uploadUrl = await generateUploadUrl({ token });
-      const uploadResult = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      });
-      const json = await uploadResult.json();
-      if (!json.storageId) throw new Error("Upload failed");
 
-      const result = await processImport({
-        token,
-        storageId: json.storageId,
-        fileType,
-        filename: file.name,
-      });
+    try {
+      const rows = await parseSpreadsheet(file);
+      if (!rows.length) throw new Error("No rows found in uploaded file");
+
+      const { data: importInserted, error: importErr } = await supabase
+        .from("crm_om_imports")
+        .insert({
+          imported_by: user.id,
+          filename: file.name,
+          file_type: fileType,
+          status: "processing",
+          record_count: rows.length,
+          data: rows,
+        })
+        .select("id")
+        .single();
+
+      if (importErr) throw new Error(importErr.message);
+
+      if (fileType === "dashboard") {
+        const mapped = rows.map((row) => {
+          const chatterName = String(getField(row, ["Chatter", "Chatter Name", "Agent", "Name"]))
+            .trim();
+
+          return {
+            import_id: importInserted.id,
+            date:
+              toDate(getField(row, ["Date", "Snapshot Date", "Report Date"])) ||
+              new Date().toISOString().slice(0, 10),
+            period_end: toDate(getField(row, ["Period End", "End Date"])),
+            chatter_om_name: chatterName || "Unknown",
+            total_sales: toNum(getField(row, ["Total Sales", "Revenue", "Total"])),
+            ppv_sales: toNum(getField(row, ["PPV Sales", "Message Sales", "PPV"])),
+            tip_sales: toNum(getField(row, ["Tip Sales", "Tips"])),
+            impact_pct: toNum(getField(row, ["Impact %", "Impact"])),
+            messages_sent: toInt(getField(row, ["Messages Sent", "Messages"])),
+            avg_response_time: toInt(getField(row, ["Avg Response Time", "Average Response Time"])),
+            manually_typed: toInt(getField(row, ["Manually Typed"])),
+            ai_replies: toInt(getField(row, ["AI Replies"])),
+            templates_sent: toInt(getField(row, ["Templates Sent"])),
+            ppv_sent: toInt(getField(row, ["PPV Sent"])),
+            ppv_sold: toInt(getField(row, ["PPV Sold"])),
+            ppv_open_rate: toNum(getField(row, ["PPV Open Rate"])),
+            ppv_avg_price: toNum(getField(row, ["PPV Avg Price", "Avg PPV Price"])),
+          };
+        });
+
+        // best-effort chatter mapping by exact name
+        const chatterByName = new Map(chatters.map((c) => [c.name.trim().toLowerCase(), c.id]));
+        const withChatterIds = mapped.map((m) => ({
+          ...m,
+          chatter_id: chatterByName.get(m.chatter_om_name.trim().toLowerCase()) || null,
+        }));
+
+        const chunkSize = 500;
+        for (let i = 0; i < withChatterIds.length; i += chunkSize) {
+          const chunk = withChatterIds.slice(i, i + chunkSize);
+          const { error: metricsErr } = await supabase.from("crm_om_chatter_metrics").insert(chunk);
+          if (metricsErr) throw new Error(metricsErr.message);
+        }
+      }
+
+      const { error: markErr } = await supabase
+        .from("crm_om_imports")
+        .update({ status: "success", error_message: null })
+        .eq("id", importInserted.id);
+      if (markErr) throw new Error(markErr.message);
 
       setSuccess(
-        `${fileType} import complete: ${result.recordCount} rows imported` +
-          (result.unmatchedChatters?.length
-            ? `, ${result.unmatchedChatters.length} unmatched chatters`
-            : "")
+        `${fileType} import complete: ${rows.length} rows imported` +
+          (fileType === "dashboard" && unmatchedChatters.length ? `, ${unmatchedChatters.length} unmatched chatters` : "")
       );
       if (fileType === "transactions") setTransactionsFile(null);
       if (fileType === "dashboard") setDashboardFile(null);
+
+      await loadImports();
+      if (importInserted.id) setSelectedImportId(importInserted.id);
     } catch (e: any) {
       setError(e?.message || "Import failed");
     } finally {
@@ -103,12 +266,20 @@ export default function ImportsPage() {
           Last Import
         </div>
         <div style={{ fontSize: 18, color: "var(--text)", fontWeight: 600 }}>
-          {lastImport ? new Date(lastImport.importedAt).toLocaleString() : "No imports yet"}
+          {lastImport ? new Date(lastImport.imported_at).toLocaleString() : "No imports yet"}
         </div>
       </div>
 
-      {success && <div style={{ padding: 12, borderRadius: 12, background: "var(--green-bg)", color: "var(--green)", marginBottom: 12 }}>✅ {success}</div>}
-      {error && <div style={{ padding: 12, borderRadius: 12, background: "var(--red-bg)", color: "var(--red)", marginBottom: 12 }}>❌ {error}</div>}
+      {success && (
+        <div style={{ padding: 12, borderRadius: 12, background: "var(--green-bg)", color: "var(--green)", marginBottom: 12 }}>
+          ✅ {success}
+        </div>
+      )}
+      {error && (
+        <div style={{ padding: 12, borderRadius: 12, background: "var(--red-bg)", color: "var(--red)", marginBottom: 12 }}>
+          ❌ {error}
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, marginBottom: 24 }}>
         <UploadCard
@@ -133,16 +304,10 @@ export default function ImportsPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                {[
-                  "File",
-                  "Type",
-                  "Records",
-                  "Unmatched",
-                  "Status",
-                  "Imported At",
-                  "Actions",
-                ].map((h) => (
-                  <th key={h} style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>{h}</th>
+                {["File", "Type", "Records", "Unmatched", "Status", "Imported At", "Actions"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", padding: "10px 8px", fontSize: 12, color: "var(--text-muted)" }}>
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -150,18 +315,27 @@ export default function ImportsPage() {
               {(imports || []).map((row: any) => (
                 <tr key={row.id} style={{ borderBottom: "1px solid var(--border-subtle)" }}>
                   <td style={cell}>{row.filename}</td>
-                  <td style={cell}>{row.fileType}</td>
-                  <td style={cell}>{row.recordCount}</td>
-                  <td style={cell}>{row.unmatchedCount}</td>
+                  <td style={cell}>{row.file_type}</td>
+                  <td style={cell}>{row.record_count}</td>
+                  <td style={cell}>{row.id === selectedImportId ? unmatchedChatters.length : "—"}</td>
                   <td style={cell}>{row.status}</td>
-                  <td style={cell}>{new Date(row.importedAt).toLocaleString()}</td>
+                  <td style={cell}>{new Date(row.imported_at).toLocaleString()}</td>
                   <td style={cell}>
-                    <button onClick={() => setSelectedImportId(row.id)} style={btn}>Details</button>
+                    <button onClick={() => setSelectedImportId(row.id)} style={btn}>
+                      Details
+                    </button>
                     <button
                       onClick={async () => {
                         if (!confirm("Delete this import and all linked metrics?")) return;
-                        await deleteImport({ token, importId: row.id });
+                        const { error: delMetricsErr } = await supabase
+                          .from("crm_om_chatter_metrics")
+                          .delete()
+                          .eq("import_id", row.id);
+                        if (delMetricsErr) throw new Error(delMetricsErr.message);
+                        const { error: delImportErr } = await supabase.from("crm_om_imports").delete().eq("id", row.id);
+                        if (delImportErr) throw new Error(delImportErr.message);
                         if (selectedImportId === row.id) setSelectedImportId("");
+                        await loadImports();
                       }}
                       style={{ ...btn, color: "var(--red)" }}
                     >
@@ -171,7 +345,11 @@ export default function ImportsPage() {
                 </tr>
               ))}
               {imports && imports.length === 0 && (
-                <tr><td style={cell} colSpan={7}>No imports yet.</td></tr>
+                <tr>
+                  <td style={cell} colSpan={7}>
+                    No imports yet.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -182,19 +360,21 @@ export default function ImportsPage() {
         <div style={{ background: "var(--surface)", borderRadius: 16, padding: 16, marginTop: 16 }}>
           <h3 style={{ fontSize: 17, marginBottom: 10, color: "var(--text)" }}>Import Details</h3>
 
-          {unmatchedNames.length > 0 && (
+          {importDetails.unmatchedChatters.length > 0 && (
             <div style={{ background: "var(--orange-bg)", color: "var(--orange)", padding: 12, borderRadius: 12, marginBottom: 12 }}>
-              ⚠️ {unmatchedNames.length} unmatched chatters. Map them below:
+              ⚠️ {importDetails.unmatchedChatters.length} unmatched chatters. Map them below:
             </div>
           )}
 
-          {unmatchedNames.map((name: string) => (
+          {importDetails.unmatchedChatters.map((name: string) => (
             <div key={name} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
               <div style={{ minWidth: 180, color: "var(--text)", fontSize: 14 }}>{name}</div>
               <select id={`map-${name}`} style={{ ...input, maxWidth: 280 }}>
                 <option value="">Select chatter</option>
                 {(chatters || []).map((c: any) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
                 ))}
               </select>
               <button
@@ -202,7 +382,14 @@ export default function ImportsPage() {
                 onClick={async () => {
                   const selected = (document.getElementById(`map-${name}`) as HTMLSelectElement)?.value;
                   if (!selected) return;
-                  await remapChatter({ token, importId: selectedImportId, chatterOmName: name, chatterId: selected });
+                  const { error } = await supabase
+                    .from("crm_om_chatter_metrics")
+                    .update({ chatter_id: selected })
+                    .eq("import_id", selectedImportId)
+                    .eq("chatter_om_name", name);
+                  if (error) throw new Error(error.message);
+
+                  setUnmatchedChatters((prev) => prev.filter((n) => n !== name));
                 }}
               >
                 Map
@@ -237,9 +424,7 @@ function UploadCard({
         onChange={(e) => setFile(e.target.files?.[0] || null)}
         style={{ marginBottom: 10, color: "var(--text-secondary)" }}
       />
-      <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>
-        {file ? file.name : "No file selected"}
-      </div>
+      <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>{file ? file.name : "No file selected"}</div>
       <button onClick={onUpload} disabled={!file || busy} style={{ ...btn, opacity: !file || busy ? 0.6 : 1 }}>
         {busy ? "Uploading..." : "Upload & Parse"}
       </button>

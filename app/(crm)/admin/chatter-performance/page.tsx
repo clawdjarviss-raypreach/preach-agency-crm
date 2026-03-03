@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
+import { supabase } from "@/lib/supabase";
 
 type SortKey =
   | "chatterName"
@@ -22,37 +21,166 @@ type SortKey =
 
 const KEY_METRICS: SortKey[] = ["totalSales", "ppvOpenRate", "impactPct", "avgResponseTime"];
 
+type ImportRow = {
+  id: string;
+  imported_at: string;
+  filename: string;
+};
+
+type MetricRow = {
+  id: string;
+  chatter_om_name: string;
+  total_sales: number | null;
+  ppv_sales: number | null;
+  tip_sales: number | null;
+  impact_pct: number | null;
+  messages_sent: number | null;
+  avg_response_time: number | null;
+  ppv_sent: number | null;
+  ppv_sold: number | null;
+  ppv_open_rate: number | null;
+  ppv_avg_price: number | null;
+  ai_replies: number | null;
+  templates_sent: number | null;
+  manually_typed: number | null;
+};
+
+function toUiRow(row: MetricRow) {
+  return {
+    id: row.id,
+    chatterName: row.chatter_om_name,
+    totalSales: Number(row.total_sales || 0),
+    ppvSales: Number(row.ppv_sales || 0),
+    tipSales: Number(row.tip_sales || 0),
+    impactPct: Number(row.impact_pct || 0),
+    messagesSent: Number(row.messages_sent || 0),
+    avgResponseTime: Number(row.avg_response_time || 0),
+    ppvSent: Number(row.ppv_sent || 0),
+    ppvSold: Number(row.ppv_sold || 0),
+    ppvOpenRate: Number(row.ppv_open_rate || 0),
+    ppvAvgPrice: Number(row.ppv_avg_price || 0),
+    aiReplies: Number(row.ai_replies || 0),
+    templatesSent: Number(row.templates_sent || 0),
+    manuallyTyped: Number(row.manually_typed || 0),
+  };
+}
+
 export default function ChatterPerformancePage() {
-  const [token, setToken] = useState("");
   const [user, setUser] = useState<any>(null);
   const [selectedImportId, setSelectedImportId] = useState<string>("");
   const [sortKey, setSortKey] = useState<SortKey>("totalSales");
   const [sortAsc, setSortAsc] = useState(false);
 
-  const omApi = (api as any).crm.omImport;
-  const ofApi = (api as any).crm.ofQueries;
+  const [imports, setImports] = useState<ImportRow[]>([]);
+  const [metrics, setMetrics] = useState<any[] | null>(null);
+  const [ofChatStats, setOfChatStats] = useState<any | null>(null);
 
   useEffect(() => {
-    const t = localStorage.getItem("crm_token") || "";
     const u = localStorage.getItem("crm_user");
-    setToken(t);
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const imports = useQuery(omApi.listImportsForSelector, token ? { token } : "skip");
-  const metrics = useQuery(
-    omApi.getChatterMetricsByImport,
-    token && selectedImportId ? { token, importId: selectedImportId } : "skip"
-  );
+  useEffect(() => {
+    let cancelled = false;
 
-  // OF API chat stats for response time metrics
-  const ofChatStats = useQuery(ofApi.getOfChatStats, {});
+    async function loadImports() {
+      const { data, error } = await supabase
+        .from("crm_om_imports")
+        .select("id, imported_at, filename")
+        .eq("file_type", "dashboard")
+        .order("imported_at", { ascending: false })
+        .limit(200);
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed loading OM imports", error);
+        setImports([]);
+        return;
+      }
+      const rows = (data ?? []) as ImportRow[];
+      setImports(rows);
+      if (!selectedImportId && rows.length > 0) setSelectedImportId(rows[0].id);
+    }
+
+    loadImports();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedImportId]);
 
   useEffect(() => {
-    if (!selectedImportId && imports && imports.length > 0) {
-      setSelectedImportId(imports[0].id);
+    let cancelled = false;
+
+    async function loadMetrics() {
+      if (!selectedImportId) {
+        setMetrics([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("crm_om_chatter_metrics")
+        .select(
+          "id, chatter_om_name, total_sales, ppv_sales, tip_sales, impact_pct, messages_sent, avg_response_time, ppv_sent, ppv_sold, ppv_open_rate, ppv_avg_price, ai_replies, templates_sent, manually_typed"
+        )
+        .eq("import_id", selectedImportId)
+        .limit(5000);
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed loading chatter metrics", error);
+        setMetrics([]);
+        return;
+      }
+      setMetrics(((data ?? []) as MetricRow[]).map(toUiRow));
     }
-  }, [imports, selectedImportId]);
+
+    loadMetrics();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedImportId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOfChatStats() {
+      const { data, error } = await supabase
+        .from("crm_of_chat_stats")
+        .select("avg_response_time_sec, has_unread")
+        .limit(5000);
+
+      if (cancelled) return;
+      if (error) {
+        console.error("Failed loading OF chat stats", error);
+        setOfChatStats(null);
+        return;
+      }
+
+      const rows = data ?? [];
+      const times = rows
+        .map((r: any) => Number(r.avg_response_time_sec))
+        .filter((n: number) => Number.isFinite(n) && n > 0)
+        .sort((a: number, b: number) => a - b);
+
+      const avg = times.length ? times.reduce((s: number, n: number) => s + n, 0) / times.length : 0;
+      const median = times.length
+        ? times.length % 2
+          ? times[Math.floor(times.length / 2)]
+          : (times[times.length / 2 - 1] + times[times.length / 2]) / 2
+        : 0;
+
+      setOfChatStats({
+        avgResponseTimeSec: avg,
+        medianResponseTimeSec: median,
+        totalChats: rows.length,
+        unreadChats: rows.filter((r: any) => !!r.has_unread).length,
+      });
+    }
+
+    loadOfChatStats();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const sortedRows = useMemo(() => {
     if (!metrics) return [];
@@ -161,15 +289,11 @@ export default function ChatterPerformancePage() {
         <div style={{ fontSize: 12, textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 6 }}>
           Period / Import
         </div>
-        <select
-          value={selectedImportId}
-          onChange={(e) => setSelectedImportId(e.target.value)}
-          style={inputStyle}
-        >
+        <select value={selectedImportId} onChange={(e) => setSelectedImportId(e.target.value)} style={inputStyle}>
           {!imports?.length && <option value="">No dashboard imports found</option>}
           {(imports || []).map((imp: any) => (
             <option key={imp.id} value={imp.id}>
-              {new Date(imp.importedAt).toLocaleString()} — {imp.filename}
+              {new Date(imp.imported_at).toLocaleString()} — {imp.filename}
             </option>
           ))}
         </select>
@@ -181,13 +305,26 @@ export default function ChatterPerformancePage() {
         <SummaryCard label="Avg Response Time" value={duration(summary.avgResponseTime)} emoji="⏱️" />
       </div>
 
-      {/* OF API Response Time Metrics */}
       {ofChatStats && (
-        <div style={{
-          background: "var(--surface)", borderRadius: 16, padding: 20, marginBottom: 16,
-          border: "1px solid rgba(241,174,56,0.2)",
-        }}>
-          <div style={{ fontSize: 13, color: "#f1ae38", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 14 }}>
+        <div
+          style={{
+            background: "var(--surface)",
+            borderRadius: 16,
+            padding: 20,
+            marginBottom: 16,
+            border: "1px solid rgba(241,174,56,0.2)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 13,
+              color: "#f1ae38",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+              marginBottom: 14,
+            }}
+          >
             📡 OF API — Real-Time Chat Metrics
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -205,9 +342,7 @@ export default function ChatterPerformancePage() {
             </div>
             <div style={{ background: "var(--bg)", borderRadius: 12, padding: 14 }}>
               <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Total Chats</div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: "#3b82f6" }}>
-                {ofChatStats.totalChats.toLocaleString()}
-              </div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "#3b82f6" }}>{ofChatStats.totalChats.toLocaleString()}</div>
             </div>
             <div style={{ background: "var(--bg)", borderRadius: 12, padding: 14 }}>
               <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 4 }}>Unread Chats</div>
@@ -245,12 +380,23 @@ export default function ChatterPerformancePage() {
             </thead>
             <tbody>
               {!metrics ? (
-                <tr><td colSpan={columns.length} style={emptyStyle}>Loading...</td></tr>
+                <tr>
+                  <td colSpan={columns.length} style={emptyStyle}>
+                    Loading...
+                  </td>
+                </tr>
               ) : sortedRows.length === 0 ? (
-                <tr><td colSpan={columns.length} style={emptyStyle}>No rows for this import.</td></tr>
+                <tr>
+                  <td colSpan={columns.length} style={emptyStyle}>
+                    No rows for this import.
+                  </td>
+                </tr>
               ) : (
                 sortedRows.map((row: any, i: number) => (
-                  <tr key={row.id} style={{ borderBottom: "1px solid var(--border-subtle)", background: i % 2 ? "rgba(0,0,0,0.015)" : "transparent" }}>
+                  <tr
+                    key={row.id}
+                    style={{ borderBottom: "1px solid var(--border-subtle)", background: i % 2 ? "rgba(0,0,0,0.015)" : "transparent" }}
+                  >
                     {columns.map((c) => {
                       const value = row[c.key];
                       const formatted = c.render ? c.render(value) : String(value ?? "-");

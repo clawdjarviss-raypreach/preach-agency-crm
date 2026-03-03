@@ -10,9 +10,11 @@ type SyncEndpoint =
   | 'chargebacks'
   | 'fans'
   | 'chats'
+  | 'messages'
   | 'forecast'
   | 'tracking_links'
-  | 'reconciliation';
+  | 'reconciliation'
+  | 'webhook';
 
 async function fetchOf(path: string) {
   const res = await fetch(`${OF_API_BASE}${path}`, {
@@ -152,17 +154,47 @@ async function syncTrackingLinks(accountId: string) {
   });
 }
 
+async function ingestWebhookEvent(eventType: string, accountId: string | null, payload: unknown) {
+  const { data, error } = await supabaseAdmin
+    .from('crm_of_webhook_events')
+    .insert({
+      event_type: eventType,
+      account_id: accountId,
+      payload,
+      processed: false,
+    })
+    .select('id')
+    .single();
+
+  if (error) throw error;
+  return { id: data?.id };
+}
+
 Deno.serve(async (req) => {
   try {
     if (req.method !== 'POST') return json({ error: 'Method not allowed' }, { status: 405 });
     const body = await req.json();
 
-    const job = body?.job as SyncEndpoint;
+    const rawJob = body?.job as SyncEndpoint;
+    const job = rawJob === 'messages' ? 'chats' : rawJob;
+    const targetAccountId = body?.accountId ? String(body.accountId) : null;
 
-    const { data: accounts, error: accountsError } = await supabaseAdmin
+    if (job === 'webhook') {
+      const eventType = String(body?.eventType ?? body?.type ?? 'unknown');
+      const inserted = await ingestWebhookEvent(eventType, targetAccountId, body?.payload ?? body);
+      return json({ ok: true, job, inserted });
+    }
+
+    let accountsQuery = supabaseAdmin
       .from('crm_of_accounts')
       .select('account_id')
       .eq('status', 'active');
+
+    if (targetAccountId) {
+      accountsQuery = accountsQuery.eq('account_id', targetAccountId);
+    }
+
+    const { data: accounts, error: accountsError } = await accountsQuery;
 
     if (accountsError) throw accountsError;
 

@@ -1,8 +1,7 @@
-import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
-import { api } from "../../../../convex/_generated/api";
 
-const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hufcbxodgxinbvpqfaaw.supabase.co";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,11 +9,24 @@ export async function POST(request: NextRequest) {
     const eventType = String(body?.eventType || body?.type || "unknown");
     const accountId = body?.accountId ? String(body.accountId) : undefined;
 
-    await convex.mutation((api as any).crm.ofIntegration.ingestWebhookEvent, {
-      eventType,
-      accountId,
-      payload: body,
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/of-sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        job: "webhook",
+        eventType,
+        accountId,
+        payload: body,
+      }),
     });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Supabase edge webhook failed (${res.status}): ${text}`);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
