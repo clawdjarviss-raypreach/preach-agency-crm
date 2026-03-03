@@ -220,7 +220,7 @@ export default function MembersPage() {
 
   // Data state
   const [roles, setRoles] = useState<RoleDoc[] | undefined>(undefined);
-  const [members, setMembers] = useState<MemberDoc[] | undefined>(undefined);
+  // members is now a useMemo below, not state
   const [allCreators, setAllCreators] = useState<CreatorDoc[] | undefined>(undefined);
   const [inviteLink, setInviteLink] = useState<any>(null);
   const [allTrackingLinks, setAllTrackingLinks] = useState<TrackingLinkDoc[] | undefined>(undefined);
@@ -236,10 +236,11 @@ export default function MembersPage() {
   }, []);
 
   // Fetch main data
+  const [allMembers, setAllMembers] = useState<MemberDoc[]>([]);
+
   const fetchData = useCallback(async () => {
     if (!token) return;
     setLoading(true);
-    let cancelled = false;
 
     const [rolesRes, membersRes, creatorsRes, inviteLinkRes] = await Promise.all([
       supabase.from("crm_roles").select("*"),
@@ -248,11 +249,8 @@ export default function MembersPage() {
       supabase.from("crm_invite_link").select("*").order("created_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
 
-    if (cancelled) return;
-
     if (rolesRes.data) setRoles(rolesRes.data as RoleDoc[]);
 
-    // Transform members: the joined role comes as an object or null
     if (membersRes.data) {
       const transformed = membersRes.data.map((m: any) => ({
         id: m.id,
@@ -263,36 +261,37 @@ export default function MembersPage() {
         assigned_creators: m.assigned_creators || [],
         role: m.role || null,
       }));
-
-      // Apply client-side filters
-      let filtered = transformed;
-      if (roleFilter !== "all") {
-        filtered = filtered.filter((m: MemberDoc) => m.role && m.role.id === roleFilter);
-      }
-      if (creatorFilter !== "all") {
-        filtered = filtered.filter((m: MemberDoc) => m.assigned_creators.includes(creatorFilter));
-      }
-      if (search) {
-        const q = search.toLowerCase();
-        filtered = filtered.filter((m: MemberDoc) =>
-          m.name.toLowerCase().includes(q) ||
-          m.username.toLowerCase().includes(q) ||
-          (m.email || "").toLowerCase().includes(q)
-        );
-      }
-      setMembers(filtered);
+      setAllMembers(transformed);
     }
 
     if (creatorsRes.data) setAllCreators(creatorsRes.data as CreatorDoc[]);
     setInviteLink(inviteLinkRes.data || null);
     setLoading(false);
-
-    return () => { cancelled = true; };
-  }, [token, roleFilter, creatorFilter, search]);
+  }, [token]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Client-side filtering — no network calls on filter change
+  const members = useMemo(() => {
+    let filtered = allMembers;
+    if (roleFilter !== "all") {
+      filtered = filtered.filter((m) => m.role && m.role.id === roleFilter);
+    }
+    if (creatorFilter !== "all") {
+      filtered = filtered.filter((m) => m.assigned_creators.includes(creatorFilter));
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      filtered = filtered.filter((m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.username.toLowerCase().includes(q) ||
+        (m.email || "").toLowerCase().includes(q)
+      );
+    }
+    return filtered;
+  }, [allMembers, roleFilter, creatorFilter, search]);
 
   // Fetch edit-member-specific data when editing
   const fetchEditMemberData = useCallback(async (memberId: string) => {

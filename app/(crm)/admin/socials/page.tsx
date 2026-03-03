@@ -204,15 +204,12 @@ export default function AdminSocialsPage() {
         .eq("id", creatorId);
       if (error) throw error;
 
-      // Also update crm_ig_accounts.creator_id for matching usernames
+      // Also update crm_ig_accounts.creator_id for matching usernames (batched)
       const lowerUsernames = instagramUsernames.map((u: string) => u.replace(/^@/, "").toLowerCase());
       if (lowerUsernames.length > 0) {
-        // Clear old creator_id for this creator (in case usernames were removed)
+        // Clear old creator_id for this creator, then set new ones — 2 calls total
         await supabase.from("crm_ig_accounts").update({ creator_id: null }).eq("creator_id", creatorId);
-        // Set creator_id for all matching usernames
-        for (const username of lowerUsernames) {
-          await supabase.from("crm_ig_accounts").update({ creator_id: creatorId }).eq("username", username);
-        }
+        await supabase.from("crm_ig_accounts").update({ creator_id: creatorId }).in("username", lowerUsernames);
       }
 
       setCreators((prev) => (prev || []).map((c: any) => c.id === creatorId
