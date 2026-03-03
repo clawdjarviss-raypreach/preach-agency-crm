@@ -147,6 +147,17 @@ async function fetchPagedRows(options: {
   return allRows;
 }
 
+async function getSyncState(sourceTable: string) {
+  const { data, error } = await supabaseAdmin
+    .from('crm_ig_sync_state')
+    .select('source_table,last_synced_at,cursor_value')
+    .eq('source_table', sourceTable)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ?? null;
+}
+
 async function setSyncState(sourceTable: string, cursorValue: string | null, metadata: Record<string, unknown>) {
   const row: SyncStateRow = {
     source_table: sourceTable,
@@ -284,7 +295,9 @@ async function syncAccounts() {
 
 async function syncAccountSnapshots(forceFull = false) {
   const startedAt = Date.now();
-  const windowStart = forceFull ? null : isoDateDaysAgo(SNAPSHOT_DAYS_BACK);
+  const hasPriorSync = Boolean(await getSyncState(SYNC_TABLES.accountDaily));
+  const runFull = forceFull || !hasPriorSync;
+  const windowStart = runFull ? null : isoDateDaysAgo(SNAPSHOT_DAYS_BACK);
 
   const sourceRows = await fetchPagedRows({
     table: SYNC_TABLES.accountDaily,
@@ -324,14 +337,14 @@ async function syncAccountSnapshots(forceFull = false) {
   }
 
   await setSyncState(SYNC_TABLES.accountDaily, null, {
-    mode: forceFull ? 'full' : 'last_7_days',
+    mode: runFull ? 'full' : 'last_7_days',
     windowStart,
     pulled: sourceRows.length,
     upserted: rows.length,
     durationMs: Date.now() - startedAt,
   });
 
-  return { windowStart, pulled: sourceRows.length, upserted: rows.length };
+  return { mode: runFull ? 'full' : 'last_7_days', windowStart, pulled: sourceRows.length, upserted: rows.length };
 }
 
 async function syncReels() {
@@ -384,7 +397,9 @@ async function syncReels() {
 
 async function syncReelSnapshots(forceFull = false) {
   const startedAt = Date.now();
-  const windowStart = forceFull ? null : isoDateDaysAgo(SNAPSHOT_DAYS_BACK);
+  const hasPriorSync = Boolean(await getSyncState(SYNC_TABLES.reelDaily));
+  const runFull = forceFull || !hasPriorSync;
+  const windowStart = runFull ? null : isoDateDaysAgo(SNAPSHOT_DAYS_BACK);
 
   const sourceRows = await fetchPagedRows({
     table: SYNC_TABLES.reelDaily,
@@ -438,7 +453,7 @@ async function syncReelSnapshots(forceFull = false) {
   }
 
   await setSyncState(SYNC_TABLES.reelDaily, null, {
-    mode: forceFull ? 'full' : 'last_7_days',
+    mode: runFull ? 'full' : 'last_7_days',
     windowStart,
     pulled: sourceRows.length,
     upserted: rows.length,
@@ -446,14 +461,20 @@ async function syncReelSnapshots(forceFull = false) {
     durationMs: Date.now() - startedAt,
   });
 
-  return { windowStart, pulled: sourceRows.length, upserted: rows.length, skippedMissingReel };
+  return {
+    mode: runFull ? 'full' : 'last_7_days',
+    windowStart,
+    pulled: sourceRows.length,
+    upserted: rows.length,
+    skippedMissingReel,
+  };
 }
 
 Deno.serve(async (req) => {
   try {
     if (req.method !== 'POST') return json({ error: 'Method not allowed' }, { status: 405 });
     const body = await req.json().catch(() => ({}));
-    const forceFull = Boolean(body?.forceFullSync);
+    const forceFull = Boolean(body?.forceFull ?? body?.forceFullSync);
 
     const accountStats = await syncAccounts();
     const accountDailyStats = await syncAccountSnapshots(forceFull);
