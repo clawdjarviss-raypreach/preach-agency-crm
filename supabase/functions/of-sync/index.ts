@@ -97,7 +97,7 @@ function normalizeTransactionType(input: unknown): 'ppv' | 'tip' | 'subscription
 function getDefaultAnalyticsRange() {
   const end = new Date();
   const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - 30);
+  start.setUTCDate(start.getUTCDate() - 90);
   return {
     start_date: start.toISOString().slice(0, 10),
     end_date: end.toISOString().slice(0, 10),
@@ -107,36 +107,38 @@ function getDefaultAnalyticsRange() {
 async function syncEarnings(accountId: string) {
   return withSyncState(accountId, 'earnings', async () => {
     const range = getDefaultAnalyticsRange();
-    const payload = await fetchOf(`/api/${accountId}/payouts/earning-statistics`, {
+    const payload = await fetchOf(`/api/${accountId}/statistics/statements/earnings`, {
       query: {
-        startDate: range.start_date,
-        endDate: range.end_date,
+        start_date: range.start_date,
+        end_date: range.end_date,
       },
     });
 
-    const monthBuckets = payload?.data?.list?.months ?? {};
-    const dailyRowsByDate = new Map<string, any>();
-
-    const parseEarningDate = (value: unknown): string | null => {
+    const parseDate = (value: unknown): string | null => {
       if (typeof value === 'number' && Number.isFinite(value)) {
         return new Date(value * 1000).toISOString().slice(0, 10);
       }
       if (typeof value === 'string' && value.trim()) {
-        const numeric = Number(value);
-        if (Number.isFinite(numeric)) {
-          return new Date(numeric * 1000).toISOString().slice(0, 10);
-        }
         const parsed = new Date(value);
-        if (!Number.isNaN(parsed.getTime())) {
-          return parsed.toISOString().slice(0, 10);
-        }
+        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
       }
       return null;
     };
 
+    const amountSeries = Array.isArray(payload?.data?.total?.chartAmount) ? payload.data.total.chartAmount : [];
+    const countSeries = Array.isArray(payload?.data?.total?.chartCount) ? payload.data.total.chartCount : [];
+
+    const countByDate = new Map<string, number>();
+    for (const item of countSeries) {
+      const date = parseDate(item?.date);
+      if (!date) continue;
+      countByDate.set(date, Number(item?.count ?? 0));
+    }
+
+    const rowsByDate = new Map<string, any>();
     const ensureRow = (date: string) => {
-      if (!dailyRowsByDate.has(date)) {
-        dailyRowsByDate.set(date, {
+      if (!rowsByDate.has(date)) {
+        rowsByDate.set(date, {
           account_id: accountId,
           date,
           total_earnings: 0,
@@ -155,51 +157,25 @@ async function syncEarnings(accountId: string) {
           synced_at: new Date().toISOString(),
         });
       }
-      return dailyRowsByDate.get(date)!;
+      return rowsByDate.get(date)!;
     };
 
-    for (const monthValue of Object.values(monthBuckets) as any[]) {
-      const subscriptions = Array.isArray(monthValue?.subscribes) ? monthValue.subscribes : [];
-      const tips = Array.isArray(monthValue?.tips) ? monthValue.tips : [];
-      const chatMessages = Array.isArray(monthValue?.chat_messages) ? monthValue.chat_messages : [];
-      const postMessages = Array.isArray(monthValue?.post) ? monthValue.post : [];
-
-      for (const item of subscriptions) {
-        const date = parseEarningDate(item?.time);
-        if (!date) continue;
-        const row = ensureRow(date);
-        row.subscription_earnings += Number(item?.net ?? 0);
-        row.net_earnings += Number(item?.net ?? 0);
-        row.total_earnings += Number(item?.gross ?? item?.net ?? 0);
-        row.subscription_count += 1;
-        row.transaction_count += 1;
-      }
-
-      for (const item of tips) {
-        const date = parseEarningDate(item?.time);
-        if (!date) continue;
-        const row = ensureRow(date);
-        row.tip_earnings += Number(item?.net ?? 0);
-        row.net_earnings += Number(item?.net ?? 0);
-        row.total_earnings += Number(item?.gross ?? item?.net ?? 0);
-        row.tip_count += 1;
-        row.transaction_count += 1;
-      }
-
-      for (const item of [...chatMessages, ...postMessages]) {
-        const date = parseEarningDate(item?.time);
-        if (!date) continue;
-        const row = ensureRow(date);
-        row.message_earnings += Number(item?.net ?? 0);
-        row.net_earnings += Number(item?.net ?? 0);
-        row.total_earnings += Number(item?.gross ?? item?.net ?? 0);
-        row.message_count += 1;
-        row.transaction_count += 1;
-      }
+    for (const item of amountSeries) {
+      const date = parseDate(item?.date);
+      if (!date) continue;
+      const row = ensureRow(date);
+      const net = Number(item?.count ?? 0);
+      row.net_earnings = net;
+      row.total_earnings = net;
+      row.transaction_count = countByDate.get(date) ?? row.transaction_count ?? 0;
     }
 
-    const rows = Array.from(dailyRowsByDate.values());
+    for (const [date, count] of countByDate.entries()) {
+      const row = ensureRow(date);
+      row.transaction_count = Number(count ?? 0);
+    }
 
+    const rows = Array.from(rowsByDate.values());
     if (rows.length === 0) return { inserted: 0 };
 
     const { error } = await supabaseAdmin
