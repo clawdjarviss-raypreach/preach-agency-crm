@@ -1,31 +1,22 @@
+import { createClient } from "@/lib/supabase";
 import { NextRequest, NextResponse } from "next/server";
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://hufcbxodgxinbvpqfaaw.supabase.co";
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const eventType = String(body?.eventType || body?.type || "unknown");
-    const accountId = body?.accountId ? String(body.accountId) : undefined;
+    const accountId = body?.accountId ? String(body.accountId) : null;
 
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/of-sync`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({
-        job: "webhook",
-        eventType,
-        accountId,
-        payload: body,
-      }),
+    const sb = createClient();
+    const { error } = await sb.from("crm_of_webhook_events").insert({
+      event_type: eventType,
+      account_id: accountId,
+      payload: body,
+      processed: false,
     });
 
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Supabase edge webhook failed (${res.status}): ${text}`);
+    if (error) {
+      throw new Error(error.message);
     }
 
     return NextResponse.json({ ok: true });
