@@ -107,32 +107,98 @@ function getDefaultAnalyticsRange() {
 async function syncEarnings(accountId: string) {
   return withSyncState(accountId, 'earnings', async () => {
     const range = getDefaultAnalyticsRange();
-    const payload = await fetchOf('/api/analytics/summary/earnings', {
-      method: 'POST',
-      body: {
-        account_id: accountId,
-        account_ids: [accountId],
-        ...range,
+    const payload = await fetchOf(`/api/${accountId}/payouts/earning-statistics`, {
+      query: {
+        startDate: range.start_date,
+        endDate: range.end_date,
       },
     });
-    const rows = listFromPayload(payload).map((r: any) => ({
-      account_id: accountId,
-      date: r.date,
-      total_earnings: r.total_earnings ?? 0,
-      subscription_earnings: r.subscription_earnings ?? 0,
-      tip_earnings: r.tip_earnings ?? 0,
-      message_earnings: r.message_earnings ?? 0,
-      stream_earnings: r.stream_earnings ?? 0,
-      referral_earnings: r.referral_earnings ?? 0,
-      transaction_count: r.transaction_count ?? 0,
-      subscription_count: r.subscription_count ?? 0,
-      tip_count: r.tip_count ?? 0,
-      message_count: r.message_count ?? 0,
-      chargeback_amount: r.chargeback_amount ?? 0,
-      chargeback_count: r.chargeback_count ?? 0,
-      net_earnings: r.net_earnings ?? 0,
-      synced_at: new Date().toISOString(),
-    }));
+
+    const monthBuckets = payload?.data?.list?.months ?? {};
+    const dailyRowsByDate = new Map<string, any>();
+
+    const parseEarningDate = (value: unknown): string | null => {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return new Date(value * 1000).toISOString().slice(0, 10);
+      }
+      if (typeof value === 'string' && value.trim()) {
+        const numeric = Number(value);
+        if (Number.isFinite(numeric)) {
+          return new Date(numeric * 1000).toISOString().slice(0, 10);
+        }
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) {
+          return parsed.toISOString().slice(0, 10);
+        }
+      }
+      return null;
+    };
+
+    const ensureRow = (date: string) => {
+      if (!dailyRowsByDate.has(date)) {
+        dailyRowsByDate.set(date, {
+          account_id: accountId,
+          date,
+          total_earnings: 0,
+          subscription_earnings: 0,
+          tip_earnings: 0,
+          message_earnings: 0,
+          stream_earnings: 0,
+          referral_earnings: 0,
+          transaction_count: 0,
+          subscription_count: 0,
+          tip_count: 0,
+          message_count: 0,
+          chargeback_amount: 0,
+          chargeback_count: 0,
+          net_earnings: 0,
+          synced_at: new Date().toISOString(),
+        });
+      }
+      return dailyRowsByDate.get(date)!;
+    };
+
+    for (const monthValue of Object.values(monthBuckets) as any[]) {
+      const subscriptions = Array.isArray(monthValue?.subscribes) ? monthValue.subscribes : [];
+      const tips = Array.isArray(monthValue?.tips) ? monthValue.tips : [];
+      const chatMessages = Array.isArray(monthValue?.chat_messages) ? monthValue.chat_messages : [];
+      const postMessages = Array.isArray(monthValue?.post) ? monthValue.post : [];
+
+      for (const item of subscriptions) {
+        const date = parseEarningDate(item?.time);
+        if (!date) continue;
+        const row = ensureRow(date);
+        row.subscription_earnings += Number(item?.net ?? 0);
+        row.net_earnings += Number(item?.net ?? 0);
+        row.total_earnings += Number(item?.gross ?? item?.net ?? 0);
+        row.subscription_count += 1;
+        row.transaction_count += 1;
+      }
+
+      for (const item of tips) {
+        const date = parseEarningDate(item?.time);
+        if (!date) continue;
+        const row = ensureRow(date);
+        row.tip_earnings += Number(item?.net ?? 0);
+        row.net_earnings += Number(item?.net ?? 0);
+        row.total_earnings += Number(item?.gross ?? item?.net ?? 0);
+        row.tip_count += 1;
+        row.transaction_count += 1;
+      }
+
+      for (const item of [...chatMessages, ...postMessages]) {
+        const date = parseEarningDate(item?.time);
+        if (!date) continue;
+        const row = ensureRow(date);
+        row.message_earnings += Number(item?.net ?? 0);
+        row.net_earnings += Number(item?.net ?? 0);
+        row.total_earnings += Number(item?.gross ?? item?.net ?? 0);
+        row.message_count += 1;
+        row.transaction_count += 1;
+      }
+    }
+
+    const rows = Array.from(dailyRowsByDate.values());
 
     if (rows.length === 0) return { inserted: 0 };
 
@@ -152,7 +218,7 @@ async function syncTransactions(accountId: string) {
     let marker: string | undefined;
 
     while (true) {
-      const payload = await fetchOf(`/api/${accountId}/transactions`, {
+      const payload = await fetchOf(`/api/${accountId}/payouts/transactions`, {
         query: {
           limit: 100,
           marker,
@@ -182,7 +248,7 @@ async function syncTransactions(accountId: string) {
         account_id: accountId,
         of_transaction_id: String(r.id),
         amount: r.amount ?? 0,
-        type: normalizeTransactionType(r.type),
+        type: normalizeTransactionType(r.type ?? r.category ?? r.description),
         fan_id: r.fan_id ?? null,
         fan_username: r.fan_username ?? null,
         timestamp: r.createdAt ?? r.created_at ?? r.timestamp ?? new Date().toISOString(),

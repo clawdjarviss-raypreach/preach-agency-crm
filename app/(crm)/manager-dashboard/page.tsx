@@ -182,9 +182,15 @@ export default function ManagerDashboardPage() {
   const [totals, setTotals] = useState({ newSubsInRange: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
   const [trackingLinks, setTrackingLinks] = useState<any[]>([]);
+  const [activeOfTab, setActiveOfTab] = useState<"tracking_links">("tracking_links");
   const [igRows, setIgRows] = useState<any[]>([]);
   const [igDailyGains, setIgDailyGains] = useState<any[]>([]);
   const [igReelCurves, setIgReelCurves] = useState<any[]>([]);
+  const [igCreatorOptions, setIgCreatorOptions] = useState<{ id: string; name: string }[]>([]);
+  const [selectedIgCreator, setSelectedIgCreator] = useState<string>("all");
+  const [showAllIgAccounts, setShowAllIgAccounts] = useState(false);
+  const [selectedIgAccount, setSelectedIgAccount] = useState<any | null>(null);
+  const [selectedIgAccountReels, setSelectedIgAccountReels] = useState<any[] | null>(null);
 
   useEffect(() => {
     const u = localStorage.getItem("crm_user");
@@ -207,11 +213,24 @@ export default function ManagerDashboardPage() {
       setLoading(true);
 
       const [{ data: creators }, { data: ofAccounts }] = await Promise.all([
-        supabase.from("crm_creators").select("id,name").eq("status", "active"),
+        supabase.from("crm_creators").select("id,name,instagram_username,instagram_usernames").eq("status", "active"),
         supabase.from("crm_of_accounts").select("account_id,creator_id"),
       ]);
 
       const creatorNameById = new Map<string, string>((creators ?? []).map((c: any) => [c.id, c.name]));
+      const creatorByInstagram = new Map<string, { id: string; name: string }>();
+      for (const creator of creators ?? []) {
+        const names = [
+          (creator as any).instagram_username,
+          ...(((creator as any).instagram_usernames ?? []) as string[]),
+        ]
+          .filter(Boolean)
+          .map((name: string) => name.replace(/^@/, "").toLowerCase());
+
+        for (const name of names) {
+          creatorByInstagram.set(name, { id: (creator as any).id, name: (creator as any).name });
+        }
+      }
       const accountToCreator = new Map<string, string>();
       for (const row of ofAccounts ?? []) {
         const name = creatorNameById.get((row as any).creator_id) || "Unknown";
@@ -320,9 +339,15 @@ export default function ManagerDashboardPage() {
         const followersDelta = endFollowers - startFollowers;
         const followerGrowthPct = startFollowers > 0 ? ((followersDelta / startFollowers) * 100) : null;
 
+        const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
+        const mappedCreator = creatorByInstagram.get(usernameKey);
+        const creatorId = a.creator_id ?? mappedCreator?.id ?? null;
+        const creatorName = creatorNameById.get(creatorId) || mappedCreator?.name || "Unknown";
+
         return {
           accountId: a.id,
-          creatorName: creatorNameById.get(a.creator_id) || "Unknown",
+          creatorId,
+          creatorName,
           username: a.username,
           followers: endFollowers,
           followersDelta,
@@ -437,6 +462,16 @@ export default function ManagerDashboardPage() {
         setChartData(trendRows);
         setTrackingLinks(linksRows);
         setIgRows(igRowsData);
+        const creatorOptions = Array.from(
+          new Map(
+            igRowsData
+              .filter((row: any) => row.creatorId)
+              .map((row: any) => [String(row.creatorId), row.creatorName]),
+          ).entries(),
+        )
+          .map(([id, name]) => ({ id, name }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setIgCreatorOptions(creatorOptions);
         setIgDailyGains(accountDailyGainRows);
         setIgReelCurves(reelCurveRows);
         setLoading(false);
@@ -447,12 +482,102 @@ export default function ManagerDashboardPage() {
     return () => { cancelled = true; };
   }, [dateRange.start, dateRange.end, igDateRange.start, igDateRange.end, trendPeriod]);
 
+  useEffect(() => {
+    setShowAllIgAccounts(false);
+  }, [selectedIgCreator]);
+
+  useEffect(() => {
+    if (selectedIgCreator === "all") return;
+    if (!igCreatorOptions.some((creator) => creator.id === selectedIgCreator)) {
+      setSelectedIgCreator("all");
+    }
+  }, [igCreatorOptions, selectedIgCreator]);
+
+  useEffect(() => {
+    if (!selectedIgAccount) {
+      setSelectedIgAccountReels(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadAccountReels() {
+      setSelectedIgAccountReels(null);
+
+      const { data: reels } = await supabase
+        .from("crm_ig_reels")
+        .select("id,posted_at,thumbnail_url")
+        .eq("ig_account_id", selectedIgAccount.accountId)
+        .order("posted_at", { ascending: false })
+        .limit(20);
+
+      const reelIds = (reels ?? []).map((reel: any) => reel.id);
+      if (reelIds.length === 0) {
+        if (!cancelled) setSelectedIgAccountReels([]);
+        return;
+      }
+
+      const { data: reelSnapshots } = await supabase
+        .from("crm_ig_reel_daily_snapshots")
+        .select("ig_reel_id,snapshot_date,views,likes,comments,shares")
+        .in("ig_reel_id", reelIds)
+        .gte("snapshot_date", igDateRange.start)
+        .lte("snapshot_date", addDays(igDateRange.end, 1));
+
+      const snapshotsByReel = new Map<string, any[]>();
+      for (const snapshot of reelSnapshots ?? []) {
+        const reelId = (snapshot as any).ig_reel_id;
+        if (!snapshotsByReel.has(reelId)) snapshotsByReel.set(reelId, []);
+        snapshotsByReel.get(reelId)!.push(snapshot);
+      }
+
+      const rows = (reels ?? [])
+        .map((reel: any) => {
+          const snapshots = (snapshotsByReel.get(reel.id) ?? []).sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
+          const start = snapshots.find((snapshot: any) => String(snapshot.snapshot_date) === igDateRange.start) ?? snapshots[0];
+          const end = snapshots.find((snapshot: any) => String(snapshot.snapshot_date) === addDays(igDateRange.end, 1)) ?? snapshots[snapshots.length - 1];
+
+          const views = Number(end?.views || 0) - Number(start?.views || 0);
+          const likes = Number(end?.likes || 0) - Number(start?.likes || 0);
+          const comments = Number(end?.comments || 0) - Number(start?.comments || 0);
+          const shares = Number(end?.shares || 0) - Number(start?.shares || 0);
+
+          return {
+            reelId: reel.id,
+            postedAt: reel.posted_at,
+            thumbnailUrl: reel.thumbnail_url,
+            views,
+            likes,
+            comments,
+            shares,
+          };
+        })
+        .sort((a, b) => b.views - a.views);
+
+      if (!cancelled) setSelectedIgAccountReels(rows);
+    }
+
+    loadAccountReels();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedIgAccount, igDateRange.start, igDateRange.end]);
+
   const maxIgEnd = getYesterdayDateOnly();
   const rangeLabelText = `${new Date(dateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(dateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
   const igRangeLabelText = `${new Date(igDateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(igDateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 
+  const filteredIgRows = useMemo(() => {
+    if (selectedIgCreator === "all") return igRows;
+    return igRows.filter((row: any) => String(row.creatorId ?? "") === selectedIgCreator);
+  }, [igRows, selectedIgCreator]);
+
+  const displayedIgRows = useMemo(() => {
+    return showAllIgAccounts ? filteredIgRows : filteredIgRows.slice(0, 10);
+  }, [filteredIgRows, showAllIgAccounts]);
+
   const igDonutData = useMemo(() => {
-    const rows = igRows.slice(0, 30);
+    const rows = filteredIgRows.slice(0, 30);
     const viewsData = rows.map((row: any, i: number) => ({
       name: row.creatorName || `@${row.username}`,
       value: Math.max(0, Number(row.views || 0)),
@@ -464,7 +589,7 @@ export default function ManagerDashboardPage() {
       color: CREATOR_COLORS[i % CREATOR_COLORS.length],
     }));
     return { viewsData, followersData };
-  }, [igRows]);
+  }, [filteredIgRows]);
 
   if (!user) return null;
   if (user.role !== "marketing_manager" && user.role !== "admin") {
@@ -578,9 +703,24 @@ export default function ManagerDashboardPage() {
       </Card>
 
       <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
-        <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, marginBottom: "12px", textTransform: "uppercase" }}>
-          🔗 Tracking Links
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+          <button
+            onClick={() => setActiveOfTab("tracking_links")}
+            style={{
+              border: "1px solid #253545",
+              borderRadius: "8px",
+              padding: "6px 12px",
+              fontSize: "12px",
+              cursor: "pointer",
+              background: activeOfTab === "tracking_links" ? "#253545" : "transparent",
+              color: activeOfTab === "tracking_links" ? "#fff" : "#a0a0a0",
+              fontWeight: 600,
+            }}
+          >
+            🔗 Tracking Links
+          </button>
         </div>
+        {activeOfTab === "tracking_links" && (
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "760px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
@@ -609,6 +749,7 @@ export default function ManagerDashboardPage() {
             ))}
           </tbody>
         </table>
+        )}
       </Card>
 
       <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
@@ -623,11 +764,31 @@ export default function ManagerDashboardPage() {
           <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, textTransform: "uppercase" }}>
             📸 Instagram Analytics ({igRangeLabelText})
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px", alignItems: "flex-end" }}>
-            <DateRangePicker
-              value={igDateRange}
-              onChange={(next) => setIgDateRange(clampRangeToMax(next, maxIgEnd))}
-            />
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <select
+                value={selectedIgCreator}
+                onChange={(e) => setSelectedIgCreator(e.target.value)}
+                style={{
+                  background: "#1C2A3A",
+                  color: "#fff",
+                  border: "1px solid #253545",
+                  borderRadius: "8px",
+                  padding: "7px 10px",
+                  fontSize: "12px",
+                  minWidth: "160px",
+                }}
+              >
+                <option value="all">All creators</option>
+                {igCreatorOptions.map((creator) => (
+                  <option key={creator.id} value={creator.id}>{creator.name}</option>
+                ))}
+              </select>
+              <DateRangePicker
+                value={igDateRange}
+                onChange={(next) => setIgDateRange(clampRangeToMax(next, maxIgEnd))}
+              />
+            </div>
             <span style={{ fontSize: "11px", color: "#666" }}>IG max end date: yesterday ({maxIgEnd})</span>
           </div>
         </div>
@@ -656,8 +817,12 @@ export default function ManagerDashboardPage() {
             </tr>
           </thead>
           <tbody>
-            {igRows.slice(0, 50).map((r: any) => (
-              <tr key={r.accountId} style={{ borderBottom: "1px solid #242424" }}>
+            {displayedIgRows.map((r: any) => (
+              <tr
+                key={r.accountId}
+                style={{ borderBottom: "1px solid #242424", cursor: "pointer" }}
+                onClick={() => setSelectedIgAccount(r)}
+              >
                 <td style={{ padding: "10px", color: "#fff" }}>{r.creatorName}</td>
                 <td style={{ padding: "10px", color: "#a0a0a0" }}>@{r.username}</td>
                 <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.views || 0)}</td>
@@ -670,6 +835,25 @@ export default function ManagerDashboardPage() {
             ))}
           </tbody>
         </table>
+        {!showAllIgAccounts && filteredIgRows.length > 10 && (
+          <div style={{ textAlign: "center", marginTop: "14px" }}>
+            <button
+              onClick={() => setShowAllIgAccounts(true)}
+              style={{
+                background: "transparent",
+                color: "#f1ae38",
+                border: "1px solid #f1ae38",
+                borderRadius: "8px",
+                padding: "8px 14px",
+                fontSize: "12px",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              Show more ({filteredIgRows.length - 10} remaining)
+            </button>
+          </div>
+        )}
       </Card>
 
       <Card style={{ marginBottom: "24px" }}>
@@ -742,6 +926,75 @@ export default function ManagerDashboardPage() {
           </div>
         )}
       </Card>
+
+      {selectedIgAccount && (
+        <div
+          onClick={() => setSelectedIgAccount(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.75)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: "20px",
+          }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "min(960px, 100%)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              background: "#111827",
+              border: "1px solid #253545",
+              borderRadius: "12px",
+              padding: "16px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <div>
+                <div style={{ color: "#fff", fontSize: "16px", fontWeight: 700 }}>🎬 Reels — @{selectedIgAccount.username}</div>
+                <div style={{ color: "#9ca3af", fontSize: "12px" }}>{selectedIgAccount.creatorName} · {igRangeLabelText}</div>
+              </div>
+              <button
+                onClick={() => setSelectedIgAccount(null)}
+                style={{ background: "transparent", border: "none", color: "#9ca3af", fontSize: "22px", cursor: "pointer" }}
+              >
+                ×
+              </button>
+            </div>
+
+            {selectedIgAccountReels === null ? (
+              <div style={{ color: "#9ca3af", padding: "12px 0" }}>Loading reel stats…</div>
+            ) : selectedIgAccountReels.length === 0 ? (
+              <div style={{ color: "#9ca3af", padding: "12px 0" }}>No reels found for this account and range.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: "12px" }}>
+                {selectedIgAccountReels.map((reel) => (
+                  <div key={reel.reelId} style={{ border: "1px solid #253545", borderRadius: "10px", overflow: "hidden", background: "#1C2A3A" }}>
+                    <div style={{ height: "120px", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {reel.thumbnailUrl ? (
+                        <img src={reel.thumbnailUrl} alt="reel" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        <span style={{ color: "#64748b" }}>No thumbnail</span>
+                      )}
+                    </div>
+                    <div style={{ padding: "10px", fontSize: "12px", color: "#e5e7eb", display: "grid", gap: "4px" }}>
+                      <div style={{ color: "#9ca3af" }}>{reel.postedAt ? new Date(reel.postedAt).toLocaleDateString() : "Unknown post date"}</div>
+                      <div>Views: <strong>{formatNumber(reel.views)}</strong></div>
+                      <div>Likes: <strong>{formatNumber(reel.likes)}</strong></div>
+                      <div>Comments: <strong>{formatNumber(reel.comments)}</strong></div>
+                      <div>Shares: <strong>{formatNumber(reel.shares)}</strong></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
