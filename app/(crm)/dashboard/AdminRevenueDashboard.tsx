@@ -65,10 +65,7 @@ function normalizeRevenueTxType(type: unknown): "subscription" | "message" | "ti
 function isNewSubscriptionTxType(type: unknown): boolean {
   const raw = String(type ?? "").trim().toLowerCase();
   return raw === "new_sub"
-    || raw === "new_subscription"
-    || raw === "subscription"
-    || raw === "subscribes"
-    || raw === "subscribe";
+    || raw === "new_subscription";
 }
 
 function getGreeting(): string {
