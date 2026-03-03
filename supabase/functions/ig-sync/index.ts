@@ -162,16 +162,43 @@ async function setSyncState(sourceTable: string, cursorValue: string | null, met
   if (error) throw error;
 }
 
-async function fetchCreatorMap() {
-  const { data, error } = await supabaseAdmin
-    .from('crm_creators')
-    .select('id,instagram_username,instagram_usernames')
-    .eq('status', 'active');
+async function fetchAllTargetRows(table: string, select: string, orderBy = 'id') {
+  const rows: any[] = [];
+  let offset = 0;
 
-  if (error) throw error;
+  for (;;) {
+    const { data, error } = await supabaseAdmin
+      .from(table)
+      .select(select)
+      .order(orderBy, { ascending: true, nullsFirst: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+
+    if (error) throw error;
+    const page = data ?? [];
+    if (page.length === 0) break;
+
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) break;
+    offset += page.length;
+  }
+
+  return rows;
+}
+
+async function upsertInChunks(table: string, rows: any[], onConflict: string, chunkSize = 1000) {
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    const { error } = await supabaseAdmin.from(table).upsert(chunk, { onConflict });
+    if (error) throw error;
+  }
+}
+
+async function fetchCreatorMap() {
+  const data = await fetchAllTargetRows('crm_creators', 'id,instagram_username,instagram_usernames,status');
 
   const map = new Map<string, string>();
   for (const creator of data ?? []) {
+    if (creator.status !== 'active') continue;
     const handles = [creator.instagram_username, ...(creator.instagram_usernames ?? [])]
       .map((value: string | null | undefined) => normalizeHandle(value))
       .filter(Boolean);
@@ -185,8 +212,7 @@ async function fetchCreatorMap() {
 }
 
 async function fetchAccountIdMap() {
-  const { data, error } = await supabaseAdmin.from('crm_ig_accounts').select('id,supabase_id');
-  if (error) throw error;
+  const data = await fetchAllTargetRows('crm_ig_accounts', 'id,supabase_id', 'supabase_id');
 
   const map = new Map<string, string>();
   for (const row of data ?? []) {
@@ -195,14 +221,24 @@ async function fetchAccountIdMap() {
   return map;
 }
 
-async function fetchReelIdMap() {
-  const { data, error } = await supabaseAdmin.from('crm_ig_reels').select('id,supabase_reel_id');
-  if (error) throw error;
-
+async function fetchReelIdMap(sourceReelIds: string[]) {
   const map = new Map<string, string>();
-  for (const row of data ?? []) {
-    map.set(String(row.supabase_reel_id), row.id as string);
+  if (sourceReelIds.length === 0) return map;
+
+  const chunkSize = 500;
+  for (let i = 0; i < sourceReelIds.length; i += chunkSize) {
+    const chunk = sourceReelIds.slice(i, i + chunkSize);
+    const { data, error } = await supabaseAdmin
+      .from('crm_ig_reels')
+      .select('id,supabase_reel_id')
+      .in('supabase_reel_id', chunk);
+
+    if (error) throw error;
+    for (const row of data ?? []) {
+      map.set(String(row.supabase_reel_id), row.id as string);
+    }
   }
+
   return map;
 }
 
@@ -233,10 +269,7 @@ async function syncAccounts() {
     }));
 
   if (rows.length > 0) {
-    const { error } = await supabaseAdmin
-      .from('crm_ig_accounts')
-      .upsert(rows, { onConflict: 'supabase_id' });
-    if (error) throw error;
+    await upsertInChunks('crm_ig_accounts', rows, 'supabase_id');
   }
 
   await setSyncState(SYNC_TABLES.accounts, null, {
@@ -287,10 +320,7 @@ async function syncAccountSnapshots(forceFull = false) {
     .filter(Boolean);
 
   if (rows.length > 0) {
-    const { error } = await supabaseAdmin
-      .from('crm_ig_daily_snapshots')
-      .upsert(rows, { onConflict: 'ig_account_id,date' });
-    if (error) throw error;
+    await upsertInChunks('crm_ig_daily_snapshots', rows, 'ig_account_id,date');
   }
 
   await setSyncState(SYNC_TABLES.accountDaily, null, {
@@ -339,10 +369,7 @@ async function syncReels() {
     .filter(Boolean);
 
   if (rows.length > 0) {
-    const { error } = await supabaseAdmin
-      .from('crm_ig_reels')
-      .upsert(rows, { onConflict: 'supabase_reel_id' });
-    if (error) throw error;
+    await upsertInChunks('crm_ig_reels', rows, 'supabase_reel_id');
   }
 
   await setSyncState(SYNC_TABLES.reels, null, {
@@ -366,7 +393,15 @@ async function syncReelSnapshots(forceFull = false) {
     gte: windowStart,
   });
 
-  const reelMap = await fetchReelIdMap();
+  const sourceReelIds = Array.from(
+    new Set(
+      sourceRows
+        .map((row) => row.reel_id ?? row.shortcode)
+        .filter(Boolean)
+        .map((value) => String(value))
+    )
+  );
+  const reelMap = await fetchReelIdMap(sourceReelIds);
   const nowIso = new Date().toISOString();
 
   let skippedMissingReel = 0;
@@ -399,10 +434,7 @@ async function syncReelSnapshots(forceFull = false) {
     .filter(Boolean);
 
   if (rows.length > 0) {
-    const { error } = await supabaseAdmin
-      .from('crm_ig_reel_daily_snapshots')
-      .upsert(rows, { onConflict: 'supabase_reel_id,snapshot_date' });
-    if (error) throw error;
+    await upsertInChunks('crm_ig_reel_daily_snapshots', rows, 'supabase_reel_id,snapshot_date');
   }
 
   await setSyncState(SYNC_TABLES.reelDaily, null, {
@@ -441,7 +473,12 @@ Deno.serve(async (req) => {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error !== null
+          ? JSON.stringify(error)
+          : String(error);
     return json({ ok: false, error: message }, { status: 500 });
   }
 });
