@@ -185,7 +185,7 @@ async function syncTransactions(accountId: string) {
         type: normalizeTransactionType(r.type),
         fan_id: r.fan_id ?? null,
         fan_username: r.fan_username ?? null,
-        timestamp: r.timestamp ?? new Date().toISOString(),
+        timestamp: r.createdAt ?? r.created_at ?? r.timestamp ?? new Date().toISOString(),
         metadata: r,
       }));
 
