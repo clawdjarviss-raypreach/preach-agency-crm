@@ -339,7 +339,7 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
           const newFansChange = c.newFans - prev.newFans;
           const totalRevenueChangePct = prev.totalRevenue > 0 ? (totalRevenueChange / prev.totalRevenue) * 100 : undefined;
           const newFansChangePct = prev.newFans > 0 ? (newFansChange / prev.newFans) * 100 : undefined;
-          const avgFanSpend = c.newFans > 0 ? c.totalRevenue / c.newFans : 0;
+          const avgFanSpend = c.newFans > 0 ? c.salesRevenue / c.newFans : 0;
           return {
             ...c,
             previousTotalRevenue: prev.totalRevenue,
