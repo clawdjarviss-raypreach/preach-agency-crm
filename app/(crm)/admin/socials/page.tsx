@@ -3,6 +3,54 @@
 import { useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
+function SocialsEditor({
+  creatorId,
+  initialUsernames,
+  igUsernames,
+  saving,
+  onSave,
+}: {
+  creatorId: string;
+  initialUsernames: string[];
+  igUsernames: string[];
+  saving: boolean;
+  onSave: (values: string[]) => void;
+}) {
+  const [local, setLocal] = useState<string[]>(initialUsernames);
+  const hasChanges = JSON.stringify(local.slice().sort()) !== JSON.stringify(initialUsernames.slice().sort());
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <MultiSelect
+        selected={local}
+        options={igUsernames}
+        onChange={setLocal}
+        disabled={saving}
+      />
+      {hasChanges && (
+        <button
+          onClick={() => onSave(local)}
+          disabled={saving}
+          style={{
+            padding: "6px 14px",
+            borderRadius: 6,
+            border: "none",
+            background: "#3b82f6",
+            color: "#fff",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.5 : 1,
+            alignSelf: "flex-start",
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function MultiSelect({
   selected,
   options,
@@ -280,11 +328,12 @@ export default function AdminSocialsPage() {
                       {creator.only_fans_handle || "—"}
                     </td>
                     <td style={{ padding: "14px 12px" }}>
-                      <MultiSelect
-                        selected={currentUsernames}
-                        options={igUsernames}
-                        onChange={(values) => handleChange(creator.id, values)}
-                        disabled={saving === creator.id}
+                      <SocialsEditor
+                        creatorId={creator.id}
+                        initialUsernames={currentUsernames}
+                        igUsernames={igUsernames}
+                        saving={saving === creator.id}
+                        onSave={(values) => handleChange(creator.id, values)}
                       />
                     </td>
                   </tr>
