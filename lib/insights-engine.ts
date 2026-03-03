@@ -2,7 +2,7 @@
  * Insights Engine — LTV, Segmentation, and Seasonality Calculations
  * 
  * This module provides stateless compute functions for queue analytics.
- * Used by Convex queries and cron jobs.
+ * Used by analytics routes and scheduled sync jobs.
  */
 
 export type Segment = 'vip' | 'whale' | 'core' | 'casual';

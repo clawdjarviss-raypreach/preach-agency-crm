@@ -209,7 +209,7 @@ export default function SalesFeedPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 700, color: "var(--text)" }}>🔔 Live Sales Feed</h1>
-          <p style={{ color: "var(--text-secondary)", fontSize: 14 }}>Real-time transactions from OF API • Auto-refreshes via Convex</p>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14 }}>Real-time transactions from OF API • Auto-refreshes via Supabase</p>
         </div>
       </div>
 

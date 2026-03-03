@@ -7,8 +7,6 @@
  * - Wise: Compatible with Wise batch upload format
  */
 
-import { Id } from "../convex/_generated/dataModel";
-
 // ─── TYPES ────────────────────────────────────────────────────
 
 export interface ExportItem {

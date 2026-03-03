@@ -2,7 +2,7 @@
  * Leaderboard Engine — Badge calculation and rank computation
  * 
  * Provides stateless compute functions for leaderboard rankings.
- * Used by Convex queries and the API endpoint.
+ * Used by leaderboard services and the API endpoint.
  */
 
 // ─── BADGE TYPES ────────────────────────────────────────────────
