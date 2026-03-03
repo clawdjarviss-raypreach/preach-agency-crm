@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { supabaseAdmin, json } from '../_shared/supabase.ts';
 
-const OF_API_BASE = Deno.env.get('OF_API_BASE') ?? 'https://api.onlyfansapi.com';
+const OF_API_BASE = Deno.env.get('OF_API_BASE') ?? 'https://app.onlyfansapi.com';
 const OF_API_KEY = Deno.env.get('OF_API_KEY') ?? '';
 
 type SyncEndpoint =
@@ -16,12 +16,22 @@ type SyncEndpoint =
   | 'reconciliation'
   | 'webhook';
 
-async function fetchOf(path: string) {
-  const res = await fetch(`${OF_API_BASE}${path}`, {
+async function fetchOf(path: string, opts?: { method?: 'GET' | 'POST'; body?: Record<string, unknown>; query?: Record<string, string | number | undefined> }) {
+  const url = new URL(`${OF_API_BASE}${path}`);
+  for (const [key, value] of Object.entries(opts?.query ?? {})) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const method = opts?.method ?? 'GET';
+  const res = await fetch(url.toString(), {
+    method,
     headers: {
       Authorization: `Bearer ${OF_API_KEY}`,
       'Content-Type': 'application/json',
     },
+    body: method === 'POST' ? JSON.stringify(opts?.body ?? {}) : undefined,
   });
 
   if (!res.ok) {
@@ -61,9 +71,26 @@ async function withSyncState<T>(accountId: string, endpoint: Exclude<SyncEndpoin
   }
 }
 
+function getDefaultAnalyticsRange() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 30);
+  return {
+    start_date: start.toISOString().slice(0, 10),
+    end_date: end.toISOString().slice(0, 10),
+  };
+}
+
 async function syncEarnings(accountId: string) {
   return withSyncState(accountId, 'earnings', async () => {
-    const payload = await fetchOf(`/v1/accounts/${accountId}/earnings/daily`);
+    const range = getDefaultAnalyticsRange();
+    const payload = await fetchOf('/api/analytics/summary/earnings', {
+      method: 'POST',
+      body: {
+        account_id: accountId,
+        ...range,
+      },
+    });
     const rows = (payload?.data ?? []).map((r: any) => ({
       account_id: accountId,
       date: r.date,
@@ -96,7 +123,7 @@ async function syncEarnings(accountId: string) {
 
 async function syncTransactions(accountId: string) {
   return withSyncState(accountId, 'transactions', async () => {
-    const payload = await fetchOf(`/v1/accounts/${accountId}/transactions`);
+    const payload = await fetchOf(`/api/${accountId}/transactions`);
     const rows = (payload?.data ?? []).map((r: any) => ({
       account_id: accountId,
       of_transaction_id: String(r.id),
@@ -121,35 +148,40 @@ async function syncTransactions(accountId: string) {
 
 async function syncChargebacks(accountId: string) {
   return withSyncState(accountId, 'chargebacks', async () => {
-    const payload = await fetchOf(`/v1/accounts/${accountId}/chargebacks`);
+    const payload = await fetchOf(`/api/${accountId}/chargebacks`);
     return { count: (payload?.data ?? []).length };
   });
 }
 
 async function syncFans(accountId: string) {
   return withSyncState(accountId, 'fans', async () => {
-    const payload = await fetchOf(`/v1/accounts/${accountId}/fans`);
+    const payload = await fetchOf(`/api/${accountId}/fans/all`);
     return { count: (payload?.data ?? []).length };
   });
 }
 
 async function syncChats(accountId: string) {
   return withSyncState(accountId, 'chats', async () => {
-    const payload = await fetchOf(`/v1/accounts/${accountId}/chats`);
+    const payload = await fetchOf(`/api/${accountId}/chats`);
     return { count: (payload?.data ?? []).length };
   });
 }
 
 async function syncForecast(accountId: string) {
   return withSyncState(accountId, 'forecast', async () => {
-    const payload = await fetchOf(`/v1/accounts/${accountId}/forecast`);
+    const payload = await fetchOf('/api/analytics/financial/forecast', {
+      method: 'POST',
+      body: {
+        account_id: accountId,
+      },
+    });
     return { generatedAt: payload?.generated_at ?? null };
   });
 }
 
 async function syncTrackingLinks(accountId: string) {
   return withSyncState(accountId, 'tracking_links', async () => {
-    const payload = await fetchOf(`/v1/accounts/${accountId}/tracking-links`);
+    const payload = await fetchOf(`/api/${accountId}/tracking-links`);
     return { count: (payload?.data ?? []).length };
   });
 }
