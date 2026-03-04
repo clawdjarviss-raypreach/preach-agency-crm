@@ -349,7 +349,7 @@ export default function ManagerDashboardPage() {
         supabase.rpc("ig_account_reel_stats", { p_start_date: igDateRange.start, p_end_date: igEndPlusOne }),
       ]);
 
-      // Build reel stats lookup: ig_account_id → date → { views, likes, comments }
+      // Build reel stats lookup: ig_account_id → date → { views, likes, comments } (daily gains, not cumulative)
       const reelStatsByAccount = new Map<string, Map<string, { views: number; likes: number; comments: number }>>();
       for (const rs of reelStats ?? []) {
         const aid = rs.ig_account_id;
@@ -387,13 +387,16 @@ export default function ManagerDashboardPage() {
         const followersDelta = endFollowers - startFollowers;
         const followerGrowthPct = startFollowers > 0 ? ((followersDelta / startFollowers) * 100) : null;
 
-        // Views/likes/comments from aggregated reel stats (cumulative → delta)
+        // Views/likes/comments: sum daily gains in range (RPC returns per-day deltas, not cumulative)
         const accountReelStats = reelStatsByAccount.get(a.id);
-        const startRS = accountReelStats?.get(igDateRange.start);
-        const endRS = accountReelStats?.get(igEndPlusOne) ?? (accountReelStats ? Array.from(accountReelStats.values()).pop() : null);
-        const viewsDelta = Math.max(0, (endRS?.views || 0) - (startRS?.views || 0));
-        const likesDelta = Math.max(0, (endRS?.likes || 0) - (startRS?.likes || 0));
-        const commentsDelta = Math.max(0, (endRS?.comments || 0) - (startRS?.comments || 0));
+        let viewsDelta = 0, likesDelta = 0, commentsDelta = 0;
+        if (accountReelStats) {
+          for (const [, dayStats] of accountReelStats) {
+            viewsDelta += dayStats.views;
+            likesDelta += dayStats.likes;
+            commentsDelta += dayStats.comments;
+          }
+        }
 
         const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
         const mappedCreator = creatorByInstagram.get(usernameKey);
@@ -421,15 +424,18 @@ export default function ManagerDashboardPage() {
         let likes = 0;
         let comments = 0;
 
-        // Aggregate views/likes/comments from reel stats across all accounts
+        // Sum daily gains from reel stats across all accounts (RPC returns per-day deltas)
         for (const account of igAccounts ?? []) {
           const accountRS = reelStatsByAccount.get((account as any).id);
           if (!accountRS) continue;
-          const dayRS = accountRS.get(day);
-          const nextRS = accountRS.get(next);
-          views += Math.max(0, (nextRS?.views || 0) - (dayRS?.views || 0));
-          likes += Math.max(0, (nextRS?.likes || 0) - (dayRS?.likes || 0));
-          comments += Math.max(0, (nextRS?.comments || 0) - (dayRS?.comments || 0));
+          // The RPC snapshot_date represents gains ON that date (today - yesterday)
+          // So for a given day, we look up that day's entry directly
+          const dayRS = accountRS.get(next); // next = day+1, which is the delta for "day"
+          if (dayRS) {
+            views += dayRS.views;
+            likes += dayRS.likes;
+            comments += dayRS.comments;
+          }
         }
 
         return {
