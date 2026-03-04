@@ -349,12 +349,10 @@ export default function ManagerDashboardPage() {
         supabase.rpc("ig_account_reel_stats", { p_start_date: igDateRange.start, p_end_date: igEndPlusOne }),
       ]);
 
-      // Build reel stats lookup: ig_account_id → date → { views, likes, comments } (daily gains, not cumulative)
-      const reelStatsByAccount = new Map<string, Map<string, { views: number; likes: number; comments: number }>>();
+      // Build reel stats lookup: ig_account_id → { views, likes, comments } (total gains for the range)
+      const reelStatsByAccount = new Map<string, { views: number; likes: number; comments: number }>();
       for (const rs of reelStats ?? []) {
-        const aid = rs.ig_account_id;
-        if (!reelStatsByAccount.has(aid)) reelStatsByAccount.set(aid, new Map());
-        reelStatsByAccount.get(aid)!.set(rs.snapshot_date, {
+        reelStatsByAccount.set(rs.ig_account_id, {
           views: Number(rs.total_views || 0),
           likes: Number(rs.total_likes || 0),
           comments: Number(rs.total_comments || 0),
@@ -387,16 +385,11 @@ export default function ManagerDashboardPage() {
         const followersDelta = endFollowers - startFollowers;
         const followerGrowthPct = startFollowers > 0 ? ((followersDelta / startFollowers) * 100) : null;
 
-        // Views/likes/comments: sum daily gains in range (RPC returns per-day deltas, not cumulative)
-        const accountReelStats = reelStatsByAccount.get(a.id);
-        let viewsDelta = 0, likesDelta = 0, commentsDelta = 0;
-        if (accountReelStats) {
-          for (const [, dayStats] of accountReelStats) {
-            viewsDelta += dayStats.views;
-            likesDelta += dayStats.likes;
-            commentsDelta += dayStats.comments;
-          }
-        }
+        // Views/likes/comments: total gains for the date range from RPC
+        const accountRS = reelStatsByAccount.get(a.id);
+        const viewsDelta = accountRS?.views || 0;
+        const likesDelta = accountRS?.likes || 0;
+        const commentsDelta = accountRS?.comments || 0;
 
         const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
         const mappedCreator = creatorByInstagram.get(usernameKey);
@@ -420,29 +413,22 @@ export default function ManagerDashboardPage() {
 
       const accountDailyGainRows = enumerateDates(igDateRange.start, igDateRange.end).map((day) => {
         const next = addDays(day, 1);
-        let views = 0;
-        let likes = 0;
-        let comments = 0;
+        let followers = 0;
 
-        // Sum daily gains from reel stats across all accounts (RPC returns per-day deltas)
+        // Daily follower gains from account snapshots
         for (const account of igAccounts ?? []) {
-          const accountRS = reelStatsByAccount.get((account as any).id);
-          if (!accountRS) continue;
-          // The RPC snapshot_date represents gains ON that date (today - yesterday)
-          // So for a given day, we look up that day's entry directly
-          const dayRS = accountRS.get(next); // next = day+1, which is the delta for "day"
-          if (dayRS) {
-            views += dayRS.views;
-            likes += dayRS.likes;
-            comments += dayRS.comments;
+          const rows = (snapByAccount.get((account as any).id) ?? []);
+          const byDate = new Map(rows.map((r: any) => [String(r.date), r]));
+          const daySnap = byDate.get(day);
+          const nextSnap = byDate.get(next);
+          if (daySnap && nextSnap) {
+            followers += Number(nextSnap.followers || 0) - Number(daySnap.followers || 0);
           }
         }
 
         return {
           date: new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-          Views: views,
-          Likes: likes,
-          Comments: comments,
+          Followers: followers,
         };
       });
 
@@ -974,9 +960,7 @@ export default function ManagerDashboardPage() {
               <YAxis tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
               <Legend wrapperStyle={{ fontSize: "12px", color: "#a0a0a0" }} />
-              <Line type="monotone" dataKey="Views" stroke="#3b82f6" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Likes" stroke="#22c55e" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Comments" stroke="#f59e0b" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="Followers" stroke="#3b82f6" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         ) : (
