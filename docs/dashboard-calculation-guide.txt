@@ -1,0 +1,178 @@
+Dashboard Data Calculation Guide
+
+  ---
+  How Snapshots Work
+
+  When are snapshots created?
+
+  The cron job runs once per day at 0:00 UTC.
+
+  Important: 0:00 UTC is the very first moment of the new day.
+
+  Dec 21, 23:59:59 UTC  →  one second later  →  Dec 22, 00:00:00 UTC
+          ↑                                              ↑
+     still Dec 21                               now it's Dec 22
+
+  So when the cron runs at "0:00 UTC Dec 22", the date is already Dec 22.
+
+  ---
+  What date does each snapshot get?
+
+  | Cron runs at    | Snapshot date | What it captures       |
+  |-----------------|---------------|------------------------|
+  | 0:00 UTC Dec 21 | 2025-12-21    | State at END of Dec 20 |
+  | 0:00 UTC Dec 22 | 2025-12-22    | State at END of Dec 21 |
+  | 0:00 UTC Dec 23 | 2025-12-23    | State at END of Dec 22 |
+
+  Why "END of previous day"?
+
+  Because 0:00 UTC Dec 22 is the exact moment Dec 21 ends. The views/followers captured at that moment are the "final numbers" for Dec 21.
+
+  ---
+  Example Timeline
+
+  Dec 21, 15:00 UTC  - You trigger a test run manually
+                       → Snapshot date = Dec 21
+
+  Dec 21, 23:59 UTC  - Still Dec 21
+
+  Dec 22, 00:00 UTC  - Clock turns to Dec 22
+                       → Cron runs automatically
+                       → Snapshot date = Dec 22
+
+  Dec 22, 00:30 UTC  - Cron finishes (still Dec 22)
+
+  Key point: The snapshot date = whatever day it is when the code runs.
+
+  ---
+  The Formula
+
+  To calculate what was gained during a date range:
+
+  User selects: startDate to endDate
+
+  start_snapshot = snapshot dated startDate      (= state BEFORE the range)
+  end_snapshot   = snapshot dated endDate + 1    (= state AFTER the range)
+
+  gained = end_snapshot - start_snapshot
+
+  ---
+  Examples
+
+  Example 1: User selects single day (Dec 20)
+
+  startDate = Dec 20
+  endDate   = Dec 20
+
+  start_snapshot = Dec 20 snapshot (state at START of Dec 20)
+  end_snapshot   = Dec 21 snapshot (state at END of Dec 20)
+
+  Gained ON Dec 20 = Dec21.views - Dec20.views
+
+  Example 2: User selects range (Dec 15 - Dec 20)
+
+  startDate = Dec 15
+  endDate   = Dec 20
+
+  start_snapshot = Dec 15 snapshot (state at START of Dec 15)
+  end_snapshot   = Dec 21 snapshot (state at END of Dec 20)
+
+  Gained DURING Dec 15-20 = Dec21.views - Dec15.views
+
+  Visual Timeline
+
+  Dec 14    Dec 15    Dec 16    Dec 17    Dec 18    Dec 19    Dec 20    Dec 21
+    |         |         |         |         |         |         |         |
+    |         ← ─ ─ ─ ─ ─ ─ USER SELECTED RANGE ─ ─ ─ ─ ─ ─ →   |
+    |         |                                                   |
+    |    start_snapshot                                     end_snapshot
+    |    (Dec 15)                                           (Dec 21)
+
+  ---
+  Data Sources
+
+  | Table                      | Purpose                                          |
+  |----------------------------|--------------------------------------------------|
+  | am_reels                   | Reel metadata + posted_at for counting new posts |
+  | am_reels_daily_snapshots   | Daily views/likes/comments/shares per reel       |
+  | am_account_daily_snapshots | Daily followers per account                      |
+
+  ---
+  SQL Queries
+
+  All Views (from reel snapshots)
+
+  SELECT SUM(
+    end_snap.views::int - start_snap.views::int
+  ) as total_views_gained
+  FROM am_reels r
+  JOIN am_reels_daily_snapshots start_snap
+    ON r.id = start_snap.reel_id
+    AND start_snap.snapshot_date = :startDate
+  JOIN am_reels_daily_snapshots end_snap
+    ON r.id = end_snap.reel_id
+    AND end_snap.snapshot_date = :endDate + INTERVAL '1 day'
+
+  All Likes
+
+  Same query, use likes column
+
+  All Comments
+
+  Same query, use comments column
+
+  All Shares
+
+  Same query, use shares column
+
+  New Followers (from account snapshots)
+
+  SELECT SUM(
+    end_snap.followers::int - start_snap.followers::int
+  ) as total_new_followers
+  FROM am_account_daily_snapshots start_snap
+  JOIN am_account_daily_snapshots end_snap
+    ON start_snap.internal_account_id = end_snap.internal_account_id
+  WHERE start_snap.date = :startDate
+    AND end_snap.date = :endDate + INTERVAL '1 day'
+
+  Reels Posted
+
+  SELECT COUNT(*) as reels_posted
+  FROM am_reels
+  WHERE posted_at::date BETWEEN :startDate AND :endDate
+
+  ---
+  Per Account Metrics
+
+  Add this filter to any query:
+
+  WHERE r.internal_account_id = :accountId
+
+  Follower Growth %
+
+  ((end_followers - start_followers) / start_followers::float) * 100
+
+  ---
+  User Can Only Select Up To Yesterday
+
+  Why? Because we need the "end snapshot" which is created the day AFTER.
+
+  Example: Today is Dec 22
+
+  | User selects   | Needs end_snapshot | Available?                          |
+  |----------------|--------------------|-------------------------------------|
+  | Dec 20         | Dec 21             | ✅ Yes                              |
+  | Dec 21         | Dec 22             | ✅ Yes (cron ran at 0:00 UTC today) |
+  | Dec 22 (today) | Dec 23             | ❌ No (tomorrow's cron hasn't run)  |
+
+  Rule: Max selectable date = yesterday
+
+  ---
+  Edge Cases
+
+  | Scenario                      | Solution                                       |
+  |-------------------------------|------------------------------------------------|
+  | No start_snapshot exists      | Use LEFT JOIN, treat missing as 0              |
+  | Reel posted within date range | No start_snapshot → gained = full end value    |
+  | Account is new                | No start_snapshot → gained = current followers |

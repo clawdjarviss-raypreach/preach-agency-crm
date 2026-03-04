@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import {
   XAxis,
   YAxis,
@@ -192,10 +192,21 @@ export default function ManagerDashboardPage() {
   const [showAllTrackingLinks, setShowAllTrackingLinks] = useState(false);
   const [selectedIgAccount, setSelectedIgAccount] = useState<any | null>(null);
   const [selectedIgAccountReels, setSelectedIgAccountReels] = useState<any[] | null>(null);
+  const [selectedIgAccountCurve30d, setSelectedIgAccountCurve30d] = useState<any[] | null>(null);
+  const [isCompactReelGrid, setIsCompactReelGrid] = useState(false);
+  const hoveredReelRef = useRef<string | null>(null);
+  const [hoveredReelId, setHoveredReelId] = useState<string | null>(null);
 
   useEffect(() => {
     const u = localStorage.getItem("crm_user");
     if (u) setUser(JSON.parse(u));
+  }, []);
+
+  useEffect(() => {
+    const updateGrid = () => setIsCompactReelGrid(window.innerWidth < 768);
+    updateGrid();
+    window.addEventListener("resize", updateGrid);
+    return () => window.removeEventListener("resize", updateGrid);
   }, []);
 
   const trendPeriod = useMemo((): "7d" | "30d" | "90d" => {
@@ -341,11 +352,7 @@ export default function ManagerDashboardPage() {
           .select("ig_account_id,date,followers,views,likes,comments")
           .gte("date", igDateRange.start)
           .lte("date", igEndPlusOne),
-        supabase
-          .from("crm_ig_reels")
-          .select("id,ig_account_id,posted_at,thumbnail_url")
-          .gte("posted_at", `${igDateRange.start}T00:00:00`)
-          .lte("posted_at", `${igDateRange.end}T23:59:59`),
+        supabase.rpc("ig_active_reels", { p_start_date: igDateRange.start, p_end_date: igEndPlusOne }).limit(5000),
         supabase.rpc("ig_account_reel_stats", { p_start_date: igDateRange.start, p_end_date: igEndPlusOne }),
       ]);
 
@@ -502,7 +509,7 @@ export default function ManagerDashboardPage() {
             totalViews30d: points.reduce((sum, p) => sum + Number(p.Views || 0), 0),
             points,
           };
-        }).sort((a, b) => b.totalViews30d - a.totalViews30d).slice(0, 8);
+        }).sort((a: any, b: any) => b.totalViews30d - a.totalViews30d).slice(0, 8);
       }
 
       if (!cancelled) {
@@ -545,6 +552,9 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     if (!selectedIgAccount) {
       setSelectedIgAccountReels(null);
+      setSelectedIgAccountCurve30d(null);
+      hoveredReelRef.current = null;
+      setHoveredReelId(null);
       return;
     }
 
@@ -552,26 +562,48 @@ export default function ManagerDashboardPage() {
 
     async function loadAccountReels() {
       setSelectedIgAccountReels(null);
+      setSelectedIgAccountCurve30d(null);
 
-      const { data: reels } = await supabase
-        .from("crm_ig_reels")
-        .select("id,posted_at,thumbnail_url")
-        .eq("ig_account_id", selectedIgAccount.accountId)
-        .order("posted_at", { ascending: false })
-        .limit(20);
+      // Get reels with activity in the selected date range
+      const endPlusOne = addDays(igDateRange.end, 1);
+      const { data: activeReelData } = await supabase.rpc("ig_active_reels", {
+        p_start_date: igDateRange.start,
+        p_end_date: endPlusOne,
+      }).limit(5000);
+
+      // Filter to this account and sort by views gained
+      const reels = (activeReelData ?? [])
+        .filter((r: any) => r.ig_account_id === selectedIgAccount.accountId)
+        .map((r: any) => ({
+          ...r,
+          views_gained: Math.max(0, (r.end_views || 0) - (r.start_views || 0)),
+          likes_gained: Math.max(0, (r.end_likes || 0) - (r.start_likes || 0)),
+          comments_gained: Math.max(0, (r.end_comments || 0) - (r.start_comments || 0)),
+        }))
+        .sort((a: any, b: any) => b.views_gained - a.views_gained)
+        .slice(0, 50);
 
       const reelIds = (reels ?? []).map((reel: any) => reel.id);
       if (reelIds.length === 0) {
-        if (!cancelled) setSelectedIgAccountReels([]);
+        if (!cancelled) {
+          setSelectedIgAccountReels([]);
+          setSelectedIgAccountCurve30d([]);
+        }
         return;
       }
+
+      const curveEnd = getYesterdayDateOnly();
+      const curveStart = addDays(curveEnd, -29);
+      const snapshotsStart = igDateRange.start < curveStart ? igDateRange.start : curveStart;
+      const snapshotsEndCandidate = addDays(igDateRange.end, 1);
+      const snapshotsEnd = snapshotsEndCandidate > addDays(curveEnd, 1) ? snapshotsEndCandidate : addDays(curveEnd, 1);
 
       const { data: reelSnapshots } = await supabase
         .from("crm_ig_reel_daily_snapshots")
         .select("ig_reel_id,snapshot_date,views,likes,comments,shares")
         .in("ig_reel_id", reelIds)
-        .gte("snapshot_date", igDateRange.start)
-        .lte("snapshot_date", addDays(igDateRange.end, 1));
+        .gte("snapshot_date", snapshotsStart)
+        .lte("snapshot_date", snapshotsEnd);
 
       const snapshotsByReel = new Map<string, any[]>();
       for (const snapshot of reelSnapshots ?? []) {
@@ -595,15 +627,46 @@ export default function ManagerDashboardPage() {
             reelId: reel.id,
             postedAt: reel.posted_at,
             thumbnailUrl: reel.thumbnail_url,
+            videoUrl: reel.video_url,
+            caption: reel.caption,
             views,
             likes,
             comments,
             shares,
           };
         })
-        .sort((a, b) => b.views - a.views);
+        .sort((a: any, b: any) => b.views - a.views);
 
-      if (!cancelled) setSelectedIgAccountReels(rows);
+      const curveRows = enumerateDates(curveStart, curveEnd).map((day) => {
+        const next = addDays(day, 1);
+        let totalViews = 0;
+        let totalLikes = 0;
+        let totalComments = 0;
+
+        for (const reelId of reelIds) {
+          const snapshots = (snapshotsByReel.get(reelId) ?? []).sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
+          const byDate = new Map(snapshots.map((snapshot: any) => [String(snapshot.snapshot_date), snapshot]));
+          const daySnap = byDate.get(day);
+          const nextSnap = byDate.get(next);
+          if (!daySnap || !nextSnap) continue;
+
+          totalViews += Number(nextSnap.views || 0) - Number(daySnap.views || 0);
+          totalLikes += Number(nextSnap.likes || 0) - Number(daySnap.likes || 0);
+          totalComments += Number(nextSnap.comments || 0) - Number(daySnap.comments || 0);
+        }
+
+        return {
+          date: new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          Views: totalViews,
+          Likes: totalLikes,
+          Comments: totalComments,
+        };
+      });
+
+      if (!cancelled) {
+        setSelectedIgAccountReels(rows);
+        setSelectedIgAccountCurve30d(curveRows);
+      }
     }
 
     loadAccountReels();
@@ -1058,26 +1121,109 @@ export default function ManagerDashboardPage() {
             ) : selectedIgAccountReels.length === 0 ? (
               <div style={{ color: "#9ca3af", padding: "12px 0" }}>No reels found for this account and range.</div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: "12px" }}>
-                {selectedIgAccountReels.map((reel) => (
-                  <div key={reel.reelId} style={{ border: "1px solid #253545", borderRadius: "10px", overflow: "hidden", background: "#1C2A3A" }}>
-                    <div style={{ height: "120px", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {reel.thumbnailUrl ? (
-                        <img src={reel.thumbnailUrl} alt="reel" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      ) : (
-                        <span style={{ color: "#64748b" }}>No thumbnail</span>
-                      )}
-                    </div>
-                    <div style={{ padding: "10px", fontSize: "12px", color: "#e5e7eb", display: "grid", gap: "4px" }}>
-                      <div style={{ color: "#9ca3af" }}>{reel.postedAt ? new Date(reel.postedAt).toLocaleDateString() : "Unknown post date"}</div>
-                      <div>Views: <strong>{formatNumber(reel.views)}</strong></div>
-                      <div>Likes: <strong>{formatNumber(reel.likes)}</strong></div>
-                      <div>Comments: <strong>{formatNumber(reel.comments)}</strong></div>
-                      <div>Shares: <strong>{formatNumber(reel.shares)}</strong></div>
-                    </div>
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: isCompactReelGrid ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
+                  {selectedIgAccountReels.map((reel) => {
+                    const isHovered = hoveredReelId === reel.reelId;
+                    return (
+                      <div
+                        key={reel.reelId}
+                        onMouseEnter={() => {
+                          hoveredReelRef.current = reel.reelId;
+                          setHoveredReelId(reel.reelId);
+                        }}
+                        onMouseLeave={(event) => {
+                          const video = event.currentTarget.querySelector("video") as HTMLVideoElement | null;
+                          if (video) video.pause();
+                          if (hoveredReelRef.current === reel.reelId) {
+                            hoveredReelRef.current = null;
+                            setHoveredReelId(null);
+                          }
+                        }}
+                        style={{
+                          border: "1px solid #2a2a2a",
+                          borderRadius: "12px",
+                          overflow: "hidden",
+                          background: "#1e1e1e",
+                          transition: "transform 0.18s ease, box-shadow 0.18s ease",
+                          transform: isHovered ? "scale(1.02)" : "scale(1)",
+                          boxShadow: isHovered ? "0 10px 24px rgba(0,0,0,0.35)" : "none",
+                        }}
+                      >
+                        <div style={{ position: "relative", aspectRatio: "9 / 16", background: "#2f2f2f" }}>
+                          {reel.thumbnailUrl ? (
+                            <img
+                              src={reel.thumbnailUrl}
+                              alt={reel.caption ? String(reel.caption).slice(0, 80) : "Reel thumbnail"}
+                              loading="lazy"
+                              style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "10px" }}
+                            />
+                          ) : (
+                            <div style={{ width: "100%", height: "100%", background: "#3a3a3a", display: "flex", alignItems: "center", justifyContent: "center", padding: "10px", textAlign: "center", color: "#bdbdbd", fontSize: "12px" }}>
+                              {reel.caption || "No thumbnail available"}
+                            </div>
+                          )}
+                          {isHovered && reel.videoUrl && (
+                            <video
+                              muted
+                              autoPlay
+                              loop
+                              playsInline
+                              src={reel.videoUrl}
+                              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                            />
+                          )}
+                        </div>
+                        <div style={{ padding: "10px" }}>
+                          <div
+                            style={{
+                              color: "#ccc",
+                              fontSize: "13px",
+                              lineHeight: 1.35,
+                              marginBottom: "8px",
+                              minHeight: "34px",
+                              display: "-webkit-box",
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                            }}
+                          >
+                            {reel.caption || "No caption"}
+                          </div>
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", color: "#999", fontSize: "11px" }}>
+                            <span>👁 {formatNumber(reel.views)}</span>
+                            <span>❤️ {formatNumber(reel.likes)}</span>
+                            <span>💬 {formatNumber(reel.comments)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ marginTop: "18px", borderTop: "1px solid #2a2a2a", paddingTop: "14px" }}>
+                  <div style={{ color: "#9ca3af", fontSize: "12px", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                    30-Day Reel Performance
                   </div>
-                ))}
-              </div>
+                  {selectedIgAccountCurve30d === null ? (
+                    <div style={{ color: "#6b7280", fontSize: "12px", padding: "8px 0" }}>Loading 30-day chart…</div>
+                  ) : selectedIgAccountCurve30d.length === 0 ? (
+                    <div style={{ color: "#6b7280", fontSize: "12px", padding: "8px 0" }}>No 30-day performance data.</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={230}>
+                      <LineChart data={selectedIgAccountCurve30d}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
+                        <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} interval={4} />
+                        <YAxis tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <Tooltip content={<ChartTooltip />} />
+                        <Line type="monotone" dataKey="Views" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="Likes" stroke="#22c55e" strokeWidth={1.8} dot={false} />
+                        <Line type="monotone" dataKey="Comments" stroke="#f59e0b" strokeWidth={1.8} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
