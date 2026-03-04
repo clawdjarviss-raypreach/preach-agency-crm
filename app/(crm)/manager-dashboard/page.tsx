@@ -391,9 +391,9 @@ export default function ManagerDashboardPage() {
         const accountReelStats = reelStatsByAccount.get(a.id);
         const startRS = accountReelStats?.get(igDateRange.start);
         const endRS = accountReelStats?.get(igEndPlusOne) ?? (accountReelStats ? Array.from(accountReelStats.values()).pop() : null);
-        const viewsDelta = (endRS?.views || 0) - (startRS?.views || 0);
-        const likesDelta = (endRS?.likes || 0) - (startRS?.likes || 0);
-        const commentsDelta = (endRS?.comments || 0) - (startRS?.comments || 0);
+        const viewsDelta = Math.max(0, (endRS?.views || 0) - (startRS?.views || 0));
+        const likesDelta = Math.max(0, (endRS?.likes || 0) - (startRS?.likes || 0));
+        const commentsDelta = Math.max(0, (endRS?.comments || 0) - (startRS?.comments || 0));
 
         const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
         const mappedCreator = creatorByInstagram.get(usernameKey);
@@ -427,9 +427,9 @@ export default function ManagerDashboardPage() {
           if (!accountRS) continue;
           const dayRS = accountRS.get(day);
           const nextRS = accountRS.get(next);
-          views += (nextRS?.views || 0) - (dayRS?.views || 0);
-          likes += (nextRS?.likes || 0) - (dayRS?.likes || 0);
-          comments += (nextRS?.comments || 0) - (dayRS?.comments || 0);
+          views += Math.max(0, (nextRS?.views || 0) - (dayRS?.views || 0));
+          likes += Math.max(0, (nextRS?.likes || 0) - (dayRS?.likes || 0));
+          comments += Math.max(0, (nextRS?.comments || 0) - (dayRS?.comments || 0));
         }
 
         return {
