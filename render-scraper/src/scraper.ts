@@ -1,7 +1,7 @@
 import { getPosterUrl, getVideoUrl, sleep, toIsoFromUnix } from './utils';
 
 const REQUEST_DELAY_MS = 1500;
-const RETRY_429_DELAY_MS = 60_000;
+const RETRY_429_DELAY_MS = 30_000;
 
 type ApiError = Error & { status?: number };
 
@@ -120,6 +120,7 @@ export class RapidApiClient {
           'x-rapidapi-host': this.host,
           ...(init.headers ?? {}),
         },
+        signal: AbortSignal.timeout(30_000), // 30s timeout per request
       });
 
       this.lastRequestAt = Date.now();
@@ -228,13 +229,18 @@ export class RapidApiClient {
     return { reels, paginationToken: nextToken };
   }
 
-  async fetchAllReels(username: string): Promise<RapidReel[]> {
+  async fetchAllReels(username: string, maxPages = 1): Promise<RapidReel[]> {
     const all: RapidReel[] = [];
     let token: string | undefined;
+    let page_count = 0;
 
     do {
       const page = await this.fetchReelsPage(username, token);
       all.push(...page.reels);
+      page_count += 1;
+
+      // Stop after maxPages (default 1 = 12 reels, covers ~4-12 days)
+      if (page_count >= maxPages) break;
       token = page.paginationToken;
     } while (token);
 

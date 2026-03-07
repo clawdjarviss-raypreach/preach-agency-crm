@@ -45,7 +45,7 @@ function isoToAgeDays(iso: string, now: Date): number {
 }
 
 function sourceKey(reel: RapidReel): string {
-  return reel.mediaId ?? reel.code;
+  return reel.code; // shortcode — universal key across Tom's data and RapidAPI
 }
 
 function sourceCode(reel: RapidReel): string {

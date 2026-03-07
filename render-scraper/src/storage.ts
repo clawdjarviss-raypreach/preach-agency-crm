@@ -19,6 +19,7 @@ export type CompetitorWatchlist = {
 
 export type ExistingOwnReel = {
   id: string;
+  shortcode: string | null;
   supabase_reel_id: string;
   posted_at: string | null;
   analysis_status: string | null;
@@ -125,17 +126,19 @@ export class StorageService {
   async getExistingOwnReels(accountId: string): Promise<Map<string, ExistingOwnReel>> {
     const { data, error } = await this.supabase
       .from('crm_ig_reels')
-      .select('id,supabase_reel_id,posted_at,analysis_status')
+      .select('id,shortcode,supabase_reel_id,posted_at,analysis_status')
       .eq('ig_account_id', accountId)
       .order('last_synced_at', { ascending: false })
-      .limit(1000);
+      .limit(5000);
 
     if (error) throw error;
 
     const map = new Map<string, ExistingOwnReel>();
     for (const row of data ?? []) {
-      if (typeof row.supabase_reel_id === 'string' && row.supabase_reel_id.length > 0) {
-        map.set(row.supabase_reel_id, row as ExistingOwnReel);
+      // Key by shortcode (universal) — matches RapidAPI reel.code
+      const key = row.shortcode ?? row.supabase_reel_id;
+      if (typeof key === 'string' && key.length > 0) {
+        map.set(key, row as ExistingOwnReel);
       }
     }
     return map;
