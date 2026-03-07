@@ -94,10 +94,28 @@ export class RapidApiClient {
     for (let attempt = 1; attempt <= retries; attempt += 1) {
       await this.waitForRateLimit();
 
+      // RapidAPI POST endpoints require form-urlencoded, not JSON
+      let finalBody = init.body;
+      let contentType = 'application/json';
+      if (init.method === 'POST' && typeof init.body === 'string') {
+        try {
+          const parsed = JSON.parse(init.body);
+          const params = new URLSearchParams();
+          for (const [k, v] of Object.entries(parsed)) {
+            params.set(k, String(v));
+          }
+          finalBody = params.toString();
+          contentType = 'application/x-www-form-urlencoded';
+        } catch {
+          // keep as-is if not valid JSON
+        }
+      }
+
       const response = await fetch(`${this.baseUrl}${path}`, {
         ...init,
+        body: finalBody,
         headers: {
-          'content-type': 'application/json',
+          'content-type': contentType,
           'x-rapidapi-key': this.apiKey,
           'x-rapidapi-host': this.host,
           ...(init.headers ?? {}),

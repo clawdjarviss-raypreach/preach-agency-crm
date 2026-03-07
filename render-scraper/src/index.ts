@@ -326,23 +326,31 @@ async function main(): Promise<void> {
 
   console.log(`Loaded ${ownAccounts.length} own accounts, ${watchlists.length} competitor watchlists`);
 
-  for (const account of ownAccounts) {
+  for (let i = 0; i < ownAccounts.length; i++) {
+    const account = ownAccounts[i];
+    console.log(`[own ${i + 1}/${ownAccounts.length}] Processing @${account.username}...`);
     try {
       await processOwnAccount(account, { storage, rapid, aiServerUrl, stats });
       stats.ownAccounts += 1;
+      console.log(`[own ${i + 1}/${ownAccounts.length}] @${account.username} — done`);
     } catch (error) {
       stats.errors += 1;
-      console.error(`Error processing own @${account.username}:`, error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[own ${i + 1}/${ownAccounts.length}] @${account.username} — ERROR: ${msg}`);
     }
   }
 
-  for (const watchlist of watchlists) {
+  for (let i = 0; i < watchlists.length; i++) {
+    const watchlist = watchlists[i];
+    console.log(`[comp ${i + 1}/${watchlists.length}] Processing @${watchlist.ig_username}...`);
     try {
       await processCompetitorAccount(watchlist, { storage, rapid, aiServerUrl, stats });
       stats.competitorAccounts += 1;
+      console.log(`[comp ${i + 1}/${watchlists.length}] @${watchlist.ig_username} — done`);
     } catch (error) {
       stats.errors += 1;
-      console.error(`Error processing competitor @${watchlist.ig_username}:`, error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[comp ${i + 1}/${watchlists.length}] @${watchlist.ig_username} — ERROR: ${msg}`);
     }
   }
 
