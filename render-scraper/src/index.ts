@@ -97,14 +97,20 @@ async function processOwnAccount(
 ): Promise<void> {
   const now = new Date();
   const maxAgeDays = deps.mode === 'daily' ? DAILY_REEL_AGE_DAYS : VPD_REEL_AGE_DAYS;
-  const maxPages = deps.mode === 'daily' ? 3 : 1; // 3 pages = ~36 reels for 30-day coverage
   const existingMap = await deps.storage.getExistingOwnReels(account.id);
   const mediaDetailCache = new Map<string, MediaDetail>();
 
   const profile = await deps.rapid.fetchProfile(account.username);
   await deps.storage.updateOwnAccountProfile(account.id, profile);
 
-  const reels = await deps.rapid.fetchAllReels(account.username, maxPages);
+  // Build date map from existing reels so pagination can stop at cutoff
+  // (RapidAPI doesn't return taken_at in the reels listing)
+  const existingDates = new Map<string, string | null>();
+  for (const [key, reel] of existingMap.entries()) {
+    existingDates.set(key, reel.posted_at);
+  }
+
+  const reels = await deps.rapid.fetchAllReels(account.username, maxAgeDays, existingDates);
   const processed: ProcessedReel[] = [];
 
   for (const reel of reels) {

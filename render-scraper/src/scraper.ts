@@ -229,18 +229,43 @@ export class RapidApiClient {
     return { reels, paginationToken: nextToken };
   }
 
-  async fetchAllReels(username: string, maxPages = 1): Promise<RapidReel[]> {
+  /**
+   * Fetch reels with cutoff-based pagination.
+   * API returns reels newest-first, ~12 per page.
+   * Stops paginating when the oldest reel in a batch exceeds cutoffDays.
+   * Returns only reels within the cutoff (filters the last mixed batch).
+   *
+   * existingDates: optional map of shortcode → posted_at ISO string from DB.
+   * Used when the API doesn't return taken_at (which is common).
+   */
+  async fetchAllReels(
+    username: string,
+    cutoffDays = 14,
+    existingDates?: Map<string, string | null>,
+  ): Promise<RapidReel[]> {
     const all: RapidReel[] = [];
     let token: string | undefined;
-    let page_count = 0;
+    const cutoffMs = Date.now() - cutoffDays * 24 * 60 * 60 * 1000;
 
     do {
       const page = await this.fetchReelsPage(username, token);
-      all.push(...page.reels);
-      page_count += 1;
 
-      // Stop after maxPages (default 1 = 12 reels, covers ~4-12 days)
-      if (page_count >= maxPages) break;
+      if (page.reels.length === 0) break;
+
+      let foundOld = false;
+      for (const reel of page.reels) {
+        // Check date from API response OR from our existing DB data
+        const dateStr = reel.takenAtIso ?? existingDates?.get(reel.code) ?? null;
+        if (dateStr && new Date(dateStr).getTime() < cutoffMs) {
+          foundOld = true;
+          break; // Don't add reels past cutoff
+        }
+        all.push(reel);
+      }
+
+      // If the batch contained a reel older than cutoff, stop paginating
+      if (foundOld) break;
+
       token = page.paginationToken;
     } while (token);
 
