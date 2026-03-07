@@ -39,6 +39,7 @@ export type SnapshotPoint = {
 
 export type UpsertedOwnReel = {
   id: string;
+  supabase_reel_id: string;
   posted_at: string | null;
   analysis_status: string | null;
 };
@@ -180,7 +181,7 @@ export class StorageService {
         },
         { onConflict: 'ig_account_id,shortcode' },
       )
-      .select('id,posted_at,analysis_status')
+      .select('id,supabase_reel_id,posted_at,analysis_status')
       .single();
 
     if (error) throw error;
@@ -277,6 +278,84 @@ export class StorageService {
     });
 
     if (error) throw error;
+  }
+
+  /**
+   * Write a daily snapshot row matching Tom's format (crm_ig_reel_daily_snapshots).
+   * This keeps the dashboard RPCs working seamlessly.
+   * Uses SELECT + INSERT/UPDATE pattern since we can't add a unique constraint right now.
+   */
+  async upsertDailySnapshot(
+    igReelId: string,
+    supabaseReelId: string,
+    accountId: string,
+    snapshotDate: string, // YYYY-MM-DD
+    views: number,
+    likes: number,
+    comments: number,
+    shares: number,
+  ): Promise<void> {
+    // Check if row exists for this reel + date
+    const { data: existing } = await this.supabase
+      .from('crm_ig_reel_daily_snapshots')
+      .select('id,views,likes,comments,shares')
+      .eq('ig_reel_id', igReelId)
+      .eq('snapshot_date', snapshotDate)
+      .maybeSingle();
+
+    // Get yesterday's snapshot for delta calculation
+    const { data: yesterday } = await this.supabase
+      .from('crm_ig_reel_daily_snapshots')
+      .select('views,likes,comments,shares')
+      .eq('ig_reel_id', igReelId)
+      .lt('snapshot_date', snapshotDate)
+      .order('snapshot_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const viewsDelta = yesterday ? views - (yesterday.views ?? 0) : 0;
+    const likesDelta = yesterday ? likes - (yesterday.likes ?? 0) : 0;
+    const commentsDelta = yesterday ? comments - (yesterday.comments ?? 0) : 0;
+    const sharesDelta = yesterday ? shares - (yesterday.shares ?? 0) : 0;
+
+    if (existing) {
+      // Update with latest values (later scrape in the day wins)
+      const { error } = await this.supabase
+        .from('crm_ig_reel_daily_snapshots')
+        .update({
+          views,
+          likes,
+          comments,
+          shares,
+          views_delta: Math.max(viewsDelta, 0),
+          likes_delta: Math.max(likesDelta, 0),
+          comments_delta: Math.max(commentsDelta, 0),
+          shares_delta: Math.max(sharesDelta, 0),
+          last_synced_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+      if (error) throw error;
+    } else {
+      // Insert new row
+      const { error } = await this.supabase
+        .from('crm_ig_reel_daily_snapshots')
+        .insert({
+          ig_reel_id: igReelId,
+          supabase_reel_id: supabaseReelId,
+          account_id: accountId,
+          snapshot_date: snapshotDate,
+          views,
+          likes,
+          comments,
+          shares,
+          views_delta: Math.max(viewsDelta, 0),
+          likes_delta: Math.max(likesDelta, 0),
+          comments_delta: Math.max(commentsDelta, 0),
+          shares_delta: Math.max(sharesDelta, 0),
+          last_synced_at: new Date().toISOString(),
+        });
+      if (error) throw error;
+    }
   }
 
   async updateOwnAccountVpd(accountId: string, accountVpd: AccountVPD): Promise<void> {

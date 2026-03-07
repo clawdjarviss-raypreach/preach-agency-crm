@@ -120,6 +120,19 @@ async function processOwnAccount(
       await deps.storage.insertOwnSnapshot(upserted.id, reel);
       deps.stats.ownSnapshots += 1;
 
+      // Write daily snapshot (same format as Tom's table) for dashboard RPCs
+      const todayStr = now.toISOString().split('T')[0];
+      await deps.storage.upsertDailySnapshot(
+        upserted.id,
+        upserted.supabase_reel_id,
+        account.id,
+        todayStr,
+        reel.views,
+        reel.likes,
+        reel.comments,
+        reel.shares,
+      );
+
       const finalPostedAt = upserted.posted_at ?? postedAtIso;
       if (!finalPostedAt) continue;
 
