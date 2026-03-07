@@ -13,6 +13,7 @@ type SyncEndpoint =
   | 'messages'
   | 'forecast'
   | 'tracking_links'
+  | 'tracking_link_stats'
   | 'reconciliation'
   | 'webhook';
 
@@ -139,6 +140,10 @@ function buildEmptyDailyEarnings(accountId: string, date: string) {
 function toNumber(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function listDates(startDate: string, endDate: string): string[] {
@@ -306,6 +311,7 @@ async function syncTransactions(accountId: string) {
         account_id: accountId,
         of_transaction_id: String(r.id),
         amount: Number(r.amount ?? r.net ?? 0),
+        net_amount: Number(r.net ?? r.amount ?? 0),
         type: normalizeTransactionType(r.type ?? r.category ?? r.description),
         fan_id: r.fan_id ? String(r.fan_id) : (r.user?.id ? String(r.user.id) : null),
         fan_username: r.fan_username ?? r.user?.username ?? null,
@@ -638,6 +644,118 @@ async function syncTrackingLinks(accountId: string) {
   });
 }
 
+async function syncTrackingLinkStats(accountId: string) {
+  return withSyncState(accountId, 'tracking_link_stats', async () => {
+    const { data: links, error: linksError } = await supabaseAdmin
+      .from('crm_of_tracking_links')
+      .select('id,link_id')
+      .eq('account_id', accountId)
+      .order('link_id', { ascending: true });
+
+    if (linksError) throw linksError;
+    if (!links || links.length === 0) return { synced: 0, dailyRows: 0 };
+
+    const now = new Date();
+    const start = new Date(now);
+    start.setUTCDate(start.getUTCDate() - 30);
+    const dateStart = `${start.toISOString().slice(0, 10)}T00:00:00Z`;
+    const dateEnd = `${now.toISOString().slice(0, 10)}T23:59:59Z`;
+
+    let synced = 0;
+    let dailyRows = 0;
+
+    for (const link of links) {
+      const linkId = String(link?.link_id ?? '').trim();
+      if (!linkId) continue;
+
+      const statsPayload = await fetchOf(`/api/${accountId}/tracking-links/${linkId}/stats`, {
+        query: {
+          date_start: dateStart,
+          date_end: dateEnd,
+        },
+      });
+
+      const statsData = statsPayload?.data ?? {};
+      const summary = statsData?.summary ?? {};
+      const dailyMetrics = Array.isArray(statsData?.daily_metrics) ? statsData.daily_metrics : [];
+
+      const dailyUpserts = dailyMetrics
+        .map((metric: any) => {
+          const date = parseDate(metric?.timestamp ?? metric?.date);
+          if (!date) return null;
+
+          return {
+            tracking_link_id: link.id,
+            link_id: linkId,
+            account_id: accountId,
+            date,
+            clicks: Math.round(toNumber(metric?.clicks)),
+            subs: Math.round(toNumber(metric?.subs ?? metric?.subscribers)),
+            revenue: toNumber(metric?.revenue),
+            spenders: Math.round(toNumber(metric?.spenders)),
+          };
+        })
+        .filter(Boolean);
+
+      if (dailyUpserts.length > 0) {
+        const { error: dailyError } = await supabaseAdmin
+          .from('crm_of_tracking_link_daily_stats')
+          .upsert(dailyUpserts, { onConflict: 'link_id,date' });
+        if (dailyError) throw dailyError;
+        dailyRows += dailyUpserts.length;
+      }
+
+      const clicks = Math.round(toNumber(summary?.clicks_total));
+      const subscribers = Math.round(toNumber(summary?.subs_total ?? summary?.subscribers_total));
+      const revenue = toNumber(summary?.revenue_total);
+      const spenders = Math.round(toNumber(summary?.spenders_total));
+      const conversionRate = clicks > 0 ? subscribers / clicks : 0;
+
+      const { error: summaryError } = await supabaseAdmin
+        .from('crm_of_tracking_links')
+        .update({
+          clicks,
+          subscribers,
+          revenue,
+          spenders,
+          conversion_rate: conversionRate,
+          last_synced_at: new Date().toISOString(),
+        })
+        .eq('id', link.id);
+      if (summaryError) throw summaryError;
+
+      await sleep(200);
+
+      const cohortPayload = await fetchOf(`/api/${accountId}/tracking-links/${linkId}/cohort-arps`, {
+        query: {
+          revenue_basis: 'net',
+        },
+      });
+
+      const cohortData = cohortPayload?.data ?? {};
+      const { error: cohortError } = await supabaseAdmin
+        .from('crm_of_tracking_links')
+        .update({
+          arps_48h: toNumber(cohortData?.arps_48h),
+          arps_7d: toNumber(cohortData?.arps_7d),
+          arps_14d: toNumber(cohortData?.arps_14d),
+          arps_30d: toNumber(cohortData?.arps_30d),
+          arps_all_time: toNumber(cohortData?.arps_all_time),
+          cohort_subs_count: Math.round(toNumber(cohortData?.subscribers_count)),
+          cohort_data_from: new Date().toISOString(),
+          last_synced_at: new Date().toISOString(),
+        })
+        .eq('id', link.id);
+      if (cohortError) throw cohortError;
+
+      synced += 1;
+      await sleep(200);
+    }
+
+    return { synced, dailyRows, dateStart, dateEnd };
+  });
+}
+
 async function reconcileDaily(accountId: string) {
   const end = new Date();
   const start = new Date(end);
@@ -792,6 +910,7 @@ Deno.serve(async (req) => {
       if (job === 'chats') results.push({ accountId, ...(await syncChats(accountId)) });
       if (job === 'forecast') results.push({ accountId, ...(await syncForecast(accountId)) });
       if (job === 'tracking_links') results.push({ accountId, ...(await syncTrackingLinks(accountId)) });
+      if (job === 'tracking_link_stats') results.push({ accountId, ...(await syncTrackingLinkStats(accountId)) });
       if (job === 'reconciliation') results.push({ accountId, ...(await reconcileDaily(accountId)) });
     }
 

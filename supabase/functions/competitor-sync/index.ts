@@ -123,7 +123,7 @@ async function syncWatchlist(watchlist: any) {
 
   const rows = reels.map((media: any) => {
     const playCount = toNumber(media?.play_count);
-    const isOutlier = avgViews > 0 && playCount >= avgViews * 1.5;
+    const isOutlier = avgViews > 0 && playCount >= avgViews * 3.0;
 
     return {
       watchlist_id: watchlist.id,

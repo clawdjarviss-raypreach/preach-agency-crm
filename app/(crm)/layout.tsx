@@ -20,6 +20,7 @@ interface CrmUser {
 const NAV_ITEMS = [
   { href: "/manager-dashboard", label: "Traffic Dashboard", emoji: "📈", enabled: true, roles: ["marketing_manager", "admin"] },
   { href: "/traffic-analytics", label: "Traffic Analytics", emoji: "🔬", enabled: true, roles: ["marketing_manager", "admin"] },
+  { href: "/ig-stats", label: "IG Stats", emoji: "📸", enabled: true, roles: ["admin", "marketing_manager"] },
   { href: "/dashboard", label: "Dashboard", emoji: "📊", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
   { href: "/creators", label: "Creators", emoji: "👤", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
   { href: "/reports", label: "Reports", emoji: "📝", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
@@ -139,7 +140,9 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
       const isAllowedMarketingPath =
         pathname === "/manager-dashboard" ||
         pathname === "/traffic-analytics" ||
-        pathname?.startsWith("/traffic-analytics/");
+        pathname?.startsWith("/traffic-analytics/") ||
+        pathname === "/ig-stats" ||
+        pathname?.startsWith("/ig-stats/");
       if (!isAllowedMarketingPath) {
         router.replace("/manager-dashboard");
       }

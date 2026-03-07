@@ -321,10 +321,10 @@ export default function MembersPage() {
     return () => { cancelled = true; };
   }, [token]);
 
-  // Filter creators to only those with a platform account
+  // All creators (previously filtered by platform_account_id which was OM-specific)
   const creators = useMemo(() => {
     if (!allCreators) return undefined;
-    return allCreators.filter((c) => !!c.platform_account_id);
+    return allCreators;
   }, [allCreators]);
 
   const inviteUrl = useMemo(() => {
@@ -343,9 +343,7 @@ export default function MembersPage() {
       const creator = creators.find((c) => c.id === cid);
       if (!creator) continue;
       const links = allTrackingLinks.filter((l) => {
-        if (l.creator_id && l.creator_id === cid) return true;
-        // Backward-compatible fallback while older tracking links are backfilled with creator_id.
-        return !l.creator_id && !!creator.platform_account_id && l.account_id === creator.platform_account_id;
+        return l.creator_id && l.creator_id === cid;
       });
       if (links.length === 0) continue;
       groups.push({ creatorId: cid, creatorName: creator.name, links });

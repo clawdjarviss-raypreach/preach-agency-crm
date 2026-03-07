@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   XAxis,
   YAxis,
@@ -9,12 +9,6 @@ import {
   BarChart,
   Bar,
   CartesianGrid,
-  LineChart,
-  Line,
-  Legend,
-  PieChart,
-  Pie,
-  Cell,
 } from "recharts";
 import DateRangePicker, { DateRange } from "../../../components/DateRangePicker";
 import { supabase } from "@/lib/supabase";
@@ -24,24 +18,19 @@ const CREATOR_COLORS = [
   "#ec4899", "#14b8a6", "#f97316", "#06b6d4", "#a855f7",
 ];
 
+type TrackingSort = "clicks" | "subscribers";
+
+type DailyStatRow = {
+  tracking_link_id: string;
+  date: string;
+  clicks: number;
+  subs: number;
+  revenue: number;
+  spenders: number;
+};
+
 function toDateOnly(d: Date) {
   return d.toISOString().split("T")[0];
-}
-
-function addDays(date: string, days: number) {
-  const d = new Date(`${date}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return toDateOnly(d);
-}
-
-function enumerateDates(start: string, end: string): string[] {
-  const out: string[] = [];
-  const s = new Date(`${start}T12:00:00`);
-  const e = new Date(`${end}T12:00:00`);
-  for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
-    out.push(toDateOnly(d));
-  }
-  return out;
 }
 
 function getDaysAgoRange(days: number) {
@@ -50,37 +39,23 @@ function getDaysAgoRange(days: number) {
   return { start: toDateOnly(start), end: toDateOnly(now) };
 }
 
-function getYesterdayDateOnly() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return toDateOnly(d);
-}
-
-function getLast7DaysEndingYesterday() {
-  const end = new Date();
-  end.setDate(end.getDate() - 1);
-  const start = new Date(end);
-  start.setDate(start.getDate() - 6);
-  return { start: toDateOnly(start), end: toDateOnly(end) };
-}
-
-function clampRangeToMax(range: DateRange, maxDate: string): DateRange {
-  const end = range.end > maxDate ? maxDate : range.end;
-  const start = range.start > end ? end : range.start;
-  return { start, end };
-}
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
-  return n.toLocaleString();
-}
-
 function getGreeting(): string {
   const h = new Date().getHours();
   if (h < 12) return "Good Morning";
   if (h < 18) return "Good Afternoon";
   return "Good Evening";
+}
+
+function formatMoney(value: number | null | undefined) {
+  const safe = Number(value ?? 0);
+  return safe.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function getArpsColor(value: number | null | undefined) {
+  const v = Number(value ?? 0);
+  if (v > 15) return { color: "#22c55e", bg: "rgba(34,197,94,0.12)", border: "rgba(34,197,94,0.35)" };
+  if (v >= 8) return { color: "#f59e0b", bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.35)" };
+  return { color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.35)" };
 }
 
 function ChartTooltip({ active, payload, label }: any) {
@@ -113,100 +88,27 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
   );
 }
 
-function DonutWithLegend({
-  title,
-  data,
-}: {
-  title: string;
-  data: { name: string; value: number; color: string }[];
-}) {
-  const safeData = data.filter((d) => d.value > 0);
-  const total = safeData.reduce((sum, d) => sum + d.value, 0);
-
-  return (
-    <div style={{ flex: 1, minWidth: "300px" }}>
-      <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 600, marginBottom: "12px" }}>
-        {title}
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-        <div style={{ width: "160px", height: "160px", flexShrink: 0 }}>
-          {total > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={safeData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={45}
-                  outerRadius={72}
-                  strokeWidth={0}
-                >
-                  {safeData.map((entry, i) => (
-                    <Cell key={`${entry.name}-${i}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => formatNumber(Number(value ?? 0))} />
-              </PieChart>
-            </ResponsiveContainer>
-          ) : (
-            <div style={{ color: "#666", fontSize: "12px", textAlign: "center", paddingTop: "70px" }}>No data</div>
-          )}
-        </div>
-
-        <div style={{ flex: 1, maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px" }}>
-          {safeData.map((entry) => (
-            <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
-              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: entry.color, flexShrink: 0 }} />
-              <span style={{ color: "#ccc", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
-              <span style={{ color: "#f1ae38", fontWeight: 600, flexShrink: 0 }}>{formatNumber(entry.value)}</span>
-              <span style={{ color: "#666", flexShrink: 0, fontSize: "11px" }}>
-                {total > 0 ? Math.round((entry.value / total) * 100) : 0}%
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function ManagerDashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(29));
-  const [igDateRange, setIgDateRange] = useState<DateRange>(() => getLast7DaysEndingYesterday());
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [totals, setTotals] = useState({ newSubsInRange: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
   const [trackingLinks, setTrackingLinks] = useState<any[]>([]);
+  const [trackingDailyStats, setTrackingDailyStats] = useState<Record<string, DailyStatRow[]>>({});
   const [activeOfTab, setActiveOfTab] = useState<"tracking_links">("tracking_links");
-  const [igRows, setIgRows] = useState<any[]>([]);
-  const [igDailyGains, setIgDailyGains] = useState<any[]>([]);
-  const [igReelCurves, setIgReelCurves] = useState<any[]>([]);
-  const [igCreatorOptions, setIgCreatorOptions] = useState<{ id: string; name: string }[]>([]);
-  const [selectedIgCreator, setSelectedIgCreator] = useState<string>("all");
-  const [showAllIgAccounts, setShowAllIgAccounts] = useState(false);
   const [showAllTrackingLinks, setShowAllTrackingLinks] = useState(false);
-  const [selectedIgAccount, setSelectedIgAccount] = useState<any | null>(null);
-  const [selectedIgAccountReels, setSelectedIgAccountReels] = useState<any[] | null>(null);
-  const [selectedIgAccountCurve30d, setSelectedIgAccountCurve30d] = useState<any[] | null>(null);
-  const [isCompactReelGrid, setIsCompactReelGrid] = useState(false);
-  const hoveredReelRef = useRef<string | null>(null);
-  const [hoveredReelId, setHoveredReelId] = useState<string | null>(null);
+  const [trackingSort, setTrackingSort] = useState<TrackingSort>("subscribers");
+  const [expandedTrackingLinks, setExpandedTrackingLinks] = useState<Record<string, boolean>>({});
+  const [syncingStats, setSyncingStats] = useState(false);
+  const [syncStatsStatus, setSyncStatsStatus] = useState<string>("");
 
   useEffect(() => {
     const u = localStorage.getItem("crm_user");
     if (u) setUser(JSON.parse(u));
-  }, []);
-
-  useEffect(() => {
-    const updateGrid = () => setIsCompactReelGrid(window.innerWidth < 768);
-    updateGrid();
-    window.addEventListener("resize", updateGrid);
-    return () => window.removeEventListener("resize", updateGrid);
   }, []);
 
   const trendPeriod = useMemo((): "7d" | "30d" | "90d" => {
@@ -225,31 +127,17 @@ export default function ManagerDashboardPage() {
       setLoading(true);
 
       const [{ data: creators }, { data: ofAccounts }] = await Promise.all([
-        supabase.from("crm_creators").select("id,name,instagram_username,instagram_usernames").eq("status", "active"),
+        supabase.from("crm_creators").select("id,name").eq("status", "active"),
         supabase.from("crm_of_accounts").select("account_id,creator_id"),
       ]);
 
       const creatorNameById = new Map<string, string>((creators ?? []).map((c: any) => [c.id, c.name]));
-      const creatorByInstagram = new Map<string, { id: string; name: string }>();
-      for (const creator of creators ?? []) {
-        const names = [
-          (creator as any).instagram_username,
-          ...(((creator as any).instagram_usernames ?? []) as string[]),
-        ]
-          .filter(Boolean)
-          .map((name: string) => name.replace(/^@/, "").toLowerCase());
-
-        for (const name of names) {
-          creatorByInstagram.set(name, { id: (creator as any).id, name: (creator as any).name });
-        }
-      }
       const accountToCreator = new Map<string, string>();
       for (const row of ofAccounts ?? []) {
         const name = creatorNameById.get((row as any).creator_id) || "Unknown";
         accountToCreator.set((row as any).account_id, name);
       }
 
-      // Paginate to fetch ALL new_sub transactions (Supabase defaults to 1000 rows)
       const subsTx: any[] = [];
       {
         let from = 0;
@@ -270,12 +158,16 @@ export default function ManagerDashboardPage() {
       }
 
       const accMap = new Map<string, { accountId: string; creatorName: string; newSubsInRange: number }>();
+      for (const row of ofAccounts ?? []) {
+        const accountId = (row as any).account_id;
+        const creatorName = accountToCreator.get(accountId) || accountId;
+        accMap.set(accountId, { accountId, creatorName, newSubsInRange: 0 });
+      }
       for (const tx of subsTx ?? []) {
         const accountId = (tx as any).account_id;
         const creatorName = accountToCreator.get(accountId) || accountId;
-        const key = accountId;
-        if (!accMap.has(key)) accMap.set(key, { accountId, creatorName, newSubsInRange: 0 });
-        accMap.get(key)!.newSubsInRange += 1;
+        if (!accMap.has(accountId)) accMap.set(accountId, { accountId, creatorName, newSubsInRange: 0 });
+        accMap.get(accountId)!.newSubsInRange += 1;
       }
       const accountsRows = Array.from(accMap.values()).sort((a, b) => b.newSubsInRange - a.newSubsInRange);
 
@@ -284,7 +176,6 @@ export default function ManagerDashboardPage() {
       startTrend.setDate(startTrend.getDate() - (days - 1));
       const trendStart = toDateOnly(startTrend);
 
-      // Paginate trend data too — only new_sub
       const trendTx: any[] = [];
       {
         let from = 0;
@@ -322,10 +213,9 @@ export default function ManagerDashboardPage() {
 
       const { data: links } = await supabase
         .from("crm_of_tracking_links")
-        .select("id,name,url,clicks,subscribers,conversion_rate,last_synced_at,creator_id")
-        .order("clicks", { ascending: false });
+        .select("id,link_id,name,url,clicks,subscribers,conversion_rate,revenue,spenders,arps_7d,arps_30d,arps_all_time,last_synced_at,creator_id")
+        .order("subscribers", { ascending: false, nullsFirst: false });
 
-      // For non-admin users, filter tracking links to only those assigned to them
       const u = localStorage.getItem("crm_user");
       const currentUserRole = u ? JSON.parse(u)?.role : null;
       const currentUserId = u ? JSON.parse(u)?.id : null;
@@ -344,172 +234,33 @@ export default function ManagerDashboardPage() {
         creatorName: creatorNameById.get(l.creator_id) || "Unknown",
       }));
 
-      const igEndPlusOne = addDays(igDateRange.end, 1);
-      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }, { data: reelStats }] = await Promise.all([
-        supabase.from("crm_ig_accounts").select("id,creator_id,username,followers").order("followers", { ascending: false }),
-        supabase
-          .from("crm_ig_daily_snapshots")
-          .select("ig_account_id,date,followers,views,likes,comments")
-          .gte("date", igDateRange.start)
-          .lte("date", igEndPlusOne),
-        supabase.rpc("ig_active_reels", { p_start_date: igDateRange.start, p_end_date: igEndPlusOne }).limit(5000),
-        supabase.rpc("ig_account_reel_stats", { p_start_date: igDateRange.start, p_end_date: igEndPlusOne }),
-      ]);
+      const linkIds = linksRows.map((l: any) => l.id).filter(Boolean);
+      const statsByLink: Record<string, DailyStatRow[]> = {};
+      if (linkIds.length > 0) {
+        const statsStart = new Date();
+        statsStart.setDate(statsStart.getDate() - 13);
+        const statsStartDate = toDateOnly(statsStart);
 
-      // Build reel stats lookup: ig_account_id → { views, likes, comments } (total gains for the range)
-      const reelStatsByAccount = new Map<string, { views: number; likes: number; comments: number }>();
-      for (const rs of reelStats ?? []) {
-        reelStatsByAccount.set(rs.ig_account_id, {
-          views: Number(rs.total_views || 0),
-          likes: Number(rs.total_likes || 0),
-          comments: Number(rs.total_comments || 0),
-        });
-      }
+        const { data: dailyStats } = await supabase
+          .from("crm_of_tracking_link_daily_stats")
+          .select("tracking_link_id,date,clicks,subs,revenue,spenders")
+          .in("tracking_link_id", linkIds)
+          .gte("date", statsStartDate)
+          .order("date", { ascending: false });
 
-      const snapByAccount = new Map<string, any[]>();
-      for (const s of igSnapshots ?? []) {
-        const id = (s as any).ig_account_id;
-        if (!snapByAccount.has(id)) snapByAccount.set(id, []);
-        snapByAccount.get(id)!.push(s);
-      }
-
-      const reelCountByAccount = new Map<string, number>();
-      for (const r of igReels ?? []) {
-        const id = (r as any).ig_account_id;
-        reelCountByAccount.set(id, (reelCountByAccount.get(id) || 0) + 1);
-      }
-
-      const igRowsData = (igAccounts ?? []).map((a: any) => {
-        const rows = (snapByAccount.get(a.id) ?? []).sort((x, y) => String(x.date).localeCompare(String(y.date)));
-        const byDate = new Map(rows.map((r) => [String((r as any).date), r]));
-
-        const startSnap = byDate.get(igDateRange.start);
-        const endSnap = byDate.get(igEndPlusOne) ?? (rows.length ? rows[rows.length - 1] : null);
-
-        const startFollowers = Number(startSnap?.followers || 0);
-        const endFollowers = Number(endSnap?.followers || 0);
-
-        const followersDelta = endFollowers - startFollowers;
-        const followerGrowthPct = startFollowers > 0 ? ((followersDelta / startFollowers) * 100) : null;
-
-        // Views/likes/comments: total gains for the date range from RPC
-        const accountRS = reelStatsByAccount.get(a.id);
-        const viewsDelta = accountRS?.views || 0;
-        const likesDelta = accountRS?.likes || 0;
-        const commentsDelta = accountRS?.comments || 0;
-
-        const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
-        const mappedCreator = creatorByInstagram.get(usernameKey);
-        const creatorId = a.creator_id ?? mappedCreator?.id ?? null;
-        const creatorName = creatorNameById.get(creatorId) || mappedCreator?.name || "Unknown";
-
-        return {
-          accountId: a.id,
-          creatorId,
-          creatorName,
-          username: a.username,
-          followers: endFollowers,
-          followersDelta,
-          followerGrowthPct,
-          views: viewsDelta,
-          likes: likesDelta,
-          comments: commentsDelta,
-          reelCount: reelCountByAccount.get(a.id) || 0,
-        };
-      }).sort((a: any, b: any) => b.views - a.views);
-
-      const accountDailyGainRows = enumerateDates(igDateRange.start, igDateRange.end).map((day) => {
-        const next = addDays(day, 1);
-        let followers = 0;
-
-        // Daily follower gains from account snapshots
-        for (const account of igAccounts ?? []) {
-          const rows = (snapByAccount.get((account as any).id) ?? []);
-          const byDate = new Map(rows.map((r: any) => [String(r.date), r]));
-          const daySnap = byDate.get(day);
-          const nextSnap = byDate.get(next);
-          if (daySnap && nextSnap) {
-            followers += Number(nextSnap.followers || 0) - Number(daySnap.followers || 0);
-          }
-        }
-
-        return {
-          date: new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-          Followers: followers,
-        };
-      });
-
-      const accountUsernameById = new Map<string, string>((igAccounts ?? []).map((a: any) => [a.id, a.username || "unknown"]));
-      const curveUpperBound = addDays(getYesterdayDateOnly(), 1);
-      const reelsForCurve = (igReels ?? []).slice(0, 60);
-
-      let reelCurveRows: any[] = [];
-      if (reelsForCurve.length > 0) {
-        const reelIds = reelsForCurve.map((r: any) => r.id);
-        const earliestPosted = reelsForCurve
-          .map((r: any) => String((r.posted_at || "").split("T")[0]))
-          .filter(Boolean)
-          .sort()[0];
-
-        const latestCurveEnd = reelsForCurve
-          .map((r: any) => {
-            const posted = String((r.posted_at || "").split("T")[0]);
-            return posted ? addDays(posted, 30) : igDateRange.end;
-          })
-          .sort()
-          .slice(-1)[0];
-
-        const curveQueryEnd = latestCurveEnd > curveUpperBound ? curveUpperBound : latestCurveEnd;
-
-        const { data: reelSnapshots } = await supabase
-          .from("crm_ig_reel_daily_snapshots")
-          .select("ig_reel_id,snapshot_date,views,likes,comments")
-          .in("ig_reel_id", reelIds)
-          .gte("snapshot_date", earliestPosted)
-          .lte("snapshot_date", curveQueryEnd);
-
-        const snapshotsByReel = new Map<string, any[]>();
-        for (const row of reelSnapshots ?? []) {
-          const reelId = (row as any).ig_reel_id;
-          if (!snapshotsByReel.has(reelId)) snapshotsByReel.set(reelId, []);
-          snapshotsByReel.get(reelId)!.push(row);
-        }
-
-        reelCurveRows = reelsForCurve.map((reel: any) => {
-          const postedDay = String((reel.posted_at || "").split("T")[0]);
-          const snapshots = (snapshotsByReel.get(reel.id) ?? []).sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
-          const byDate = new Map(snapshots.map((s) => [String((s as any).snapshot_date), s]));
-
-          const points = Array.from({ length: 30 }, (_, idx) => {
-            const startDay = addDays(postedDay, idx);
-            const endDay = addDays(postedDay, idx + 1);
-            if (endDay > curveUpperBound) {
-              return {
-                day: `D${idx + 1}`,
-                Views: null,
-                Likes: null,
-                Comments: null,
-              };
-            }
-            const startSnap = byDate.get(startDay);
-            const endSnap = byDate.get(endDay);
-            return {
-              day: `D${idx + 1}`,
-              Views: Number(endSnap?.views || 0) - Number(startSnap?.views || 0),
-              Likes: Number(endSnap?.likes || 0) - Number(startSnap?.likes || 0),
-              Comments: Number(endSnap?.comments || 0) - Number(startSnap?.comments || 0),
-            };
+        for (const row of dailyStats ?? []) {
+          const key = (row as any).tracking_link_id;
+          if (!key) continue;
+          if (!statsByLink[key]) statsByLink[key] = [];
+          statsByLink[key].push({
+            tracking_link_id: key,
+            date: (row as any).date,
+            clicks: Number((row as any).clicks || 0),
+            subs: Number((row as any).subs || 0),
+            revenue: Number((row as any).revenue || 0),
+            spenders: Number((row as any).spenders || 0),
           });
-
-          return {
-            reelId: reel.id,
-            accountUsername: accountUsernameById.get(reel.ig_account_id) || "unknown",
-            postedAt: reel.posted_at,
-            thumbnailUrl: reel.thumbnail_url,
-            totalViews30d: points.reduce((sum, p) => sum + Number(p.Views || 0), 0),
-            points,
-          };
-        }).sort((a: any, b: any) => b.totalViews30d - a.totalViews30d).slice(0, 8);
+        }
       }
 
       if (!cancelled) {
@@ -517,221 +268,55 @@ export default function ManagerDashboardPage() {
         setTotals({ newSubsInRange: accountsRows.reduce((s, a) => s + a.newSubsInRange, 0) });
         setChartData(trendRows);
         setTrackingLinks(linksRows);
-        setIgRows(igRowsData);
-        const creatorOptions = Array.from(
-          new Map(
-            igRowsData
-              .filter((row: any) => row.creatorId)
-              .map((row: any) => [String(row.creatorId), row.creatorName]),
-          ).entries(),
-        )
-          .map(([id, name]) => ({ id, name }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        setIgCreatorOptions(creatorOptions);
-        setIgDailyGains(accountDailyGainRows);
-        setIgReelCurves(reelCurveRows);
+        setTrackingDailyStats(statsByLink);
         setLoading(false);
       }
     }
 
     loadData();
-    return () => { cancelled = true; };
-  }, [dateRange.start, dateRange.end, igDateRange.start, igDateRange.end, trendPeriod]);
-
-  useEffect(() => {
-    setShowAllIgAccounts(false);
-  }, [selectedIgCreator]);
-
-  useEffect(() => {
-    if (selectedIgCreator === "all") return;
-    if (!igCreatorOptions.some((creator) => creator.id === selectedIgCreator)) {
-      setSelectedIgCreator("all");
-    }
-  }, [igCreatorOptions, selectedIgCreator]);
-
-  useEffect(() => {
-    if (!selectedIgAccount) {
-      setSelectedIgAccountReels(null);
-      setSelectedIgAccountCurve30d(null);
-      hoveredReelRef.current = null;
-      setHoveredReelId(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadAccountReels() {
-      setSelectedIgAccountReels(null);
-      setSelectedIgAccountCurve30d(null);
-
-      // Get reels with activity in the selected date range
-      const endPlusOne = addDays(igDateRange.end, 1);
-      const { data: activeReelData } = await supabase.rpc("ig_active_reels", {
-        p_start_date: igDateRange.start,
-        p_end_date: endPlusOne,
-      }).limit(5000);
-
-      // Filter to this account and sort by views gained
-      const reels = (activeReelData ?? [])
-        .filter((r: any) => r.ig_account_id === selectedIgAccount.accountId)
-        .map((r: any) => ({
-          ...r,
-          views_gained: Math.max(0, (r.end_views || 0) - (r.start_views || 0)),
-          likes_gained: Math.max(0, (r.end_likes || 0) - (r.start_likes || 0)),
-          comments_gained: Math.max(0, (r.end_comments || 0) - (r.start_comments || 0)),
-        }))
-        .sort((a: any, b: any) => b.views_gained - a.views_gained)
-        .slice(0, 50);
-
-      const reelIds = (reels ?? []).map((reel: any) => reel.id);
-      if (reelIds.length === 0) {
-        if (!cancelled) {
-          setSelectedIgAccountReels([]);
-          setSelectedIgAccountCurve30d([]);
-        }
-        return;
-      }
-
-      const curveEnd = getYesterdayDateOnly();
-      const curveStart = addDays(curveEnd, -29);
-      const snapshotsStart = igDateRange.start < curveStart ? igDateRange.start : curveStart;
-      const snapshotsEndCandidate = addDays(igDateRange.end, 1);
-      const snapshotsEnd = snapshotsEndCandidate > addDays(curveEnd, 1) ? snapshotsEndCandidate : addDays(curveEnd, 1);
-
-      const { data: reelSnapshots } = await supabase
-        .from("crm_ig_reel_daily_snapshots")
-        .select("ig_reel_id,snapshot_date,views,likes,comments,shares")
-        .in("ig_reel_id", reelIds)
-        .gte("snapshot_date", snapshotsStart)
-        .lte("snapshot_date", snapshotsEnd);
-
-      const snapshotsByReel = new Map<string, any[]>();
-      for (const snapshot of reelSnapshots ?? []) {
-        const reelId = (snapshot as any).ig_reel_id;
-        if (!snapshotsByReel.has(reelId)) snapshotsByReel.set(reelId, []);
-        snapshotsByReel.get(reelId)!.push(snapshot);
-      }
-
-      const rows = (reels ?? [])
-        .map((reel: any) => {
-          const snapshots = (snapshotsByReel.get(reel.id) ?? []).sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
-          const start = snapshots.find((snapshot: any) => String(snapshot.snapshot_date) === igDateRange.start) ?? snapshots[0];
-          const end = snapshots.find((snapshot: any) => String(snapshot.snapshot_date) === addDays(igDateRange.end, 1)) ?? snapshots[snapshots.length - 1];
-
-          const views = Number(end?.views || 0) - Number(start?.views || 0);
-          const likes = Number(end?.likes || 0) - Number(start?.likes || 0);
-          const comments = Number(end?.comments || 0) - Number(start?.comments || 0);
-          const shares = Number(end?.shares || 0) - Number(start?.shares || 0);
-
-          return {
-            reelId: reel.id,
-            postedAt: reel.posted_at,
-            thumbnailUrl: reel.thumbnail_url,
-            videoUrl: reel.video_url,
-            caption: reel.caption,
-            views,
-            likes,
-            comments,
-            shares,
-          };
-        })
-        .sort((a: any, b: any) => b.views - a.views);
-
-      const curveRows = enumerateDates(curveStart, curveEnd).map((day) => {
-        const next = addDays(day, 1);
-        let totalViews = 0;
-        let totalLikes = 0;
-        let totalComments = 0;
-
-        for (const reelId of reelIds) {
-          const snapshots = (snapshotsByReel.get(reelId) ?? []).sort((a, b) => String(a.snapshot_date).localeCompare(String(b.snapshot_date)));
-          const byDate = new Map(snapshots.map((snapshot: any) => [String(snapshot.snapshot_date), snapshot]));
-          const daySnap = byDate.get(day);
-          const nextSnap = byDate.get(next);
-          if (!daySnap || !nextSnap) continue;
-
-          totalViews += Number(nextSnap.views || 0) - Number(daySnap.views || 0);
-          totalLikes += Number(nextSnap.likes || 0) - Number(daySnap.likes || 0);
-          totalComments += Number(nextSnap.comments || 0) - Number(daySnap.comments || 0);
-        }
-
-        return {
-          date: new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-          Views: totalViews,
-          Likes: totalLikes,
-          Comments: totalComments,
-        };
-      });
-
-      if (!cancelled) {
-        setSelectedIgAccountReels(rows);
-        setSelectedIgAccountCurve30d(curveRows);
-      }
-    }
-
-    loadAccountReels();
     return () => {
       cancelled = true;
     };
-  }, [selectedIgAccount, igDateRange.start, igDateRange.end]);
+  }, [dateRange.start, dateRange.end, trendPeriod, reloadKey]);
 
-  const maxIgEnd = getYesterdayDateOnly();
+  const sortedTrackingLinks = useMemo(() => {
+    const rows = [...trackingLinks];
+    const getValue = (row: any) => {
+      if (trackingSort === "clicks") return Number(row.clicks || 0);
+      return Number(row.subscribers || 0);
+    };
+    rows.sort((a, b) => getValue(b) - getValue(a));
+    return rows;
+  }, [trackingLinks, trackingSort]);
+
+  const visibleTrackingLinks = useMemo(
+    () => sortedTrackingLinks.slice(0, showAllTrackingLinks ? sortedTrackingLinks.length : 10),
+    [sortedTrackingLinks, showAllTrackingLinks],
+  );
+
   const rangeLabelText = `${new Date(dateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(dateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-  const igRangeLabelText = `${new Date(igDateRange.start + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })} — ${new Date(igDateRange.end + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 
-  const filteredIgRows = useMemo(() => {
-    if (selectedIgCreator === "all") return igRows;
-    return igRows.filter((row: any) => String(row.creatorId ?? "") === selectedIgCreator);
-  }, [igRows, selectedIgCreator]);
-
-  const displayedIgRows = useMemo(() => {
-    return showAllIgAccounts ? filteredIgRows : filteredIgRows.slice(0, 10);
-  }, [filteredIgRows, showAllIgAccounts]);
-
-  // Filter reel curves by selected creator
-  const filteredReelCurves = useMemo(() => {
-    if (selectedIgCreator === "all") return igReelCurves;
-    // Get account IDs that belong to the selected creator
-    const creatorAccountIds = new Set(
-      igRows.filter((row: any) => String(row.creatorId ?? "") === selectedIgCreator).map((row: any) => row.accountId)
-    );
-    return igReelCurves.filter((reel: any) => {
-      // Match by account username → find the account row
-      const matchingAccount = igRows.find((row: any) => row.username === reel.accountUsername);
-      return matchingAccount && creatorAccountIds.has(matchingAccount.accountId);
-    });
-  }, [igReelCurves, selectedIgCreator, igRows]);
-
-  const igDonutData = useMemo(() => {
-    const rows = filteredIgRows;
-    if (selectedIgCreator !== "all") {
-      // Single creator selected → show per-account breakdown
-      const viewsData = rows.slice(0, 30).map((row: any, i: number) => ({
-        name: `@${row.username}`,
-        value: Math.max(0, Number(row.views || 0)),
-        color: CREATOR_COLORS[i % CREATOR_COLORS.length],
-      }));
-      const followersData = rows.slice(0, 30).map((row: any, i: number) => ({
-        name: `@${row.username}`,
-        value: Math.max(0, Number(row.followersDelta || 0)),
-        color: CREATOR_COLORS[i % CREATOR_COLORS.length],
-      }));
-      return { viewsData, followersData };
+  async function runSyncStats() {
+    if (user?.role !== "admin") return;
+    setSyncingStats(true);
+    setSyncStatsStatus("");
+    try {
+      const { error } = await supabase.functions.invoke("of-sync", {
+        body: { job: "tracking_link_stats" },
+      });
+      if (error) throw error;
+      setSyncStatsStatus("Tracking link stats sync triggered.");
+      setReloadKey((v) => v + 1);
+    } catch (e: any) {
+      setSyncStatsStatus(e?.message || "Failed to trigger tracking stats sync.");
+    } finally {
+      setSyncingStats(false);
     }
-    // All creators → aggregate by creator
-    const byCreator = new Map<string, { views: number; followers: number }>();
-    for (const row of rows) {
-      const key = row.creatorName || "Unknown";
-      if (!byCreator.has(key)) byCreator.set(key, { views: 0, followers: 0 });
-      const c = byCreator.get(key)!;
-      c.views += Math.max(0, Number(row.views || 0));
-      c.followers += Math.max(0, Number(row.followersDelta || 0));
-    }
-    const entries = Array.from(byCreator.entries()).sort((a, b) => b[1].views - a[1].views);
-    const viewsData = entries.map(([name, d], i) => ({ name, value: d.views, color: CREATOR_COLORS[i % CREATOR_COLORS.length] }));
-    const followersData = entries.map(([name, d], i) => ({ name, value: d.followers, color: CREATOR_COLORS[i % CREATOR_COLORS.length] }));
-    return { viewsData, followersData };
-  }, [filteredIgRows, selectedIgCreator]);
+  }
+
+  function toggleExpanded(id: string) {
+    setExpandedTrackingLinks((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
 
   if (!user) return null;
   if (user.role !== "marketing_manager" && user.role !== "admin") {
@@ -783,10 +368,7 @@ export default function ManagerDashboardPage() {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "400px" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {[
-                "Creator",
-                "New Subs",
-              ].map((h) => (
+              {["Creator", "New Subs"].map((h) => (
                 <th key={h} style={{ padding: "12px 10px", fontSize: "12px", color: "#a0a0a0", fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
@@ -845,389 +427,148 @@ export default function ManagerDashboardPage() {
       </Card>
 
       <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-          <button
-            onClick={() => setActiveOfTab("tracking_links")}
-            style={{
-              border: "1px solid #253545",
-              borderRadius: "8px",
-              padding: "6px 12px",
-              fontSize: "12px",
-              cursor: "pointer",
-              background: activeOfTab === "tracking_links" ? "#253545" : "transparent",
-              color: activeOfTab === "tracking_links" ? "#fff" : "#a0a0a0",
-              fontWeight: 600,
-            }}
-          >
-            🔗 Tracking Links
-          </button>
-        </div>
-        {activeOfTab === "tracking_links" && (
-        <>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "760px" }}>
-          <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {[
-                "Name",
-                "Creator",
-                "Clicks",
-                "Subscribers",
-                "Conv %",
-                "Last Synced",
-              ].map((h) => (
-                <th key={h} style={{ padding: "10px", fontSize: "12px", color: "#a0a0a0" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {trackingLinks.slice(0, showAllTrackingLinks ? trackingLinks.length : 10).map((l: any) => (
-              <tr key={l.id} style={{ borderBottom: "1px solid #242424" }}>
-                <td style={{ padding: "10px", color: "#fff" }}>{l.name}</td>
-                <td style={{ padding: "10px", color: "#a0a0a0" }}>{l.creatorName}</td>
-                <td style={{ padding: "10px", color: "#fff" }}>{Number(l.clicks || 0).toLocaleString()}</td>
-                <td style={{ padding: "10px", color: "#fff" }}>{Number(l.subscribers || 0).toLocaleString()}</td>
-                <td style={{ padding: "10px", color: "#22c55e" }}>{(Number(l.conversion_rate || 0) * 100).toFixed(1)}%</td>
-                <td style={{ padding: "10px", color: "#a0a0a0" }}>{l.last_synced_at ? new Date(l.last_synced_at).toLocaleString() : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!showAllTrackingLinks && trackingLinks.length > 10 && (
-          <button
-            onClick={() => setShowAllTrackingLinks(true)}
-            style={{ display: "block", margin: "12px auto 0", padding: "8px 20px", borderRadius: 8, border: "1px solid var(--border, #333)", background: "transparent", color: "#a0a0a0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
-          >
-            Show More ({trackingLinks.length - 10} more)
-          </button>
-        )}
-        </>
-        )}
-      </Card>
-
-      <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
-        <div style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "12px",
-          marginBottom: "12px",
-          flexWrap: "wrap",
-        }}>
-          <div style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, textTransform: "uppercase" }}>
-            📸 Instagram Analytics ({igRangeLabelText})
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px", alignItems: "flex-end" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <select
-                value={selectedIgCreator}
-                onChange={(e) => setSelectedIgCreator(e.target.value)}
-                style={{
-                  background: "#1C2A3A",
-                  color: "#fff",
-                  border: "1px solid #253545",
-                  borderRadius: "8px",
-                  padding: "7px 10px",
-                  fontSize: "12px",
-                  minWidth: "160px",
-                }}
-              >
-                <option value="all">All creators</option>
-                {igCreatorOptions.map((creator) => (
-                  <option key={creator.id} value={creator.id}>{creator.name}</option>
-                ))}
-              </select>
-              <DateRangePicker
-                value={igDateRange}
-                onChange={(next) => setIgDateRange(clampRangeToMax(next, maxIgEnd))}
-              />
-            </div>
-            <span style={{ fontSize: "11px", color: "#666" }}>IG max end date: yesterday ({maxIgEnd})</span>
-          </div>
-        </div>
-
-        {(igDonutData.viewsData.length > 0 || igDonutData.followersData.length > 0) && (
-          <div style={{
-            background: "#1C2A3A",
-            borderRadius: "14px",
-            padding: "24px",
-            border: "1px solid #253545",
-            marginBottom: "16px",
-          }}>
-            <div style={{ display: "flex", gap: "32px", flexWrap: "wrap" }}>
-              <DonutWithLegend title="Views Comparison" data={igDonutData.viewsData} />
-              <DonutWithLegend title="New Followers Comparison" data={igDonutData.followersData} />
-            </div>
-          </div>
-        )}
-
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "980px" }}>
-          <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
-              {["Creator", "Account", "Views", "Likes", "Comments", "New Followers", "Growth %", "Reels"].map((h) => (
-                <th key={h} style={{ padding: "10px", fontSize: "12px", color: "#a0a0a0" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {displayedIgRows.map((r: any) => (
-              <tr
-                key={r.accountId}
-                style={{ borderBottom: "1px solid #242424", cursor: "pointer" }}
-                onClick={() => setSelectedIgAccount(r)}
-              >
-                <td style={{ padding: "10px", color: "#fff" }}>{r.creatorName}</td>
-                <td style={{ padding: "10px", color: "#a0a0a0" }}>@{r.username}</td>
-                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.views || 0)}</td>
-                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.likes || 0)}</td>
-                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.comments || 0)}</td>
-                <td style={{ padding: "10px", color: r.followersDelta >= 0 ? "#22c55e" : "#ef4444" }}>{r.followersDelta >= 0 ? "+" : ""}{formatNumber(r.followersDelta || 0)}</td>
-                <td style={{ padding: "10px", color: "#fff" }}>{r.followerGrowthPct === null ? "—" : `${r.followerGrowthPct >= 0 ? "+" : ""}${r.followerGrowthPct.toFixed(1)}%`}</td>
-                <td style={{ padding: "10px", color: "#fff" }}>{formatNumber(r.reelCount || 0)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!showAllIgAccounts && filteredIgRows.length > 10 && (
-          <div style={{ textAlign: "center", marginTop: "14px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "12px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <button
-              onClick={() => setShowAllIgAccounts(true)}
+              onClick={() => setActiveOfTab("tracking_links")}
               style={{
-                background: "transparent",
-                color: "#f1ae38",
-                border: "1px solid #f1ae38",
+                border: "1px solid #253545",
                 borderRadius: "8px",
-                padding: "8px 14px",
+                padding: "6px 12px",
                 fontSize: "12px",
                 cursor: "pointer",
+                background: activeOfTab === "tracking_links" ? "#253545" : "transparent",
+                color: activeOfTab === "tracking_links" ? "#fff" : "#a0a0a0",
                 fontWeight: 600,
               }}
             >
-              Show more ({filteredIgRows.length - 10} remaining)
+              🔗 Tracking Links
             </button>
+            <select
+              value={trackingSort}
+              onChange={(e) => {
+                setTrackingSort(e.target.value as TrackingSort);
+                setShowAllTrackingLinks(false);
+              }}
+              style={{
+                background: "#141414",
+                color: "#fff",
+                border: "1px solid #2f2f2f",
+                borderRadius: 8,
+                padding: "7px 10px",
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              <option value="subscribers">Sort: Subs</option>
+              <option value="clicks">Sort: Clicks</option>
+            </select>
           </div>
-        )}
-      </Card>
-
-      <Card style={{ marginBottom: "24px" }}>
-        <div style={{
-          fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
-          textTransform: "uppercase", letterSpacing: "0.5px",
-        }}>
-          📈 IG Account Daily Gains (sum of account deltas: snapshot[day+1]-snapshot[day])
-        </div>
-        {igDailyGains.length > 0 ? (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={igDailyGains}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-              <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: "#666", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltip />} />
-              <Legend wrapperStyle={{ fontSize: "12px", color: "#a0a0a0" }} />
-              <Line type="monotone" dataKey="Followers" stroke="#3b82f6" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        ) : (
-          <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "60px 0" }}>
-            No IG daily gain data for this range
-          </div>
-        )}
-      </Card>
-
-      <Card>
-        <div style={{
-          fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
-          textTransform: "uppercase", letterSpacing: "0.5px",
-        }}>
-          🎬 Reel 30-Day Performance Curves (daily deltas from cumulative snapshots)
         </div>
 
-        {filteredReelCurves.length === 0 ? (
-          <div style={{ color: "#666", fontSize: "13px", textAlign: "center", padding: "40px 0" }}>
-            No reels in selected IG range
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "16px" }}>
-            {filteredReelCurves.map((reel: any) => (
-              <div key={reel.reelId} style={{ border: "1px solid #2a2a2a", borderRadius: "12px", padding: "12px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", marginBottom: "8px" }}>
-                  <div>
-                    <div style={{ color: "#fff", fontWeight: 600, fontSize: "13px" }}>@{reel.accountUsername}</div>
-                    <div style={{ color: "#888", fontSize: "11px" }}>
-                      Posted {reel.postedAt ? new Date(reel.postedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
-                    </div>
-                  </div>
-                  <div style={{ color: "#3b82f6", fontSize: "12px", fontWeight: 600 }}>
-                    30d Views: +{formatNumber(reel.totalViews30d || 0)}
-                  </div>
-                </div>
-                <ResponsiveContainer width="100%" height={170}>
-                  <LineChart data={reel.points}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-                    <XAxis dataKey="day" tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} interval={4} />
-                    <YAxis tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Line type="monotone" dataKey="Views" stroke="#3b82f6" strokeWidth={2} dot={false} connectNulls />
-                    <Line type="monotone" dataKey="Likes" stroke="#22c55e" strokeWidth={1.75} dot={false} connectNulls />
-                    <Line type="monotone" dataKey="Comments" stroke="#f59e0b" strokeWidth={1.75} dot={false} connectNulls />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ))}
+        {false && syncStatsStatus && (
+          <div style={{ marginBottom: 10, fontSize: 12, color: syncStatsStatus.toLowerCase().includes("failed") ? "#ef4444" : "#22c55e" }}>
+            {syncStatsStatus}
           </div>
         )}
-      </Card>
 
-      {selectedIgAccount && (
-        <div
-          onClick={() => setSelectedIgAccount(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.75)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
-            padding: "20px",
-          }}
-        >
-          <div
-            onClick={(event) => event.stopPropagation()}
-            style={{
-              width: "min(960px, 100%)",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              background: "#111827",
-              border: "1px solid #253545",
-              borderRadius: "12px",
-              padding: "16px",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <div>
-                <div style={{ color: "#fff", fontSize: "16px", fontWeight: 700 }}>🎬 Reels — @{selectedIgAccount.username}</div>
-                <div style={{ color: "#9ca3af", fontSize: "12px" }}>{selectedIgAccount.creatorName} · {igRangeLabelText}</div>
-              </div>
-              <button
-                onClick={() => setSelectedIgAccount(null)}
-                style={{ background: "transparent", border: "none", color: "#9ca3af", fontSize: "22px", cursor: "pointer" }}
-              >
-                ×
-              </button>
-            </div>
+        {activeOfTab === "tracking_links" && (
+          <>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "600px" }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
+                  {["", "Name", "Creator", "Clicks", "Subscribers", "Conv %", "Daily Avg Subs"].map((h) => (
+                    <th key={h || "expand"} style={{ padding: "10px", fontSize: "12px", color: "#a0a0a0" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleTrackingLinks.map((l: any) => {
+                  const detailsOpen = Boolean(expandedTrackingLinks[l.id]);
+                  const dailyRows = trackingDailyStats[l.id] || [];
+                  const avgDailySubs = dailyRows.length > 0
+                    ? (dailyRows.reduce((s: number, d: any) => s + d.subs, 0) / dailyRows.length).toFixed(1)
+                    : "—";
 
-            {selectedIgAccountReels === null ? (
-              <div style={{ color: "#9ca3af", padding: "12px 0" }}>Loading reel stats…</div>
-            ) : selectedIgAccountReels.length === 0 ? (
-              <div style={{ color: "#9ca3af", padding: "12px 0" }}>No reels found for this account and range.</div>
-            ) : (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: isCompactReelGrid ? "repeat(2, minmax(0, 1fr))" : "repeat(3, minmax(0, 1fr))", gap: "12px" }}>
-                  {selectedIgAccountReels.map((reel) => {
-                    const isHovered = hoveredReelId === reel.reelId;
-                    return (
-                      <div
-                        key={reel.reelId}
-                        onMouseEnter={() => {
-                          hoveredReelRef.current = reel.reelId;
-                          setHoveredReelId(reel.reelId);
-                        }}
-                        onMouseLeave={(event) => {
-                          const video = event.currentTarget.querySelector("video") as HTMLVideoElement | null;
-                          if (video) video.pause();
-                          if (hoveredReelRef.current === reel.reelId) {
-                            hoveredReelRef.current = null;
-                            setHoveredReelId(null);
-                          }
-                        }}
-                        style={{
-                          border: "1px solid #2a2a2a",
-                          borderRadius: "12px",
-                          overflow: "hidden",
-                          background: "#1e1e1e",
-                          transition: "transform 0.18s ease, box-shadow 0.18s ease",
-                          transform: isHovered ? "scale(1.02)" : "scale(1)",
-                          boxShadow: isHovered ? "0 10px 24px rgba(0,0,0,0.35)" : "none",
-                        }}
-                      >
-                        <div style={{ position: "relative", aspectRatio: "9 / 16", background: "#2f2f2f" }}>
-                          {reel.thumbnailUrl ? (
-                            <img
-                              src={reel.thumbnailUrl}
-                              alt={reel.caption ? String(reel.caption).slice(0, 80) : "Reel thumbnail"}
-                              loading="lazy"
-                              style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "10px" }}
-                            />
-                          ) : (
-                            <div style={{ width: "100%", height: "100%", background: "#3a3a3a", display: "flex", alignItems: "center", justifyContent: "center", padding: "10px", textAlign: "center", color: "#bdbdbd", fontSize: "12px" }}>
-                              {reel.caption || "No thumbnail available"}
-                            </div>
-                          )}
-                          {isHovered && reel.videoUrl && (
-                            <video
-                              muted
-                              autoPlay
-                              loop
-                              playsInline
-                              src={reel.videoUrl}
-                              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
-                            />
-                          )}
-                        </div>
-                        <div style={{ padding: "10px" }}>
-                          <div
+                  return (
+                    <Fragment key={l.id}>
+                      <tr style={{ borderBottom: detailsOpen ? "none" : "1px solid #242424" }}>
+                        <td style={{ padding: "10px", color: "#fff", width: 36 }}>
+                          <button
+                            onClick={() => toggleExpanded(l.id)}
                             style={{
-                              color: "#ccc",
-                              fontSize: "13px",
-                              lineHeight: 1.35,
-                              marginBottom: "8px",
-                              minHeight: "34px",
-                              display: "-webkit-box",
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: "vertical",
-                              overflow: "hidden",
+                              width: 24,
+                              height: 24,
+                              borderRadius: 6,
+                              border: "1px solid #2f2f2f",
+                              background: "#171717",
+                              color: "#cbd5e1",
+                              cursor: "pointer",
+                              fontSize: 12,
+                              lineHeight: "22px",
                             }}
+                            title={detailsOpen ? "Hide daily stats" : "Show last 14 days"}
                           >
-                            {reel.caption || "No caption"}
-                          </div>
-                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", color: "#999", fontSize: "11px" }}>
-                            <span>👁 {formatNumber(reel.views)}</span>
-                            <span>❤️ {formatNumber(reel.likes)}</span>
-                            <span>💬 {formatNumber(reel.comments)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                            {detailsOpen ? "−" : "+"}
+                          </button>
+                        </td>
+                        <td style={{ padding: "10px", color: "#fff" }}>{l.name}</td>
+                        <td style={{ padding: "10px", color: "#a0a0a0" }}>{l.creatorName}</td>
+                        <td style={{ padding: "10px", color: "#fff" }}>{Number(l.clicks || 0).toLocaleString()}</td>
+                        <td style={{ padding: "10px", color: "#fff", fontWeight: 700 }}>{Number(l.subscribers || 0).toLocaleString()}</td>
+                        <td style={{ padding: "10px", color: "#22c55e" }}>{(Number(l.conversion_rate || 0) * 100).toFixed(1)}%</td>
+                        <td style={{ padding: "10px", color: "#f59e0b", fontWeight: 600 }}>{avgDailySubs}</td>
+                      </tr>
 
-                <div style={{ marginTop: "18px", borderTop: "1px solid #2a2a2a", paddingTop: "14px" }}>
-                  <div style={{ color: "#9ca3af", fontSize: "12px", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.4px" }}>
-                    30-Day Reel Performance
-                  </div>
-                  {selectedIgAccountCurve30d === null ? (
-                    <div style={{ color: "#6b7280", fontSize: "12px", padding: "8px 0" }}>Loading 30-day chart…</div>
-                  ) : selectedIgAccountCurve30d.length === 0 ? (
-                    <div style={{ color: "#6b7280", fontSize: "12px", padding: "8px 0" }}>No 30-day performance data.</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height={230}>
-                      <LineChart data={selectedIgAccountCurve30d}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
-                        <XAxis dataKey="date" tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} interval={4} />
-                        <YAxis tick={{ fill: "#666", fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <Tooltip content={<ChartTooltip />} />
-                        <Line type="monotone" dataKey="Views" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                        <Line type="monotone" dataKey="Likes" stroke="#22c55e" strokeWidth={1.8} dot={false} />
-                        <Line type="monotone" dataKey="Comments" stroke="#f59e0b" strokeWidth={1.8} dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </>
+                      {detailsOpen && (
+                        <tr style={{ borderBottom: "1px solid #242424", background: "#141414" }}>
+                          <td colSpan={7} style={{ padding: "12px 14px 14px" }}>
+                            <div style={{ color: "#a0a0a0", fontSize: 12, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                              Last 14 Days
+                            </div>
+                            {dailyRows.length === 0 ? (
+                              <div style={{ fontSize: 12, color: "#666" }}>No daily stats synced yet.</div>
+                            ) : (
+                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                <thead>
+                                  <tr style={{ borderBottom: "1px solid #2b2b2b", textAlign: "left" }}>
+                                    <th style={{ padding: "6px 8px", color: "#8a8a8a", fontWeight: 600 }}>Date</th>
+                                    <th style={{ padding: "6px 8px", color: "#8a8a8a", fontWeight: 600 }}>Clicks</th>
+                                    <th style={{ padding: "6px 8px", color: "#8a8a8a", fontWeight: 600 }}>Subs</th>
+                                    <th style={{ padding: "6px 8px", color: "#8a8a8a", fontWeight: 600 }}>Conv %</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {dailyRows.map((d) => (
+                                    <tr key={`${l.id}-${d.date}`} style={{ borderBottom: "1px solid #1f1f1f" }}>
+                                      <td style={{ padding: "6px 8px", color: "#d4d4d4" }}>{new Date(`${d.date}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td>
+                                      <td style={{ padding: "6px 8px", color: "#fff" }}>{d.clicks.toLocaleString()}</td>
+                                      <td style={{ padding: "6px 8px", color: "#fff", fontWeight: 700 }}>{d.subs.toLocaleString()}</td>
+                                      <td style={{ padding: "6px 8px", color: "#22c55e" }}>{d.clicks > 0 ? ((d.subs / d.clicks) * 100).toFixed(1) + "%" : "—"}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!showAllTrackingLinks && sortedTrackingLinks.length > 10 && (
+              <button
+                onClick={() => setShowAllTrackingLinks(true)}
+                style={{ display: "block", margin: "12px auto 0", padding: "8px 20px", borderRadius: 8, border: "1px solid var(--border, #333)", background: "transparent", color: "#a0a0a0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+              >
+                Show More ({sortedTrackingLinks.length - 10} more)
+              </button>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Card>
     </div>
   );
 }

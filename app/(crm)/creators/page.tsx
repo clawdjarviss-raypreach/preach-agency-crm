@@ -31,7 +31,7 @@ export default function CreatorsPage() {
         .from("crm_of_accounts")
         .select("creator_id, account_id");
       const accountMap = new Map((accounts || []).map((a) => [a.creator_id, a.account_id]));
-      const filtered = allCreators.filter((c: any) => !!accountMap.get(c.id) || !!c.platform_account_id);
+      const filtered = allCreators.filter((c: any) => !!accountMap.get(c.id));
 
       setCreators(filtered);
       setActiveShifts(shiftsRes.data || []);

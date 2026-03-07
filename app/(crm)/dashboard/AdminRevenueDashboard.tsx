@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { Fragment, useState, useMemo, useCallback, useEffect } from "react";
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Area, AreaChart, CartesianGrid,
@@ -201,13 +201,11 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
       let earningsCurRows = earningsCur ?? [];
 
       if (includesToday) {
-        const todayEarningsRows = earningsCurRows.filter((r: any) => r.date === today);
-        const todayNet = todayEarningsRows.reduce((sum: number, r: any) => sum + Number(r.net_earnings || 0), 0);
-
-        if (todayEarningsRows.length === 0 || todayNet === 0) {
+        // Always use transactions for today — daily_earnings may be stale/partial
+        {
           const { data: todayTx } = await supabase
             .from("crm_of_transactions")
-            .select("account_id,type,amount,timestamp")
+            .select("account_id,type,amount,net_amount,timestamp")
             .gte("timestamp", `${today}T00:00:00`)
             .lte("timestamp", `${today}T23:59:59`);
 
@@ -232,23 +230,24 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
             }
 
             const row = todayByAccount.get(accountId)!;
-            const amount = Number(tx.amount || 0);
-            row.total_earnings += amount;
-            row.net_earnings += amount;
+            const gross = Number(tx.amount || 0);
+            const net = Number(tx.net_amount || tx.amount || 0);
+            row.total_earnings += gross;
+            row.net_earnings += net;
             row.transaction_count += 1;
 
             switch (normalizeRevenueTxType(tx.type)) {
               case "subscription":
-                row.subscription_earnings += amount;
+                row.subscription_earnings += net;
                 if (isNewSubscriptionTxType(tx.type)) {
                   row.subscription_count += 1;
                 }
                 break;
               case "message":
-                row.message_earnings += amount;
+                row.message_earnings += net;
                 break;
               case "tip":
-                row.tip_earnings += amount;
+                row.tip_earnings += net;
                 break;
               default:
                 break;
@@ -256,11 +255,9 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
           }
 
           const todayFallbackRows = Array.from(todayByAccount.values());
-          if (todayFallbackRows.length > 0) {
-            const replaceAccountIds = new Set(todayFallbackRows.map((r) => r.account_id));
-            earningsCurRows = earningsCurRows.filter((r: any) => !(r.date === today && replaceAccountIds.has(r.account_id)));
-            earningsCurRows.push(...todayFallbackRows);
-          }
+          // Always replace daily_earnings rows for today with transaction-based data
+          earningsCurRows = earningsCurRows.filter((r: any) => r.date !== today);
+          earningsCurRows.push(...todayFallbackRows);
         }
       }
 
@@ -360,7 +357,7 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
         while (true) {
           const { data } = await supabase
             .from("crm_of_transactions")
-            .select("account_id,type,amount,timestamp")
+            .select("account_id,type,amount,net_amount,timestamp")
             .gte("timestamp", `${start}T00:00:00`)
             .lte("timestamp", `${end}T23:59:59`)
             .range(from, from + pageSize - 1);
@@ -383,7 +380,7 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
       const calcSubs = (rows: any[]) => {
         const newSubsRows = rows.filter((r) => r.type === "new_sub" || r.type === "new_subscription");
         const rebillRows = rows.filter((r) => r.type === "rebill");
-        const sum = (list: any[]) => list.reduce((s, r) => s + Number(r.amount || 0), 0);
+        const sum = (list: any[]) => list.reduce((s, r) => s + Number(r.net_amount || r.amount || 0), 0);
         return {
           newSubs: { count: newSubsRows.length, revenue: sum(newSubsRows) },
           rebills: { count: rebillRows.length, revenue: sum(rebillRows) },
@@ -683,6 +680,8 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
         </table>
       </div>
 
+      <TrackingLinksFullTable />
+
       <style>{`
         @media (max-width: 900px) {
           .admin-rev-top-row { grid-template-columns: 1fr !important; }
@@ -690,6 +689,193 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
           .admin-rev-bottom-row { grid-template-columns: 1fr !important; }
         }
       `}</style>
+    </div>
+  );
+}
+
+/* ─── Full Tracking Links Table (admin only, with Revenue + ARPS) ─── */
+function TrackingLinksFullTable() {
+  const [links, setLinks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sort, setSort] = useState<"revenue" | "arps_all_time" | "clicks" | "subscribers">("revenue");
+  const [showAll, setShowAll] = useState(false);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [dailyCache, setDailyCache] = useState<Record<string, any[]>>({});
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const { data: accounts } = await supabase.from("crm_of_accounts").select("account_id, creator_id, crm_creators(name)");
+      const creatorMap = new Map<string, string>();
+      for (const a of accounts ?? []) {
+        creatorMap.set((a as any).account_id, (a as any).crm_creators?.name ?? "Unknown");
+      }
+
+      const { data } = await supabase
+        .from("crm_of_tracking_links")
+        .select("id,name,url,clicks,subscribers,conversion_rate,revenue,spenders,arps_7d,arps_30d,arps_all_time,last_synced_at,account_id,link_id")
+        .order("revenue", { ascending: false, nullsFirst: false });
+
+      setLinks((data ?? []).map((l: any) => ({ ...l, creatorName: creatorMap.get(l.account_id) || "Unknown" })));
+      setLoading(false);
+    })();
+  }, []);
+
+  const sorted = useMemo(() => {
+    const rows = [...links];
+    const val = (r: any) => {
+      if (sort === "revenue") return Number(r.revenue || 0);
+      if (sort === "arps_all_time") return Number(r.arps_all_time || 0);
+      if (sort === "clicks") return Number(r.clicks || 0);
+      return Number(r.subscribers || 0);
+    };
+    rows.sort((a, b) => val(b) - val(a));
+    return rows;
+  }, [links, sort]);
+
+  const visible = showAll ? sorted : sorted.slice(0, 15);
+
+  async function toggleExpand(id: string, linkId: string) {
+    setExpanded((p) => ({ ...p, [id]: !p[id] }));
+    if (!dailyCache[id]) {
+      const { data } = await supabase
+        .from("crm_of_tracking_link_daily_stats")
+        .select("date,clicks,subs,revenue,spenders")
+        .eq("tracking_link_id", id)
+        .order("date", { ascending: false })
+        .limit(14);
+      setDailyCache((p) => ({ ...p, [id]: data ?? [] }));
+    }
+  }
+
+  async function runSync() {
+    setSyncing(true);
+    setSyncMsg("");
+    try {
+      await supabase.functions.invoke("of-sync", { body: { job: "tracking_link_stats" } });
+      setSyncMsg("✅ Sync complete — refresh to see updated data");
+    } catch { setSyncMsg("❌ Sync failed"); }
+    setSyncing(false);
+  }
+
+  const fmtMoney = (v: any) => `$${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const arpsColor = (v: number) => {
+    if (v >= 15) return { color: "#22c55e", bg: "#14532d30", border: "#14532d" };
+    if (v >= 8) return { color: "#f59e0b", bg: "#78350f30", border: "#78350f" };
+    return { color: "#ef4444", bg: "#7f1d1d30", border: "#7f1d1d" };
+  };
+
+  return (
+    <div style={{ background: "#111", borderRadius: "12px", border: "1px solid #1f1f1f", padding: "20px", marginTop: "24px", overflowX: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "13px", color: "#a0a0a0", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            🔗 Tracking Links — Full Analytics
+          </span>
+          <select
+            value={sort}
+            onChange={(e) => { setSort(e.target.value as any); setShowAll(false); }}
+            style={{ background: "#141414", color: "#fff", border: "1px solid #2f2f2f", borderRadius: 8, padding: "6px 10px", fontSize: 12, fontWeight: 600 }}
+          >
+            <option value="revenue">Sort: Revenue</option>
+            <option value="arps_all_time">Sort: ARPS All-Time</option>
+            <option value="clicks">Sort: Clicks</option>
+            <option value="subscribers">Sort: Subs</option>
+          </select>
+        </div>
+        <button
+          onClick={runSync}
+          disabled={syncing}
+          style={{ border: "1px solid #14532d", borderRadius: 8, padding: "7px 12px", fontSize: 12, cursor: syncing ? "not-allowed" : "pointer", background: syncing ? "#1f2937" : "#166534", color: "#fff", fontWeight: 700, opacity: syncing ? 0.7 : 1 }}
+        >
+          {syncing ? "Syncing…" : "Sync Stats"}
+        </button>
+      </div>
+      {syncMsg && <div style={{ marginBottom: 10, fontSize: 12, color: syncMsg.includes("failed") ? "#ef4444" : "#22c55e" }}>{syncMsg}</div>}
+
+      {loading ? (
+        <div style={{ color: "#666", fontSize: 13, textAlign: "center", padding: "40px 0" }}>Loading…</div>
+      ) : (
+        <>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1100px" }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid #2a2a2a" }}>
+                {["", "Name", "Creator", "Clicks", "Subs", "Revenue (Net)", "Conv %", "Spenders", "ARPS 7d", "ARPS 30d", "ARPS All"].map((h) => (
+                  <th key={h || "x"} style={{ padding: "10px", fontSize: "12px", color: "#a0a0a0" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((l) => {
+                const a7 = Number(l.arps_7d || 0), a30 = Number(l.arps_30d || 0), aAll = Number(l.arps_all_time || 0);
+                const open = expanded[l.id];
+                const daily = dailyCache[l.id] || [];
+                const s7 = arpsColor(a7), s30 = arpsColor(a30), sAll = arpsColor(aAll);
+                const badge = (v: number, s: any) => (
+                  <span style={{ color: s.color, background: s.bg, border: `1px solid ${s.border}`, padding: "4px 8px", borderRadius: 999, fontWeight: 700, fontSize: 12 }}>{fmtMoney(v)}</span>
+                );
+                return (
+                  <Fragment key={l.id}>
+                    <tr style={{ borderBottom: open ? "none" : "1px solid #242424" }}>
+                      <td style={{ padding: "10px", width: 36 }}>
+                        <button onClick={() => toggleExpand(l.id, l.link_id)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid #2f2f2f", background: "#171717", color: "#cbd5e1", cursor: "pointer", fontSize: 12, lineHeight: "22px" }}>
+                          {open ? "−" : "+"}
+                        </button>
+                      </td>
+                      <td style={{ padding: "10px", color: "#fff" }}>{l.name}</td>
+                      <td style={{ padding: "10px", color: "#a0a0a0" }}>{l.creatorName}</td>
+                      <td style={{ padding: "10px", color: "#fff" }}>{Number(l.clicks || 0).toLocaleString()}</td>
+                      <td style={{ padding: "10px", color: "#fff" }}>{Number(l.subscribers || 0).toLocaleString()}</td>
+                      <td style={{ padding: "10px", color: "#22c55e", fontWeight: 700 }}>{fmtMoney(l.revenue)}</td>
+                      <td style={{ padding: "10px", color: "#22c55e" }}>{(Number(l.conversion_rate || 0) * 100).toFixed(1)}%</td>
+                      <td style={{ padding: "10px", color: "#fff" }}>{Number(l.spenders || 0).toLocaleString()}</td>
+                      <td style={{ padding: "10px" }}>{badge(a7, s7)}</td>
+                      <td style={{ padding: "10px" }}>{badge(a30, s30)}</td>
+                      <td style={{ padding: "10px" }}>{badge(aAll, sAll)}</td>
+                    </tr>
+                    {open && (
+                      <tr style={{ borderBottom: "1px solid #242424", background: "#141414" }}>
+                        <td colSpan={11} style={{ padding: "12px 14px" }}>
+                          <div style={{ color: "#a0a0a0", fontSize: 12, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.4px" }}>Last 14 Days</div>
+                          {daily.length === 0 ? <div style={{ fontSize: 12, color: "#666" }}>No daily stats yet.</div> : (
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                              <thead>
+                                <tr style={{ borderBottom: "1px solid #2b2b2b", textAlign: "left" }}>
+                                  {["Date", "Clicks", "Subs", "Revenue", "Spenders", "Conv %"].map((h) => (
+                                    <th key={h} style={{ padding: "6px 8px", color: "#8a8a8a", fontWeight: 600 }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {daily.map((d: any) => (
+                                  <tr key={d.date} style={{ borderBottom: "1px solid #1f1f1f" }}>
+                                    <td style={{ padding: "6px 8px", color: "#d4d4d4" }}>{new Date(`${d.date}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td>
+                                    <td style={{ padding: "6px 8px", color: "#fff" }}>{d.clicks?.toLocaleString()}</td>
+                                    <td style={{ padding: "6px 8px", color: "#fff", fontWeight: 700 }}>{d.subs?.toLocaleString()}</td>
+                                    <td style={{ padding: "6px 8px", color: "#22c55e", fontWeight: 700 }}>{fmtMoney(d.revenue)}</td>
+                                    <td style={{ padding: "6px 8px", color: "#fff" }}>{d.spenders?.toLocaleString()}</td>
+                                    <td style={{ padding: "6px 8px", color: "#22c55e" }}>{d.clicks > 0 ? ((d.subs / d.clicks) * 100).toFixed(1) + "%" : "—"}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+          {!showAll && sorted.length > 15 && (
+            <button onClick={() => setShowAll(true)} style={{ display: "block", margin: "12px auto 0", padding: "8px 20px", borderRadius: 8, border: "1px solid #333", background: "transparent", color: "#a0a0a0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              Show More ({sorted.length - 15} more)
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }

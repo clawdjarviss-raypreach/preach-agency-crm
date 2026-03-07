@@ -241,7 +241,30 @@ export default function AdminSocialsPage() {
 
   const igUsernames = (igAccounts || []).map((a: any) => a.username).filter(Boolean);
 
-  const ofApiCreators = (creators || []).filter((c: any) => !!c.platform_account_id);
+  // Build a set of usernames already assigned to ANY creator
+  const assignedByCreator = new Map<string, Set<string>>();
+  for (const creator of (creators || []) as any[]) {
+    const usernames: string[] = creator.instagram_usernames?.length
+      ? creator.instagram_usernames
+      : creator.instagram_username
+        ? [creator.instagram_username]
+        : [];
+    assignedByCreator.set(creator.id, new Set(usernames));
+  }
+
+  // For each creator, available options = their own assigned + unassigned
+  function getAvailableUsernames(creatorId: string): string[] {
+    const ownUsernames = assignedByCreator.get(creatorId) || new Set<string>();
+    const takenByOthers = new Set<string>();
+    for (const [cid, usernames] of assignedByCreator.entries()) {
+      if (cid !== creatorId) {
+        for (const u of usernames) takenByOthers.add(u);
+      }
+    }
+    return igUsernames.filter((u: string) => ownUsernames.has(u) || !takenByOthers.has(u));
+  }
+
+  const ofApiCreators = (creators || []) as any[];
 
   const handleChange = async (creatorId: string, instagramUsernames: string[]) => {
     setSaving(creatorId);
@@ -331,7 +354,7 @@ export default function AdminSocialsPage() {
                       <SocialsEditor
                         creatorId={creator.id}
                         initialUsernames={currentUsernames}
-                        igUsernames={igUsernames}
+                        igUsernames={getAvailableUsernames(creator.id)}
                         saving={saving === creator.id}
                         onSave={(values) => handleChange(creator.id, values)}
                       />

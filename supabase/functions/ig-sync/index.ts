@@ -259,14 +259,13 @@ async function syncAccounts() {
 
   const sourceRows = await fetchPagedRows({
     table: SYNC_TABLES.accounts,
-    select: 'id,username,name,follower_count,following_count,media_count,bio,profile_pic_path,isActive',
+    select: 'id,username,name,follower_count,following_count,media_count,bio,profile_pic_path,isActive,status',
     orderBy: 'id',
   });
 
   const nowIso = new Date().toISOString();
   const rows = sourceRows
     .filter((row) => row?.id != null && row?.username)
-    .filter((row) => row?.isActive !== false)
     .map((row) => ({
       supabase_id: String(row.id),
       creator_id: creatorMap.get(normalizeHandle(row.username)) ?? null,
@@ -276,6 +275,7 @@ async function syncAccounts() {
       media_count: toInt(row.media_count),
       bio: row.bio ?? null,
       profile_pic_url: row.profile_pic_path ?? null,
+      is_active: row.isActive !== false && row.status !== false,
       last_synced_at: nowIso,
     }));
 
@@ -352,7 +352,7 @@ async function syncReels() {
 
   const sourceRows = await fetchPagedRows({
     table: SYNC_TABLES.reels,
-    select: 'id,internal_account_id,username,shortcode,posted_at,caption,views,likes,comments,shares',
+    select: 'id,internal_account_id,username,shortcode,posted_at,caption,views,likes,comments,shares,thumb_path,video_path,is_deleted',
     orderBy: 'posted_at',
   });
 
@@ -369,13 +369,16 @@ async function syncReels() {
       return {
         ig_account_id: igAccountId,
         supabase_reel_id: String(sourceReelId),
+        shortcode: row.shortcode ?? null,
         caption: row.caption ?? null,
-        thumbnail_url: null,
+        thumbnail_url: row.thumb_path ?? null,
+        video_url: row.video_path ?? null,
         posted_at: row.posted_at ?? null,
         views: toInt(row.views),
         likes: toInt(row.likes),
         comments: toInt(row.comments),
         shares: toInt(row.shares),
+        is_deleted: row.is_deleted === true,
         last_synced_at: nowIso,
       };
     })
