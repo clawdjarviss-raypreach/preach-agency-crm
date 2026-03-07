@@ -11,7 +11,11 @@ import {
 } from './storage';
 import { calculateAccountVPD, calculateReelVPD, flagReel, type ReelFlags, type ReelVPD } from './vpd';
 
-const MAX_REEL_AGE_DAYS = 14;
+const DAILY_REEL_AGE_DAYS = 30; // 00:00 UTC full scrape — matches Tom's 30-day tracking
+const VPD_REEL_AGE_DAYS = 14;   // 06:00/12:00/18:00 UTC — VPD trending only
+
+type ScrapeMode = 'daily' | 'vpd';
+
 
 type ScrapeStats = {
   ownAccounts: number;
@@ -88,16 +92,19 @@ async function processOwnAccount(
     rapid: RapidApiClient;
     aiServerUrl: string;
     stats: ScrapeStats;
+    mode: ScrapeMode;
   },
 ): Promise<void> {
   const now = new Date();
+  const maxAgeDays = deps.mode === 'daily' ? DAILY_REEL_AGE_DAYS : VPD_REEL_AGE_DAYS;
+  const maxPages = deps.mode === 'daily' ? 3 : 1; // 3 pages = ~36 reels for 30-day coverage
   const existingMap = await deps.storage.getExistingOwnReels(account.id);
   const mediaDetailCache = new Map<string, MediaDetail>();
 
   const profile = await deps.rapid.fetchProfile(account.username);
   await deps.storage.updateOwnAccountProfile(account.id, profile);
 
-  const reels = await deps.rapid.fetchAllReels(account.username);
+  const reels = await deps.rapid.fetchAllReels(account.username, maxPages);
   const processed: ProcessedReel[] = [];
 
   for (const reel of reels) {
@@ -112,26 +119,37 @@ async function processOwnAccount(
       });
 
       if (!postedAtIso) continue;
-      if (isoToAgeDays(postedAtIso, now) > MAX_REEL_AGE_DAYS) continue;
+      if (isoToAgeDays(postedAtIso, now) > maxAgeDays) continue;
 
       const upserted = await deps.storage.upsertOwnReel(account.id, reel, postedAtIso);
 
-      const prevSnapshot = await deps.storage.getPreviousOwnSnapshot(upserted.id);
-      await deps.storage.insertOwnSnapshot(upserted.id, reel);
-      deps.stats.ownSnapshots += 1;
+      const isRecentEnoughForVpd = isoToAgeDays(postedAtIso, now) <= VPD_REEL_AGE_DAYS;
 
-      // Write daily snapshot (same format as Tom's table) for dashboard RPCs
-      const todayStr = now.toISOString().split('T')[0];
-      await deps.storage.upsertDailySnapshot(
-        upserted.id,
-        upserted.supabase_reel_id,
-        account.id,
-        todayStr,
-        reel.views,
-        reel.likes,
-        reel.comments,
-        reel.shares,
-      );
+      // 6-hourly snapshot — only for reels within 14 days (VPD tracking)
+      let prevSnapshot = null;
+      if (isRecentEnoughForVpd) {
+        prevSnapshot = await deps.storage.getPreviousOwnSnapshot(upserted.id);
+        await deps.storage.insertOwnSnapshot(upserted.id, reel);
+        deps.stats.ownSnapshots += 1;
+      }
+
+      // Daily snapshot — for ALL reels in this cycle (up to 30 days in daily mode)
+      if (deps.mode === 'daily') {
+        const todayStr = now.toISOString().split('T')[0];
+        await deps.storage.upsertDailySnapshot(
+          upserted.id,
+          upserted.supabase_reel_id,
+          account.id,
+          todayStr,
+          reel.views,
+          reel.likes,
+          reel.comments,
+          reel.shares,
+        );
+      }
+
+      // VPD only for reels within 14 days
+      if (!isRecentEnoughForVpd) continue;
 
       const finalPostedAt = upserted.posted_at ?? postedAtIso;
       if (!finalPostedAt) continue;
@@ -227,7 +245,7 @@ async function processCompetitorAccount(
       });
 
       if (!postedAtIso) continue;
-      if (isoToAgeDays(postedAtIso, now) > MAX_REEL_AGE_DAYS) continue;
+      if (isoToAgeDays(postedAtIso, now) > VPD_REEL_AGE_DAYS) continue;
 
       const upserted = await deps.storage.upsertCompetitorReel(
         watchlist.id,
@@ -332,7 +350,15 @@ async function main(): Promise<void> {
   const storage = new StorageService({ supabaseUrl, serviceKey });
   const rapid = new RapidApiClient({ apiKey: rapidApiKey, host: rapidApiHost });
 
-  console.log(`[${new Date().toISOString()}] Starting unified IG scrape cycle...`);
+  // Determine scrape mode based on UTC hour
+  // 00:00 UTC = daily mode (30 days, writes daily snapshots for dashboard)
+  // 06:00, 12:00, 18:00 UTC = vpd mode (14 days, 6-hourly snapshots for trending)
+  // Can be overridden with SCRAPE_MODE env var for testing
+  const utcHour = new Date().getUTCHours();
+  const mode: ScrapeMode = (process.env.SCRAPE_MODE as ScrapeMode) ?? (utcHour < 1 ? 'daily' : 'vpd');
+
+  console.log(`[${new Date().toISOString()}] Starting ${mode.toUpperCase()} scrape cycle (UTC hour: ${utcHour})...`);
+  console.log(`  Mode: ${mode === 'daily' ? '30-day reels + daily snapshots + VPD' : '14-day reels + VPD only'}`);
 
   const ownAccounts = await storage.loadOwnAccounts();
   const watchlists = await storage.loadCompetitorWatchlists();
@@ -343,7 +369,7 @@ async function main(): Promise<void> {
     const account = ownAccounts[i];
     console.log(`[own ${i + 1}/${ownAccounts.length}] Processing @${account.username}...`);
     try {
-      await processOwnAccount(account, { storage, rapid, aiServerUrl, stats });
+      await processOwnAccount(account, { storage, rapid, aiServerUrl, stats, mode });
       stats.ownAccounts += 1;
       console.log(`[own ${i + 1}/${ownAccounts.length}] @${account.username} — done`);
     } catch (error) {
