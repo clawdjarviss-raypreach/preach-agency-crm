@@ -161,16 +161,16 @@ export class StorageService {
   }
 
   async upsertOwnReel(accountId: string, reel: RapidReel, postedAtIso: string | null): Promise<UpsertedOwnReel> {
-    const supabaseReelId = reel.mediaId ?? reel.code;
-
     const { data, error } = await this.supabase
       .from('crm_ig_reels')
       .upsert(
         {
           ig_account_id: accountId,
-          supabase_reel_id: supabaseReelId,
+          shortcode: reel.code,
+          supabase_reel_id: reel.mediaId ?? reel.code,
           caption: reel.caption,
           thumbnail_url: reel.posterUrl,
+          video_url: reel.videoUrl,
           posted_at: postedAtIso,
           views: reel.views,
           likes: reel.likes,
@@ -178,7 +178,7 @@ export class StorageService {
           shares: reel.shares,
           last_synced_at: new Date().toISOString(),
         },
-        { onConflict: 'supabase_reel_id' },
+        { onConflict: 'ig_account_id,shortcode' },
       )
       .select('id,posted_at,analysis_status')
       .single();
