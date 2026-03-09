@@ -217,10 +217,10 @@ export default function IgStatsPage() {
       }
 
       const igEndPlusOne = addDays(effectiveRange.end, 1);
-      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }, { data: reelStats }, { data: inactiveData }] = await Promise.all([
+      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }, { data: reelStats }] = await Promise.all([
         supabase
           .from("crm_ig_accounts")
-          .select("id,creator_id,username,followers,is_active")
+          .select("id,creator_id,username,followers")
           .neq("is_active", false)
           .order("followers", { ascending: false }),
         supabase
@@ -230,12 +230,20 @@ export default function IgStatsPage() {
           .lte("date", igEndPlusOne),
         supabase.rpc("ig_active_reels", { p_start_date: effectiveRange.start, p_end_date: igEndPlusOne }).limit(5000),
         supabase.rpc("ig_account_reel_stats", { p_start_date: effectiveRange.start, p_end_date: effectiveRange.end }),
-        supabase
-          .from("crm_ig_accounts")
-          .select("id,creator_id,username,followers,last_synced_at")
-          .eq("is_active", false)
-          .order("last_synced_at", { ascending: false }),
       ]);
+
+      // Fetch inactive accounts separately so a failure doesn't break the page
+      let inactiveData: any[] | null = null;
+      try {
+        const res = await supabase
+          .from("crm_ig_accounts")
+          .select("id,creator_id,username,followers")
+          .eq("is_active", false)
+          .order("username", { ascending: true });
+        inactiveData = res.data;
+      } catch {
+        // Column may not exist or RLS may block — silently ignore
+      }
 
       const reelStatsByAccount = new Map<string, { views: number; likes: number; comments: number; shares: number }>();
       for (const rs of reelStats ?? []) {
@@ -580,7 +588,7 @@ export default function IgStatsPage() {
                           {a.followers ? `${formatNumber(a.followers)} followers` : "—"}
                         </span>
                         <span style={{ color: "#78716c", fontSize: 11 }}>
-                          Last seen: {a.last_synced_at ? new Date(a.last_synced_at).toLocaleDateString() : "never"}
+                          Inactive
                         </span>
                         <button
                           onClick={async () => {
