@@ -210,8 +210,8 @@ export class SocialApiClient {
         if (oldestOnPage != null && oldestOnPage < cutoffMs) break;
       }
 
-      // Check for pagination token
-      const nextToken = typeof data.pagination_token === 'string' ? data.pagination_token : null;
+      // Check for pagination token (top-level in response, not inside data)
+      const nextToken = typeof obj.pagination_token === 'string' ? obj.pagination_token : null;
       if (!nextToken) break;
       paginationToken = nextToken;
     }
