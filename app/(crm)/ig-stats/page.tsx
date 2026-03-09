@@ -159,6 +159,12 @@ export default function IgStatsPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [inactiveAccounts, setInactiveAccounts] = useState<any[]>([]);
   const [showInactive, setShowInactive] = useState(false);
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [addUsername, setAddUsername] = useState("");
+  const [addCreatorId, setAddCreatorId] = useState<string>("");
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addSaving, setAddSaving] = useState(false);
+  const [creatorByIgHandle, setCreatorByIgHandle] = useState<Map<string, { id: string; name: string }>>(new Map());
 
   useEffect(() => {
     const raw = localStorage.getItem("crm_user");
@@ -323,6 +329,7 @@ export default function IgStatsPage() {
           .sort((a, b) => a.name.localeCompare(b.name));
 
         setIgCreatorOptions(creatorOptions);
+        setCreatorByIgHandle(creatorByInstagram);
         setInactiveAccounts(
           (inactiveData ?? []).map((a: any) => {
             const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
@@ -544,6 +551,15 @@ export default function IgStatsPage() {
                     </option>
                   ))}
                 </select>
+                <button
+                  onClick={() => { setShowAddAccount(true); setAddUsername(""); setAddCreatorId(""); setAddError(null); }}
+                  style={{
+                    background: "#1c4a2e", border: "1px solid #166534", color: "#4ade80",
+                    borderRadius: "8px", padding: "7px 14px", fontSize: "12px", fontWeight: 700, cursor: "pointer",
+                  }}
+                >
+                  + Add Account
+                </button>
                 <DateRangePicker value={igDateRange} onChange={(next) => setIgDateRange(clampRangeToMax(next, maxIgEnd))} />
               </div>
               <span style={{ fontSize: "11px", color: "#666" }}>IG data available through: {maxIgEnd}</span>
@@ -587,9 +603,19 @@ export default function IgStatsPage() {
                         <span style={{ color: "#78716c", fontSize: 11, marginLeft: "auto" }}>
                           {a.followers ? `${formatNumber(a.followers)} followers` : "—"}
                         </span>
-                        <span style={{ color: "#78716c", fontSize: 11 }}>
-                          Inactive
-                        </span>
+                        <a
+                          href={`https://instagram.com/${a.username}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            background: "#1a1a2e", border: "1px solid #312e81", color: "#a78bfa",
+                            borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                            textDecoration: "none",
+                          }}
+                        >
+                          Open IG
+                        </a>
                         <button
                           onClick={async () => {
                             await supabase.from("crm_ig_accounts").update({ is_active: true }).eq("id", a.id);
@@ -601,6 +627,19 @@ export default function IgStatsPage() {
                           }}
                         >
                           Reactivate
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Permanently delete @${a.username} and all its data (snapshots, reels, funnels)? This cannot be undone.`)) return;
+                            await supabase.from("crm_ig_accounts").delete().eq("id", a.id);
+                            setInactiveAccounts((prev) => prev.filter((x: any) => x.id !== a.id));
+                          }}
+                          style={{
+                            background: "#2a1215", border: "1px solid #7f1d1d", color: "#f87171",
+                            borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                          }}
+                        >
+                          Delete
                         </button>
                       </div>
                     ))}
@@ -889,6 +928,158 @@ export default function IgStatsPage() {
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {showAddAccount && (
+        <div
+          onClick={() => setShowAddAccount(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: "20px",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(480px, 100%)", background: "#111827", border: "1px solid #253545",
+              borderRadius: "12px", padding: "24px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <div style={{ color: "#fff", fontSize: "16px", fontWeight: 700 }}>Add Instagram Account</div>
+              <button
+                onClick={() => setShowAddAccount(false)}
+                style={{ background: "transparent", border: "none", color: "#9ca3af", fontSize: "22px", cursor: "pointer" }}
+              >
+                x
+              </button>
+            </div>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{ color: "#9ca3af", fontSize: "12px", display: "block", marginBottom: "6px" }}>Username</label>
+              <input
+                type="text"
+                value={addUsername}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/^@/, "").replace(/\s/g, "").toLowerCase();
+                  setAddUsername(val);
+                  setAddError(null);
+                  // Auto-detect creator from instagram_usernames mapping
+                  const match = creatorByIgHandle.get(val);
+                  if (match) {
+                    setAddCreatorId(match.id);
+                  }
+                }}
+                placeholder="e.g. blondenervensaege"
+                style={{
+                  width: "100%", background: "#1C2A3A", color: "#fff", border: "1px solid #253545",
+                  borderRadius: "8px", padding: "10px 12px", fontSize: "14px", boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ color: "#9ca3af", fontSize: "12px", display: "block", marginBottom: "6px" }}>Creator</label>
+              <select
+                value={addCreatorId}
+                onChange={(e) => setAddCreatorId(e.target.value)}
+                style={{
+                  width: "100%", background: "#1C2A3A", color: "#fff", border: "1px solid #253545",
+                  borderRadius: "8px", padding: "10px 12px", fontSize: "14px", boxSizing: "border-box",
+                }}
+              >
+                <option value="">— Select creator —</option>
+                {igCreatorOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {addError && (
+              <div style={{ color: "#f87171", fontSize: "12px", marginBottom: "12px", padding: "8px 12px", background: "#2a1215", borderRadius: "8px", border: "1px solid #7f1d1d" }}>
+                {addError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowAddAccount(false)}
+                style={{
+                  background: "transparent", border: "1px solid #374151", color: "#9ca3af",
+                  borderRadius: "8px", padding: "8px 16px", fontSize: "13px", cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={addSaving || !addUsername.trim()}
+                onClick={async () => {
+                  const username = addUsername.trim().replace(/^@/, "").toLowerCase();
+                  if (!username) return;
+
+                  setAddSaving(true);
+                  setAddError(null);
+
+                  try {
+                    // Check if account already exists
+                    const { data: existing } = await supabase
+                      .from("crm_ig_accounts")
+                      .select("id,username,is_active")
+                      .eq("username", username)
+                      .maybeSingle();
+
+                    if (existing) {
+                      if (existing.is_active === false) {
+                        // Reactivate existing inactive account
+                        await supabase.from("crm_ig_accounts").update({ is_active: true }).eq("id", existing.id);
+                        setInactiveAccounts((prev) => prev.filter((a: any) => a.id !== existing.id));
+                        setShowAddAccount(false);
+                        // Trigger data reload
+                        setIgDateRange({ ...igDateRange });
+                        return;
+                      }
+                      setAddError(`@${username} is already being tracked.`);
+                      return;
+                    }
+
+                    // Insert new account
+                    const { error } = await supabase.from("crm_ig_accounts").insert({
+                      supabase_id: `manual-${username}`,
+                      username,
+                      creator_id: addCreatorId || null,
+                      followers: 0,
+                      following: 0,
+                      media_count: 0,
+                      is_active: true,
+                    });
+
+                    if (error) {
+                      setAddError(error.message);
+                      return;
+                    }
+
+                    setShowAddAccount(false);
+                    // Trigger data reload
+                    setIgDateRange({ ...igDateRange });
+                  } catch (err: any) {
+                    setAddError(err.message || "Failed to add account");
+                  } finally {
+                    setAddSaving(false);
+                  }
+                }}
+                style={{
+                  background: addSaving || !addUsername.trim() ? "#1a3a2a" : "#1c4a2e",
+                  border: "1px solid #166534", color: "#4ade80",
+                  borderRadius: "8px", padding: "8px 20px", fontSize: "13px", fontWeight: 700,
+                  cursor: addSaving || !addUsername.trim() ? "not-allowed" : "pointer",
+                  opacity: addSaving || !addUsername.trim() ? 0.5 : 1,
+                }}
+              >
+                {addSaving ? "Adding..." : "Add Account"}
+              </button>
+            </div>
           </div>
         </div>
       )}

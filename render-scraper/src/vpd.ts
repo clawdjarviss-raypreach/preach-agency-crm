@@ -39,11 +39,14 @@ export function calculateReelVPD(
   const lifetimeVpd = views / ageDays;
 
   let deltaVpd: number | null = null;
-  if (prevSnapshot) {
+  if (prevSnapshot && prevSnapshot.views > 0) {
+    // Skip delta when previous views = 0 (first discovery — no real baseline)
     const hoursBetween = (now.getTime() - prevSnapshot.scrapedAt.getTime()) / 3_600_000;
     if (hoursBetween >= 1) {
       deltaVpd = ((views - prevSnapshot.views) / hoursBetween) * 24;
       if (deltaVpd < 0) deltaVpd = 0;
+      // Cap: can't gain more views/day than you have total views
+      if (deltaVpd > views) deltaVpd = views;
     }
   }
 
