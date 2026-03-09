@@ -178,7 +178,7 @@ async function phase2ReelDiscovery(
       // SocialAPI reels — returns taken_at!
       let reels: SocialReel[];
       try {
-        reels = await deps.social.fetchReels(account.username);
+        reels = await deps.social.fetchReels(account.username, maxAgeDays);
       } catch (error) {
         const apiErr = error as ApiError;
         if (apiErr.status === 404) {
@@ -516,7 +516,7 @@ async function processCompetitors(
       // Reel discovery via SocialAPI
       let reels: SocialReel[];
       try {
-        reels = await deps.social.fetchReels(watchlist.ig_username);
+        reels = await deps.social.fetchReels(watchlist.ig_username, VPD_REEL_AGE_DAYS);
       } catch {
         console.warn(`${label} — reels fetch failed, skipping`);
         deps.stats.errors++;

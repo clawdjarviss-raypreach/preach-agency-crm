@@ -149,12 +149,7 @@ export class SocialApiClient {
     };
   }
 
-  async fetchReels(username: string): Promise<SocialReel[]> {
-    const payload = await this.request(`/ig/v1/reels?username_or_id_or_url=${encodeURIComponent(username)}`);
-    const obj = asObject(payload);
-    const data = asObject(obj.data);
-    const items = Array.isArray(data.items) ? data.items : [];
-
+  private parseReelItems(items: unknown[]): SocialReel[] {
     return items
       .map((item: unknown): SocialReel | null => {
         const media = asObject(item);
@@ -183,6 +178,45 @@ export class SocialApiClient {
         };
       })
       .filter((item): item is SocialReel => item !== null);
+  }
+
+  async fetchReels(username: string, maxAgeDays?: number): Promise<SocialReel[]> {
+    const MAX_PAGES = 10;
+    const cutoffMs = maxAgeDays != null ? Date.now() - maxAgeDays * 86_400_000 : 0;
+    const allReels: SocialReel[] = [];
+    let paginationToken: string | null = null;
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let url = `/ig/v1/reels?username_or_id_or_url=${encodeURIComponent(username)}`;
+      if (paginationToken) url += `&pagination_token=${encodeURIComponent(paginationToken)}`;
+
+      const payload = await this.request(url);
+      const obj = asObject(payload);
+      const data = asObject(obj.data);
+      const items = Array.isArray(data.items) ? data.items : [];
+
+      if (items.length === 0) break;
+
+      const reels = this.parseReelItems(items);
+      allReels.push(...reels);
+
+      // Check if the oldest reel on this page is beyond the cutoff
+      if (maxAgeDays != null) {
+        const oldestOnPage = reels
+          .filter((r) => r.takenAtIso != null)
+          .map((r) => new Date(r.takenAtIso!).getTime())
+          .sort((a, b) => a - b)[0];
+
+        if (oldestOnPage != null && oldestOnPage < cutoffMs) break;
+      }
+
+      // Check for pagination token
+      const nextToken = typeof data.pagination_token === 'string' ? data.pagination_token : null;
+      if (!nextToken) break;
+      paginationToken = nextToken;
+    }
+
+    return allReels;
   }
 
   async fetchPostInfo(shortcode: string): Promise<SocialPostInfo> {

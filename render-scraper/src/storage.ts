@@ -145,33 +145,32 @@ export class StorageService {
     accountId: string,
     followerCount: number,
     followingCount: number,
-    mediaCount: number,
+    _mediaCount: number,
   ): Promise<void> {
-    const snapshotDate = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0];
 
     // Check if row exists for today
     const { data: existing } = await this.supabase
-      .from('crm_ig_account_daily_snapshots')
+      .from('crm_ig_daily_snapshots')
       .select('id')
       .eq('ig_account_id', accountId)
-      .eq('snapshot_date', snapshotDate)
+      .eq('date', today)
       .maybeSingle();
 
     if (existing) {
       const { error } = await this.supabase
-        .from('crm_ig_account_daily_snapshots')
-        .update({ follower_count: followerCount, following_count: followingCount, media_count: mediaCount })
+        .from('crm_ig_daily_snapshots')
+        .update({ followers: followerCount, following: followingCount })
         .eq('id', existing.id);
       if (error) throw error;
     } else {
       const { error } = await this.supabase
-        .from('crm_ig_account_daily_snapshots')
+        .from('crm_ig_daily_snapshots')
         .insert({
           ig_account_id: accountId,
-          snapshot_date: snapshotDate,
-          follower_count: followerCount,
-          following_count: followingCount,
-          media_count: mediaCount,
+          date: today,
+          followers: followerCount,
+          following: followingCount,
         });
       if (error) throw error;
     }
