@@ -157,6 +157,8 @@ export default function IgStatsPage() {
   const [hoveredReelId, setHoveredReelId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("views");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [inactiveAccounts, setInactiveAccounts] = useState<any[]>([]);
+  const [showInactive, setShowInactive] = useState(false);
 
   useEffect(() => {
     const raw = localStorage.getItem("crm_user");
@@ -215,7 +217,7 @@ export default function IgStatsPage() {
       }
 
       const igEndPlusOne = addDays(effectiveRange.end, 1);
-      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }, { data: reelStats }] = await Promise.all([
+      const [{ data: igAccounts }, { data: igSnapshots }, { data: igReels }, { data: reelStats }, { data: inactiveData }] = await Promise.all([
         supabase
           .from("crm_ig_accounts")
           .select("id,creator_id,username,followers,is_active")
@@ -228,6 +230,11 @@ export default function IgStatsPage() {
           .lte("date", igEndPlusOne),
         supabase.rpc("ig_active_reels", { p_start_date: effectiveRange.start, p_end_date: igEndPlusOne }).limit(5000),
         supabase.rpc("ig_account_reel_stats", { p_start_date: effectiveRange.start, p_end_date: effectiveRange.end }),
+        supabase
+          .from("crm_ig_accounts")
+          .select("id,creator_id,username,followers,last_synced_at")
+          .eq("is_active", false)
+          .order("last_synced_at", { ascending: false }),
       ]);
 
       const reelStatsByAccount = new Map<string, { views: number; likes: number; comments: number; shares: number }>();
@@ -308,6 +315,18 @@ export default function IgStatsPage() {
           .sort((a, b) => a.name.localeCompare(b.name));
 
         setIgCreatorOptions(creatorOptions);
+        setInactiveAccounts(
+          (inactiveData ?? []).map((a: any) => {
+            const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
+            const mappedCreator = creatorByInstagram.get(usernameKey);
+            const creatorId = a.creator_id ?? mappedCreator?.id ?? null;
+            return {
+              ...a,
+              creatorId,
+              creatorName: creatorNameById.get(creatorId) || mappedCreator?.name || "Unknown",
+            };
+          }),
+        );
         setLoading(false);
       }
     }
@@ -522,6 +541,69 @@ export default function IgStatsPage() {
               <span style={{ fontSize: "11px", color: "#666" }}>IG data available through: {maxIgEnd}</span>
             </div>
           </div>
+
+          {(() => {
+            const filtered = selectedIgCreator === "all"
+              ? inactiveAccounts
+              : inactiveAccounts.filter((a: any) => a.creatorId === selectedIgCreator);
+            if (filtered.length === 0) return null;
+            return (
+              <div style={{
+                background: "#2a1a0a",
+                border: "1px solid #78350f",
+                borderRadius: 12,
+                padding: "12px 16px",
+                marginBottom: 16,
+              }}>
+                <div
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+                  onClick={() => setShowInactive(!showInactive)}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ color: "#fbbf24", fontSize: 16 }}>!</span>
+                    <span style={{ color: "#fbbf24", fontSize: 13, fontWeight: 700 }}>
+                      {filtered.length} inactive account{filtered.length !== 1 ? "s" : ""} — may need review
+                    </span>
+                  </div>
+                  <span style={{ color: "#92400e", fontSize: 12 }}>{showInactive ? "Hide" : "Show details"}</span>
+                </div>
+                {showInactive && (
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {filtered.map((a: any) => (
+                      <div key={a.id} style={{
+                        display: "flex", alignItems: "center", gap: 12,
+                        background: "#1a1206", borderRadius: 8, padding: "8px 12px",
+                      }}>
+                        <span style={{ color: "#fbbf24", fontWeight: 700, fontSize: 13, minWidth: 120 }}>@{a.username}</span>
+                        <span style={{ color: "#a1a1a1", fontSize: 12 }}>{a.creatorName}</span>
+                        <span style={{ color: "#78716c", fontSize: 11, marginLeft: "auto" }}>
+                          {a.followers ? `${formatNumber(a.followers)} followers` : "—"}
+                        </span>
+                        <span style={{ color: "#78716c", fontSize: 11 }}>
+                          Last seen: {a.last_synced_at ? new Date(a.last_synced_at).toLocaleDateString() : "never"}
+                        </span>
+                        <button
+                          onClick={async () => {
+                            await supabase.from("crm_ig_accounts").update({ is_active: true }).eq("id", a.id);
+                            setInactiveAccounts((prev) => prev.filter((x: any) => x.id !== a.id));
+                          }}
+                          style={{
+                            background: "#1c4a2e", border: "1px solid #166534", color: "#4ade80",
+                            borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                          }}
+                        >
+                          Reactivate
+                        </button>
+                      </div>
+                    ))}
+                    <div style={{ color: "#78716c", fontSize: 11, marginTop: 4 }}>
+                      Accounts marked inactive when the scraper gets a 404 from Instagram. This may mean the account is banned, suspended, or the username changed. Reactivating will retry on the next scrape cycle.
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {igRows.length > 0 && (() => {
             const filtered = selectedIgCreator === "all" ? igRows : igRows.filter((r: any) => r.creatorId === selectedIgCreator);
