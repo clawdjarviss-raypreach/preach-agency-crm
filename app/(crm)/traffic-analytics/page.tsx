@@ -290,7 +290,7 @@ function IdeaCard({
 
   return (
     <div style={{ background: "#171717", border: "1px solid #2a2a2a", borderRadius: 14, overflow: "hidden", display: "flex", minHeight: 320 }}>
-      <div style={{ width: 320, flexShrink: 0, background: "#0f0f0f", position: "relative" }}>
+      <div style={{ width: 200, flexShrink: 0, background: "#0f0f0f", position: "relative", overflow: "hidden" }}>
         {video ? (
           <>
             <video
@@ -300,7 +300,7 @@ function IdeaCard({
               controls={playing}
               playsInline
               preload="none"
-              style={{ width: "100%", height: "100%", objectFit: "cover", aspectRatio: "9/16" }}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
             />
             {!playing ? (
               <button
@@ -310,19 +310,19 @@ function IdeaCard({
                 }}
                 style={{ position: "absolute", inset: 0, border: "none", background: "rgba(0,0,0,0.3)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
               >
-                <span style={{ width: 50, height: 50, borderRadius: 999, background: "#fff", color: "#111", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>▶</span>
+                <span style={{ width: 44, height: 44, borderRadius: 999, background: "#fff", color: "#111", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16 }}>▶</span>
               </button>
             ) : null}
           </>
         ) : thumbnail ? (
-          <img src={thumbnail} alt={title || "Reel"} style={{ width: "100%", height: "100%", objectFit: "cover", aspectRatio: "9/16" }} />
+          <img src={thumbnail} alt={title || "Reel"} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         ) : (
           <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#666" }}>🎬</div>
         )}
       </div>
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: 14, borderBottom: "1px solid #2a2a2a", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ padding: "10px 12px", borderBottom: "1px solid #2a2a2a", display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
           {accountUsername ? <span style={{ color: "#e5e7eb", fontWeight: 700 }}>@{normalizeUsername(accountUsername)}</span> : null}
           <span style={{ color: "#fff", fontWeight: 700 }}>{formatNumber(views)} views</span>
           <span style={{ color: "#9ca3af", fontSize: 12 }}>❤️ {formatNumber(likes)} · 💬 {formatNumber(comments)}</span>
@@ -409,7 +409,7 @@ function ThumbnailCard({
 
   return (
     <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ aspectRatio: "9/16", background: "#0f0f0f" }}>
+      <div style={{ aspectRatio: "9/16", background: "#0f0f0f", overflow: "hidden" }}>
         {thumbnail ? <img src={thumbnail} alt={title || "Reel"} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
       </div>
       <div style={{ padding: 10 }}>
@@ -831,7 +831,7 @@ export default function TrafficAnalyticsPage() {
         <select
           value={selectedCreatorId}
           onChange={(event) => setSelectedCreatorId(event.target.value)}
-          style={{ background: "#1a1a1a", color: "#fff", border: "1px solid #2b2b2b", borderRadius: 10, padding: "10px 12px", minWidth: 260 }}
+          style={{ background: "#1a1a1a", color: "#fff", border: "1px solid #2b2b2b", borderRadius: 10, padding: "10px 12px", minWidth: 140, flex: "1 1 140px", maxWidth: 320 }}
         >
           {creators.map((creator) => (
             <option key={creator.id} value={creator.id}>{creator.name}</option>
@@ -839,7 +839,7 @@ export default function TrafficAnalyticsPage() {
         </select>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 18, overflowX: "auto", WebkitOverflowScrolling: "touch", paddingBottom: 4 }}>
         {([
           ["model", "Model Info"],
           ["winning", "Winning Patterns"],
@@ -886,7 +886,7 @@ export default function TrafficAnalyticsPage() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 12 }}>
             <div style={{ background: "#1a1a1a", border: "1px solid #2b2b2b", borderRadius: 12, padding: 14 }}>
               <div style={{ color: "#8f8f8f", fontSize: 12 }}>IG Followers</div>
               <div style={{ color: "#fff", fontWeight: 800, fontSize: 24 }}>{formatNumber(modelStats.totalFollowers)}</div>
@@ -1029,7 +1029,7 @@ export default function TrafficAnalyticsPage() {
           </div>
 
           {winningUnanalyzed.length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginTop: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, marginTop: 12 }}>
               {winningUnanalyzed.map((reel) => (
                 <ThumbnailCard
                   key={reel.id}
@@ -1147,7 +1147,7 @@ export default function TrafficAnalyticsPage() {
                   value={watchlistInput}
                   onChange={(event) => setWatchlistInput(event.target.value)}
                   placeholder="Add competitor username (e.g. @example)"
-                  style={{ flex: 1, minWidth: 220, background: "#121212", border: "1px solid #2f2f2f", borderRadius: 10, color: "#fff", padding: "9px 10px" }}
+                  style={{ flex: "1 1 180px", minWidth: 0, background: "#121212", border: "1px solid #2f2f2f", borderRadius: 10, color: "#fff", padding: "9px 10px" }}
                 />
                 <button onClick={() => void addCompetitor()} style={{ background: "#243547", border: "1px solid #355273", color: "#fff", borderRadius: 10, padding: "9px 12px", cursor: "pointer", fontWeight: 700 }}>
                   Add Competitor
@@ -1156,7 +1156,7 @@ export default function TrafficAnalyticsPage() {
             ) : null}
 
             {watchlists.length === 0 ? <EmptyState text="No competitors in watchlist for this format." /> : null}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
               {watchlists.map((watch) => (
                 <div key={watch.id} style={{ background: "#131313", border: "1px solid #2a2a2a", borderRadius: 12, padding: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1245,7 +1245,7 @@ export default function TrafficAnalyticsPage() {
           </div>
 
           {competitorUnanalyzed.length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, marginTop: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, marginTop: 12 }}>
               {competitorUnanalyzed.map((reel) => (
                 <ThumbnailCard
                   key={reel.id}
