@@ -61,10 +61,12 @@ export async function queueAnalysis(params: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       jobId,
-      videoUrl,
-      caption: params.caption,
-      reelType: params.source === 'crm_ig_reels' ? 'own' : 'competitor',
-      reelId: params.reelId,
+      type: 'analyze-reel',
+      params: {
+        reelId: params.reelId,
+        source: params.source === 'crm_ig_reels' ? 'ig_reels' : 'competitor_reels',
+        videoUrl,
+      },
     }),
   });
 
