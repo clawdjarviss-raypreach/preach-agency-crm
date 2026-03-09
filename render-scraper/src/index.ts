@@ -680,8 +680,17 @@ async function main(): Promise<void> {
     console.log(`  SocialAPI quota: ${quota.remaining}/${quota.total} remaining`);
   }
 
-  const ownAccounts = await storage.loadOwnAccounts();
-  const watchlists = await storage.loadCompetitorWatchlists();
+  let ownAccounts = await storage.loadOwnAccounts();
+  let watchlists = await storage.loadCompetitorWatchlists();
+
+  // TEST_ACCOUNTS: comma-separated usernames to limit the run (e.g. "user1,user2,@comp1")
+  const testFilter = process.env.TEST_ACCOUNTS;
+  if (testFilter) {
+    const names = testFilter.split(',').map((n) => n.trim().replace(/^@/, '').toLowerCase());
+    ownAccounts = ownAccounts.filter((a) => names.includes(a.username.toLowerCase()));
+    watchlists = watchlists.filter((w) => names.includes(w.ig_username.replace(/^@/, '').toLowerCase()));
+    console.log(`TEST_ACCOUNTS filter active — limited to ${ownAccounts.length} own, ${watchlists.length} competitor`);
+  }
 
   console.log(`Loaded ${ownAccounts.length} own accounts, ${watchlists.length} competitor watchlists`);
 
