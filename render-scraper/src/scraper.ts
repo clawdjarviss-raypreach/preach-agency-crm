@@ -1,73 +1,43 @@
-import { getPosterUrl, getVideoUrl, sleep, toIsoFromUnix } from './utils';
+import { sleep } from './utils';
 
-const REQUEST_DELAY_MS = 1500;
-const RETRY_429_DELAY_MS = 30_000;
+const REQUEST_DELAY_MS = 1500; // 50 req/min → ~1200ms minimum, using 1500ms for safety
+const RETRY_BASE_MS = 1000;
+const BATCH_SIZE = 10;
+const BATCH_MIN_DURATION_MS = 15_000;
 
 type ApiError = Error & { status?: number };
 
-export type RapidProfile = {
-  id: string | null;
-  username: string;
-  followerCount: number | null;
-  biography: string | null;
-  profilePicUrl: string | null;
-};
-
-export type RapidReel = {
-  code: string;
-  mediaId: string | null;
+/**
+ * Stable API reel stats — flat response, no data wrapper.
+ */
+export type StableReelStats = {
+  shortcode: string;
   views: number;
   likes: number;
   comments: number;
   shares: number;
-  caption: string | null;
-  posterUrl: string | null;
-  videoUrl: string | null;
-  takenAtIso: string | null;
 };
 
-export type MediaDetail = {
-  takenAtIso: string | null;
-  videoUrl: string | null;
-  posterUrl: string | null;
-};
-
-type ReelsPagePayload = {
-  reels?: unknown[];
-  data?: { reels?: unknown[] };
-  items?: unknown[];
-  pagination_token?: string;
+/**
+ * Stable API profile (fallback for SocialAPI).
+ */
+export type StableProfile = {
+  followerCount: number | null;
+  followingCount: number | null;
+  mediaCount: number | null;
+  biography: string | null;
+  profilePicUrl: string | null;
 };
 
 function asObject(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
-function asMedia(row: unknown): Record<string, unknown> {
-  const obj = asObject(row);
-  const node = asObject(obj.node);
-  const media = asObject(node.media);
-  if (Object.keys(media).length > 0) return media;
-  return asObject(obj.media && typeof obj.media === 'object' ? obj.media : obj);
-}
-
-function listReels(payload: unknown): unknown[] {
-  const p = asObject(payload) as ReelsPagePayload;
-  if (Array.isArray(p.reels)) return p.reels;
-  if (Array.isArray(p.data?.reels)) return p.data.reels;
-  if (Array.isArray(p.items)) return p.items;
-  return [];
-}
-
-export class RapidApiClient {
+export class StableApiClient {
   private readonly apiKey: string;
-
   private readonly host: string;
-
   private readonly baseUrl: string;
-
   private lastRequestAt = 0;
-
   private apiCalls = 0;
 
   constructor(params: { apiKey: string; host: string }) {
@@ -83,209 +53,161 @@ export class RapidApiClient {
   private async waitForRateLimit(): Promise<void> {
     const elapsed = Date.now() - this.lastRequestAt;
     const waitMs = Math.max(REQUEST_DELAY_MS - elapsed, 0);
-    if (waitMs > 0) {
-      await sleep(waitMs);
-    }
+    if (waitMs > 0) await sleep(waitMs);
   }
 
-  private async request(path: string, init: RequestInit, retries = 3): Promise<unknown> {
+  private async request(path: string, retries = 3): Promise<unknown> {
     let lastError: unknown;
 
-    for (let attempt = 1; attempt <= retries; attempt += 1) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
       await this.waitForRateLimit();
 
-      // RapidAPI POST endpoints require form-urlencoded, not JSON
-      let finalBody = init.body;
-      let contentType = 'application/json';
-      if (init.method === 'POST' && typeof init.body === 'string') {
-        try {
-          const parsed = JSON.parse(init.body);
-          const params = new URLSearchParams();
-          for (const [k, v] of Object.entries(parsed)) {
-            params.set(k, String(v));
+      try {
+        const response = await fetch(`${this.baseUrl}${path}`, {
+          method: 'GET',
+          headers: {
+            'x-rapidapi-key': this.apiKey,
+            'x-rapidapi-host': this.host,
+          },
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        this.lastRequestAt = Date.now();
+        this.apiCalls++;
+
+        if (response.status === 401 || response.status === 403) {
+          const e: ApiError = new Error(`StableAPI ${response.status}: API key problem`);
+          e.status = response.status;
+          throw e; // Critical — don't retry
+        }
+
+        if (response.status === 404) {
+          const e: ApiError = new Error(`StableAPI 404: Not found`);
+          e.status = 404;
+          throw e;
+        }
+
+        if (response.status === 429) {
+          if (attempt < retries) {
+            await sleep(RETRY_BASE_MS * Math.pow(2, attempt) * 5); // Aggressive backoff for 50/min limit
+            continue;
           }
-          finalBody = params.toString();
-          contentType = 'application/x-www-form-urlencoded';
-        } catch {
-          // keep as-is if not valid JSON
+          const e: ApiError = new Error('StableAPI 429: rate limited');
+          e.status = 429;
+          throw e;
         }
-      }
 
-      const response = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
-        body: finalBody,
-        headers: {
-          'content-type': contentType,
-          'x-rapidapi-key': this.apiKey,
-          'x-rapidapi-host': this.host,
-          ...(init.headers ?? {}),
-        },
-        signal: AbortSignal.timeout(30_000), // 30s timeout per request
-      });
+        if (!response.ok) {
+          const text = await response.text();
+          const e: ApiError = new Error(`StableAPI ${response.status}: ${text}`);
+          e.status = response.status;
+          lastError = e;
+          if (attempt < retries) {
+            await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
+            continue;
+          }
+          throw e;
+        }
 
-      this.lastRequestAt = Date.now();
-      this.apiCalls += 1;
-
-      if (response.status === 429) {
+        return response.json();
+      } catch (error) {
+        const apiErr = error as ApiError;
+        if (apiErr.status === 401 || apiErr.status === 403 || apiErr.status === 404) throw error;
+        lastError = error;
         if (attempt < retries) {
-          await sleep(RETRY_429_DELAY_MS);
+          await sleep(RETRY_BASE_MS * Math.pow(2, attempt - 1));
           continue;
         }
-        const e: ApiError = new Error('RapidAPI 429 (rate limited, retries exhausted)');
-        e.status = 429;
-        throw e;
       }
-
-      if (!response.ok) {
-        const text = await response.text();
-        const e: ApiError = new Error(`RapidAPI ${response.status}: ${text}`);
-        e.status = response.status;
-        lastError = e;
-        if (attempt < retries) {
-          await sleep(1500);
-          continue;
-        }
-        throw e;
-      }
-
-      return response.json();
     }
 
-    throw lastError instanceof Error ? lastError : new Error('RapidAPI request failed');
-  }
-
-  async fetchProfile(username: string): Promise<RapidProfile> {
-    const payload = await this.request('/ig_get_fb_profile_v3.php', {
-      method: 'POST',
-      body: JSON.stringify({ username_or_url: username }),
-    });
-
-    const obj = asObject(payload);
-    const profile = asObject(obj.user && typeof obj.user === 'object' ? obj.user : obj.profile ?? obj);
-
-    return {
-      id: profile.pk != null ? String(profile.pk) : profile.id != null ? String(profile.id) : null,
-      username,
-      followerCount:
-        profile.follower_count != null
-          ? Number(profile.follower_count)
-          : profile.followers != null
-            ? Number(profile.followers)
-            : null,
-      biography: typeof profile.biography === 'string' ? profile.biography : null,
-      profilePicUrl:
-        typeof profile.profile_pic_url === 'string'
-          ? profile.profile_pic_url
-          : asObject(profile.hd_profile_pic_url_info).url != null
-            ? String(asObject(profile.hd_profile_pic_url_info).url)
-            : null,
-    };
-  }
-
-  async fetchReelsPage(username: string, paginationToken?: string): Promise<{ reels: RapidReel[]; paginationToken?: string }> {
-    const payload = await this.request('/get_ig_user_reels.php', {
-      method: 'POST',
-      body: JSON.stringify({
-        username_or_url: username,
-        amount: '30',
-        ...(paginationToken ? { pagination_token: paginationToken } : {}),
-      }),
-    });
-
-    const rows = listReels(payload);
-    const reels = rows
-      .map(asMedia)
-      .map((media): RapidReel | null => {
-        const codeRaw = media.code;
-        const code = typeof codeRaw === 'string' ? codeRaw : codeRaw != null ? String(codeRaw) : '';
-        if (!code) return null;
-
-        const captionObj = asObject(media.caption);
-        const caption =
-          typeof captionObj.text === 'string'
-            ? captionObj.text
-            : typeof media.caption === 'string'
-              ? media.caption
-              : null;
-
-        return {
-          code,
-          mediaId: media.pk != null ? String(media.pk) : media.id != null ? String(media.id) : null,
-          views: Number(media.play_count ?? 0) || 0,
-          likes: Number(media.like_count ?? 0) || 0,
-          comments: Number(media.comment_count ?? 0) || 0,
-          shares: Number(media.share_count ?? 0) || 0,
-          caption,
-          posterUrl: getPosterUrl(media),
-          videoUrl: getVideoUrl(media),
-          takenAtIso: toIsoFromUnix(media.taken_at),
-        };
-      })
-      .filter((item): item is RapidReel => item !== null);
-
-    const obj = asObject(payload);
-    const nextToken = typeof obj.pagination_token === 'string' && obj.pagination_token.length > 0 ? obj.pagination_token : undefined;
-
-    return { reels, paginationToken: nextToken };
+    throw lastError instanceof Error ? lastError : new Error('StableAPI request failed');
   }
 
   /**
-   * Fetch reels with cutoff-based pagination.
-   * API returns reels newest-first, ~12 per page.
-   * Stops paginating when the oldest reel in a batch exceeds cutoffDays.
-   * Returns only reels within the cutoff (filters the last mixed batch).
-   *
-   * existingDates: optional map of shortcode → posted_at ISO string from DB.
-   * Used when the API doesn't return taken_at (which is common).
+   * Phase 3 primary: Fetch reel metrics by shortcode.
+   * Flat response — no `data` wrapper.
    */
-  async fetchAllReels(
-    username: string,
-    cutoffDays = 14,
-    existingDates?: Map<string, string | null>,
-  ): Promise<RapidReel[]> {
-    const all: RapidReel[] = [];
-    let token: string | undefined;
-    const cutoffMs = Date.now() - cutoffDays * 24 * 60 * 60 * 1000;
-
-    do {
-      const page = await this.fetchReelsPage(username, token);
-
-      if (page.reels.length === 0) break;
-
-      let foundOld = false;
-      for (const reel of page.reels) {
-        // Check date from API response OR from our existing DB data
-        const dateStr = reel.takenAtIso ?? existingDates?.get(reel.code) ?? null;
-        if (dateStr && new Date(dateStr).getTime() < cutoffMs) {
-          foundOld = true;
-          break; // Don't add reels past cutoff
-        }
-        all.push(reel);
-      }
-
-      // If the batch contained a reel older than cutoff, stop paginating
-      if (foundOld) break;
-
-      token = page.paginationToken;
-    } while (token);
-
-    return all;
-  }
-
-  async fetchMediaDetail(code: string): Promise<MediaDetail> {
-    const payload = await this.request(`/get_media_data.php?reel_post_code_or_url=${encodeURIComponent(code)}&type=reel`, {
-      method: 'GET',
-    });
+  async fetchReelStats(shortcode: string): Promise<StableReelStats> {
+    const payload = await this.request(
+      `/get_media_data_v2.php?media_code=${encodeURIComponent(shortcode)}`,
+    );
 
     const obj = asObject(payload);
-    const media = asObject(obj.media && typeof obj.media === 'object' ? obj.media : obj);
-
-    const takenAt = media.taken_at_timestamp ?? media.taken_at;
 
     return {
-      takenAtIso: toIsoFromUnix(takenAt),
-      videoUrl: getVideoUrl(media),
-      posterUrl: getPosterUrl(media),
+      shortcode,
+      views: Number(obj.video_play_count ?? 0) || 0,
+      likes: Number(
+        obj.like_count ??
+          (asObject(obj.edge_media_preview_like) as Record<string, unknown>).count ??
+          0,
+      ) || 0,
+      comments: Number(
+        obj.comment_count ??
+          (asObject(obj.edge_media_to_parent_comment) as Record<string, unknown>).count ??
+          0,
+      ) || 0,
+      shares: Number(obj.share_count ?? 0) || 0,
+    };
+  }
+
+  /**
+   * Batch fetch reel stats: 10 parallel requests, minimum 15s per batch.
+   */
+  async fetchReelStatsBatch(shortcodes: string[]): Promise<Map<string, StableReelStats | null>> {
+    const results = new Map<string, StableReelStats | null>();
+
+    for (let i = 0; i < shortcodes.length; i += BATCH_SIZE) {
+      const batchStart = Date.now();
+      const batch = shortcodes.slice(i, i + BATCH_SIZE);
+
+      const promises = batch.map(async (code) => {
+        try {
+          const stats = await this.fetchReelStats(code);
+          return { code, stats };
+        } catch (error) {
+          const apiErr = error as ApiError;
+          if (apiErr.status === 404) {
+            return { code, stats: null }; // Reel deleted
+          }
+          console.error(`[StableAPI] Failed to fetch stats for ${code}:`, (error as Error).message);
+          return { code, stats: null };
+        }
+      });
+
+      const batchResults = await Promise.all(promises);
+      for (const { code, stats } of batchResults) {
+        results.set(code, stats);
+      }
+
+      // Ensure minimum batch duration
+      const elapsed = Date.now() - batchStart;
+      if (elapsed < BATCH_MIN_DURATION_MS && i + BATCH_SIZE < shortcodes.length) {
+        await sleep(BATCH_MIN_DURATION_MS - elapsed);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Fallback profile fetch (used when SocialAPI fails).
+   */
+  async fetchProfile(username: string): Promise<StableProfile> {
+    const payload = await this.request(
+      `/ig_get_fb_profile_hover.php?username_or_url=${encodeURIComponent(username)}`,
+    );
+
+    const obj = asObject(payload);
+    const userData = asObject(obj.user_data ?? obj.user ?? obj);
+
+    return {
+      followerCount: userData.follower_count != null ? Number(userData.follower_count) : null,
+      followingCount: userData.following_count != null ? Number(userData.following_count) : null,
+      mediaCount: userData.media_count != null ? Number(userData.media_count) : null,
+      biography: typeof userData.biography === 'string' ? userData.biography : null,
+      profilePicUrl: typeof userData.profile_pic_url === 'string' ? userData.profile_pic_url : null,
     };
   }
 }

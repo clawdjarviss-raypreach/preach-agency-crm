@@ -1,12 +1,13 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-import type { RapidProfile, RapidReel } from './scraper';
 import type { AccountVPD, ReelFlags, ReelVPD } from './vpd';
 
 export type OwnAccount = {
   id: string;
   username: string;
   creator_id: string | null;
+  is_active: boolean;
+  followers: number | null;
 };
 
 export type CompetitorWatchlist = {
@@ -31,6 +32,14 @@ export type ExistingCompetitorReel = {
   posted_at: string | null;
   analysis_status: string | null;
   video_url: string | null;
+};
+
+export type ReelForStatsUpdate = {
+  id: string;
+  shortcode: string;
+  ig_account_id: string;
+  posted_at: string;
+  supabase_reel_id: string;
 };
 
 export type SnapshotPoint = {
@@ -64,23 +73,108 @@ export class StorageService {
   }
 
   async loadOwnAccounts(): Promise<OwnAccount[]> {
-    const primary = await this.supabase
+    const { data, error } = await this.supabase
       .from('crm_ig_accounts')
-      .select('id,username,creator_id')
+      .select('id,username,creator_id,is_active,followers')
       .eq('is_active', true)
       .order('username', { ascending: true });
 
-    if (!primary.error) {
-      return (primary.data ?? []) as OwnAccount[];
-    }
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      ...row,
+      is_active: true,
+      followers: typeof row.followers === 'number' ? row.followers : null,
+    })) as OwnAccount[];
+  }
 
-    const fallback = await this.supabase
+  async loadInactiveAccounts(): Promise<OwnAccount[]> {
+    const { data, error } = await this.supabase
       .from('crm_ig_accounts')
-      .select('id,username,creator_id')
+      .select('id,username,creator_id,is_active,followers')
+      .eq('is_active', false)
       .order('username', { ascending: true });
 
-    if (fallback.error) throw fallback.error;
-    return (fallback.data ?? []) as OwnAccount[];
+    if (error) throw error;
+    return (data ?? []).map((row: Record<string, unknown>) => ({
+      ...row,
+      is_active: false,
+      followers: typeof row.followers === 'number' ? row.followers : null,
+    })) as OwnAccount[];
+  }
+
+  async markAccountInactive(accountId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('crm_ig_accounts')
+      .update({ is_active: false, last_synced_at: new Date().toISOString() })
+      .eq('id', accountId);
+    if (error) throw error;
+  }
+
+  async reactivateAccount(accountId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('crm_ig_accounts')
+      .update({ is_active: true, last_synced_at: new Date().toISOString() })
+      .eq('id', accountId);
+    if (error) throw error;
+  }
+
+  async markReelDeleted(reelId: string): Promise<void> {
+    const { error } = await this.supabase
+      .from('crm_ig_reels')
+      .update({ is_deleted: true, last_synced_at: new Date().toISOString() })
+      .eq('id', reelId);
+    if (error) throw error;
+  }
+
+  async getReelsForStatsUpdate(maxAgeDays: number): Promise<ReelForStatsUpdate[]> {
+    const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString();
+    const { data, error } = await this.supabase
+      .from('crm_ig_reels')
+      .select('id,shortcode,ig_account_id,posted_at,supabase_reel_id')
+      .gte('posted_at', cutoff)
+      .eq('is_deleted', false)
+      .order('posted_at', { ascending: false });
+
+    if (error) throw error;
+    return (data ?? []).filter(
+      (r: Record<string, unknown>) => typeof r.shortcode === 'string' && r.shortcode.length > 0,
+    ) as ReelForStatsUpdate[];
+  }
+
+  async writeAccountDailySnapshot(
+    accountId: string,
+    followerCount: number,
+    followingCount: number,
+    mediaCount: number,
+  ): Promise<void> {
+    const snapshotDate = new Date().toISOString().split('T')[0];
+
+    // Check if row exists for today
+    const { data: existing } = await this.supabase
+      .from('crm_ig_account_daily_snapshots')
+      .select('id')
+      .eq('ig_account_id', accountId)
+      .eq('snapshot_date', snapshotDate)
+      .maybeSingle();
+
+    if (existing) {
+      const { error } = await this.supabase
+        .from('crm_ig_account_daily_snapshots')
+        .update({ follower_count: followerCount, following_count: followingCount, media_count: mediaCount })
+        .eq('id', existing.id);
+      if (error) throw error;
+    } else {
+      const { error } = await this.supabase
+        .from('crm_ig_account_daily_snapshots')
+        .insert({
+          ig_account_id: accountId,
+          snapshot_date: snapshotDate,
+          follower_count: followerCount,
+          following_count: followingCount,
+          media_count: mediaCount,
+        });
+      if (error) throw error;
+    }
   }
 
   async loadCompetitorWatchlists(): Promise<CompetitorWatchlist[]> {
@@ -93,7 +187,16 @@ export class StorageService {
     return (data ?? []) as CompetitorWatchlist[];
   }
 
-  async updateOwnAccountProfile(accountId: string, profile: RapidProfile): Promise<void> {
+  async updateOwnAccountProfile(
+    accountId: string,
+    profile: {
+      followerCount: number | null;
+      followingCount?: number | null;
+      mediaCount?: number | null;
+      biography: string | null;
+      profilePicUrl: string | null;
+    },
+  ): Promise<void> {
     const patch: Record<string, unknown> = {
       bio: profile.biography,
       profile_pic_url: profile.profilePicUrl,
@@ -108,11 +211,19 @@ export class StorageService {
     if (error) throw error;
   }
 
-  async updateCompetitorProfile(watchlistId: string, profile: RapidProfile): Promise<void> {
+  async updateCompetitorProfile(
+    watchlistId: string,
+    profile: {
+      id?: string | null;
+      followerCount: number | null;
+      biography: string | null;
+      profilePicUrl: string | null;
+    },
+  ): Promise<void> {
     const { error } = await this.supabase
       .from('crm_competitor_watchlists')
       .update({
-        ig_user_id: profile.id,
+        ig_user_id: profile.id ?? undefined,
         follower_count: profile.followerCount,
         profile_pic_url: profile.profilePicUrl,
         bio: profile.biography,
@@ -164,14 +275,18 @@ export class StorageService {
     return map;
   }
 
-  async upsertOwnReel(accountId: string, reel: RapidReel, postedAtIso: string | null): Promise<UpsertedOwnReel> {
+  async upsertOwnReel(
+    accountId: string,
+    reel: { code: string; id?: string | null; mediaId?: string | null; views: number; likes: number; comments: number; shares: number; caption: string | null; posterUrl: string | null; videoUrl: string | null },
+    postedAtIso: string | null,
+  ): Promise<UpsertedOwnReel> {
     const { data, error } = await this.supabase
       .from('crm_ig_reels')
       .upsert(
         {
           ig_account_id: accountId,
           shortcode: reel.code,
-          supabase_reel_id: reel.mediaId ?? reel.code,
+          supabase_reel_id: reel.mediaId ?? reel.id ?? reel.code,
           caption: reel.caption,
           thumbnail_url: reel.posterUrl,
           video_url: reel.videoUrl,
@@ -193,7 +308,7 @@ export class StorageService {
 
   async upsertCompetitorReel(
     watchlistId: string,
-    reel: RapidReel,
+    reel: { code: string; id?: string | null; mediaId?: string | null; views: number; likes: number; comments: number; shares?: number; caption: string | null; posterUrl: string | null; videoUrl: string | null },
     postedAtIso: string | null,
     videoUrlOverride: string | null,
   ): Promise<UpsertedCompetitorReel> {
@@ -203,7 +318,7 @@ export class StorageService {
         {
           watchlist_id: watchlistId,
           ig_media_code: reel.code,
-          ig_media_id: reel.mediaId,
+          ig_media_id: reel.mediaId ?? reel.id,
           play_count: reel.views,
           like_count: reel.likes,
           comment_count: reel.comments,
@@ -258,25 +373,31 @@ export class StorageService {
     };
   }
 
-  async insertOwnSnapshot(igReelId: string, reel: RapidReel): Promise<void> {
+  async insertOwnSnapshot(
+    igReelId: string,
+    metrics: { views: number; likes: number; comments: number; shares: number },
+  ): Promise<void> {
     const { error } = await this.supabase.from('crm_ig_reel_snapshots').insert({
       ig_reel_id: igReelId,
-      views: reel.views,
-      likes: reel.likes,
-      comments: reel.comments,
-      shares: reel.shares,
+      views: metrics.views,
+      likes: metrics.likes,
+      comments: metrics.comments,
+      shares: metrics.shares,
       scraped_at: new Date().toISOString(),
     });
 
     if (error) throw error;
   }
 
-  async insertCompetitorSnapshot(competitorReelId: string, reel: RapidReel): Promise<void> {
+  async insertCompetitorSnapshot(
+    competitorReelId: string,
+    metrics: { views: number; likes: number; comments: number },
+  ): Promise<void> {
     const { error } = await this.supabase.from('crm_competitor_reel_snapshots').insert({
       competitor_reel_id: competitorReelId,
-      views: reel.views,
-      likes: reel.likes,
-      comments: reel.comments,
+      views: metrics.views,
+      likes: metrics.likes,
+      comments: metrics.comments,
       scraped_at: new Date().toISOString(),
     });
 

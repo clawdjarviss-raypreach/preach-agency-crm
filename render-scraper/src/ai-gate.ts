@@ -1,5 +1,10 @@
-import type { MediaDetail } from './scraper';
 import type { AiJobSource, StorageService } from './storage';
+
+export type MediaDetail = {
+  takenAtIso: string | null;
+  videoUrl: string | null;
+  posterUrl: string | null;
+};
 
 const PROJECTION_THRESHOLD = 100_000;
 
