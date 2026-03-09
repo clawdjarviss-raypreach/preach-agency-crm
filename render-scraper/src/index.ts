@@ -704,14 +704,18 @@ async function main(): Promise<void> {
   });
   await phase2ReelDiscovery(activeAccounts, { social, storage, stats, mode, aiServerUrl });
 
-  // Phase 3: Reel stats update (30-day window)
-  await phase3ReelStatsUpdate({ social, stable, storage, stats, mode });
+  // Phase 3: Reel stats update (30-day window) — skip when TEST_ACCOUNTS is set
+  if (!testFilter) {
+    await phase3ReelStatsUpdate({ social, stable, storage, stats, mode });
+  } else {
+    console.log('\nSkipping Phase 3 (reel stats update) — TEST_ACCOUNTS mode');
+  }
 
   // Competitors
   await processCompetitors(watchlists, { social, stable, storage, stats, aiServerUrl });
 
-  // Reactivation check (only on daily mode to save API calls)
-  if (mode === 'daily') {
+  // Reactivation check (only on daily mode to save API calls) — skip in test mode
+  if (mode === 'daily' && !testFilter) {
     await checkInactiveAccounts({ social, storage, stats });
   }
 
