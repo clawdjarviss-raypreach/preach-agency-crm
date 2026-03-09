@@ -35,6 +35,7 @@ type ScrapeStats = {
   accountsReactivated: number;
   reelsMarkedDeleted: number;
   snapshotsSkipped0Followers: number;
+  deactivatedAccountIds: Set<string>;
 };
 
 function isoToAgeDays(iso: string, now: Date): number {
@@ -82,6 +83,7 @@ async function phase1AccountSnapshots(
           console.log(`${label} — 404 from SocialAPI, marking inactive`);
           await deps.storage.markAccountInactive(account.id);
           deps.stats.accountsMarkedInactive++;
+          deps.stats.deactivatedAccountIds.add(account.id);
           continue;
         }
 
@@ -107,6 +109,7 @@ async function phase1AccountSnapshots(
             console.log(`${label} — 404 from both APIs, marking inactive`);
             await deps.storage.markAccountInactive(account.id);
             deps.stats.accountsMarkedInactive++;
+            deps.stats.deactivatedAccountIds.add(account.id);
             continue;
           }
           throw fallbackError;
@@ -661,6 +664,7 @@ async function main(): Promise<void> {
     accountsReactivated: 0,
     reelsMarkedDeleted: 0,
     snapshotsSkipped0Followers: 0,
+    deactivatedAccountIds: new Set<string>(),
   };
 
   const storage = new StorageService({ supabaseUrl, serviceKey });
@@ -698,10 +702,7 @@ async function main(): Promise<void> {
   await phase1AccountSnapshots(ownAccounts, { social, stable, storage, stats });
 
   // Phase 2: Reel discovery (only for accounts still active after Phase 1)
-  const activeAccounts = ownAccounts.filter((a) => {
-    // Skip accounts that were marked inactive in Phase 1
-    return !stats.accountsMarkedInactive || true; // We process all that were loaded as active
-  });
+  const activeAccounts = ownAccounts.filter((a) => !stats.deactivatedAccountIds.has(a.id));
   await phase2ReelDiscovery(activeAccounts, { social, storage, stats, mode, aiServerUrl });
 
   // Phase 3: Reel stats update (30-day window) — skip when TEST_ACCOUNTS is set
@@ -724,7 +725,8 @@ async function main(): Promise<void> {
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`\n[${new Date().toISOString()}] Scrape cycle complete in ${elapsed}s`);
-  console.log(JSON.stringify(stats, null, 2));
+  const { deactivatedAccountIds: _, ...logStats } = stats;
+  console.log(JSON.stringify(logStats, null, 2));
 }
 
 main().catch((error) => {
