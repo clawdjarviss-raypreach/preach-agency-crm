@@ -15,18 +15,25 @@ interface CrmUser {
   avatarEmoji?: string;
   profilePictureUrl?: string;
   assignedCreators: string[];
+  /** Creator IDs where socials axis is enabled */
+  socialCreators: string[];
+  /** Creator IDs where revenue axis is enabled */
+  revenueCreators: string[];
+  /** Creator IDs where trackingLinks axis is enabled */
+  trackingCreators: string[];
 }
 
-const NAV_ITEMS = [
-  { href: "/manager-dashboard", label: "Traffic Dashboard", emoji: "📈", enabled: true, roles: ["marketing_manager", "admin"] },
-  { href: "/traffic-analytics", label: "Traffic Analytics", emoji: "🔬", enabled: true, roles: ["marketing_manager", "admin"] },
-  { href: "/ig-stats", label: "IG Stats", emoji: "📸", enabled: true, roles: ["admin", "marketing_manager"] },
-  { href: "/dashboard", label: "Dashboard", emoji: "📊", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
+// axis: which access axis grants visibility to this page (null = role-only)
+const NAV_ITEMS: { href: string; label: string; emoji: string; enabled: boolean; roles: string[]; axis?: "socials" | "revenue" | "tracking" }[] = [
+  { href: "/manager-dashboard", label: "Traffic Dashboard", emoji: "📈", enabled: true, roles: ["admin"], axis: "tracking" },
+  { href: "/traffic-analytics", label: "Traffic Analytics", emoji: "🔬", enabled: true, roles: ["admin"], axis: "socials" },
+  { href: "/ig-stats", label: "IG Stats", emoji: "📸", enabled: true, roles: ["admin"], axis: "socials" },
+  { href: "/dashboard", label: "Dashboard", emoji: "📊", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"], axis: "revenue" },
   { href: "/creators", label: "Creators", emoji: "👤", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
   { href: "/reports", label: "Reports", emoji: "📝", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
   { href: "/schedule", label: "Schedule", emoji: "📆", enabled: true, roles: ["admin", "manager", "supervisor", "chatter"] },
   { href: "/performance", label: "Performance", emoji: "📈", enabled: true, roles: ["admin", "manager", "supervisor"] },
-  { href: "/analytics", label: "Analytics", emoji: "📊", enabled: true, roles: ["admin", "manager"] },
+  { href: "/analytics", label: "Analytics", emoji: "📊", enabled: true, roles: ["admin", "manager"], axis: "revenue" },
   { href: "/insights", label: "Insights", emoji: "🔮", enabled: true, roles: ["admin", "manager", "supervisor"] },
   { href: "/sales-feed", label: "Sales Feed", emoji: "🔔", enabled: true, roles: ["admin", "manager", "supervisor"] },
   { href: "/targets", label: "Targets", emoji: "🎯", enabled: true, roles: ["admin", "manager"] },
@@ -38,6 +45,16 @@ const NAV_ITEMS = [
   { href: "/admin/roles", label: "Roles", emoji: "🔐", enabled: true, roles: ["admin"] },
   { href: "/admin/socials", label: "Socials", emoji: "📱", enabled: true, roles: ["admin"] },
 ];
+
+function isNavVisible(item: typeof NAV_ITEMS[number], user: CrmUser): boolean {
+  // Role grants access
+  if (item.roles.includes(user.role)) return true;
+  // Axis grants access
+  if (item.axis === "socials" && user.socialCreators.length > 0) return true;
+  if (item.axis === "revenue" && user.revenueCreators.length > 0) return true;
+  if (item.axis === "tracking" && user.trackingCreators.length > 0) return true;
+  return false;
+}
 
 function clearLocalAuth() {
   localStorage.removeItem("crm_token");
@@ -76,6 +93,22 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // Load access axes for this user
+      const { data: accessRows } = await supabase
+        .from("crm_user_creator_access")
+        .select("creator_id, axes")
+        .eq("user_id", chatter.id);
+
+      const socialCreators: string[] = [];
+      const revenueCreators: string[] = [];
+      const trackingCreators: string[] = [];
+      for (const row of accessRows ?? []) {
+        const axes = row.axes as any;
+        if (axes?.socials) socialCreators.push(row.creator_id);
+        if (axes?.revenue) revenueCreators.push(row.creator_id);
+        if (axes?.trackingLinks) trackingCreators.push(row.creator_id);
+      }
+
       const crmUser: CrmUser = {
         id: chatter.id,
         name: chatter.name,
@@ -84,6 +117,9 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
         avatarEmoji: chatter.avatar_emoji,
         profilePictureUrl: chatter.profile_picture_url,
         assignedCreators: chatter.assigned_creators ?? [],
+        socialCreators,
+        revenueCreators,
+        trackingCreators,
       };
 
       localStorage.setItem("crm_token", session.access_token);
@@ -136,21 +172,16 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!user || !pathname) return;
 
-    if (user.role === "marketing_manager") {
-      const isAllowedMarketingPath =
-        pathname === "/manager-dashboard" ||
-        pathname === "/traffic-analytics" ||
-        pathname?.startsWith("/traffic-analytics/") ||
-        pathname === "/ig-stats" ||
-        pathname?.startsWith("/ig-stats/");
-      if (!isAllowedMarketingPath) {
-        router.replace("/manager-dashboard");
-      }
-      return;
-    }
+    // Check if current path is allowed
+    const currentNavItem = NAV_ITEMS.find((item) =>
+      pathname === item.href || pathname?.startsWith(item.href + "/")
+    );
 
-    if (pathname === "/manager-dashboard" && user.role !== "admin") {
-      router.replace("/dashboard");
+    // If it's a nav-managed page, check access
+    if (currentNavItem && !isNavVisible(currentNavItem, user)) {
+      // Redirect to first accessible page
+      const firstAccessible = NAV_ITEMS.find((item) => isNavVisible(item, user));
+      router.replace(firstAccessible?.href ?? "/dashboard");
     }
   }, [user, pathname, router]);
 
@@ -184,6 +215,7 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
       case "manager": return "#8b5cf6";
       case "supervisor": return "#f59e0b";
       case "marketing_manager": return "#3b82f6";
+      case "backend_manager": return "#10b981";
       default: return "#22c55e";
     }
   };
@@ -336,7 +368,7 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
                   textTransform: "uppercase",
                 }}
               >
-                {user.role}
+                {user.role.replace(/_/g, " ")}
               </div>
             </div>
           </div>
@@ -344,7 +376,7 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: "12px 12px", overflow: "auto" }}>
-          {NAV_ITEMS.filter((item) => !item.roles || item.roles.includes(user.role)).map((item) => {
+          {NAV_ITEMS.filter((item) => isNavVisible(item, user)).map((item) => {
             const isActive = pathname === item.href || pathname?.startsWith(item.href + "/");
             return (
               <div key={item.href}>
@@ -455,7 +487,7 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
         }}
       >
         {children}
-        {token && user.role !== "marketing_manager" ? (
+        {token && ["admin", "manager", "supervisor", "chatter"].includes(user.role) ? (
           <QuickLogButton
             token={token}
             role={user.role}

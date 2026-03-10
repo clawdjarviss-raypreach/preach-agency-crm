@@ -82,23 +82,22 @@ function formatDelta(current: number, previous: number): { text: string; color: 
 
 // ── Supabase fetch helpers ──
 
-async function fetchDashboard(startDate: string, endDate: string) {
+async function fetchDashboard(startDate: string, endDate: string, filterCreatorIds?: string[]) {
   // Aggregate from crm_of_daily_earnings
-  const { data: earnings } = await supabase
-    .from("crm_of_daily_earnings")
-    .select("*")
-    .gte("date", startDate)
-    .lte("date", endDate);
+  const [{ data: earnings }, { data: omAgg }] = await Promise.all([
+    supabase.from("crm_of_daily_earnings").select("*").gte("date", startDate).lte("date", endDate),
+    supabase.from("crm_om_daily_aggregates").select("*").gte("date", startDate).lte("date", endDate),
+  ]);
 
-  // Also aggregate from crm_om_daily_aggregates
-  const { data: omAgg } = await supabase
-    .from("crm_om_daily_aggregates")
-    .select("*")
-    .gte("date", startDate)
-    .lte("date", endDate);
-
-  const rows = earnings || [];
+  let rows = earnings || [];
   const omRows = omAgg || [];
+
+  // Filter by creator if needed
+  if (filterCreatorIds?.length) {
+    const { data: accounts } = await supabase.from("crm_of_accounts").select("id, creator_id");
+    const allowedAccountIds = new Set((accounts || []).filter((a) => filterCreatorIds.includes(a.creator_id)).map((a) => a.id));
+    rows = rows.filter((r) => allowedAccountIds.has(r.account_id));
+  }
 
   const totalRevenue = rows.reduce((s, r) => s + (r.total_earnings || 0), 0) + omRows.reduce((s, r) => s + (r.total_revenue || 0), 0);
   const subscriptionRevenue = rows.reduce((s, r) => s + (r.subscription_earnings || 0), 0) + omRows.reduce((s, r) => s + (r.subscription_revenue || 0), 0);
@@ -121,19 +120,26 @@ async function fetchDashboard(startDate: string, endDate: string) {
   };
 }
 
-async function fetchRevenueTrend(startDate: string, endDate: string) {
+async function fetchRevenueTrend(startDate: string, endDate: string, filterCreatorIds?: string[]) {
   const { data: earnings } = await supabase
     .from("crm_of_daily_earnings")
-    .select("date, subscription_earnings, message_earnings, tip_earnings, total_earnings")
+    .select("account_id, date, subscription_earnings, message_earnings, tip_earnings, total_earnings")
     .gte("date", startDate)
     .lte("date", endDate)
     .order("date");
 
   if (!earnings) return [];
 
+  let filtered = earnings;
+  if (filterCreatorIds?.length) {
+    const { data: accounts } = await supabase.from("crm_of_accounts").select("id, creator_id");
+    const allowedAccountIds = new Set((accounts || []).filter((a) => filterCreatorIds.includes(a.creator_id)).map((a) => a.id));
+    filtered = earnings.filter((r) => allowedAccountIds.has(r.account_id));
+  }
+
   // Group by date in case there are multiple accounts
   const dateMap = new Map<string, { date: string; subscriptionRevenue: number; messageRevenue: number; tipRevenue: number; totalRevenue: number }>();
-  for (const row of earnings) {
+  for (const row of filtered) {
     const existing = dateMap.get(row.date) || { date: row.date, subscriptionRevenue: 0, messageRevenue: 0, tipRevenue: 0, totalRevenue: 0 };
     existing.subscriptionRevenue += row.subscription_earnings || 0;
     existing.messageRevenue += row.message_earnings || 0;
@@ -145,7 +151,7 @@ async function fetchRevenueTrend(startDate: string, endDate: string) {
   return Array.from(dateMap.values()).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-async function fetchCreatorBreakdown(startDate: string, endDate: string) {
+async function fetchCreatorBreakdown(startDate: string, endDate: string, filterCreatorIds?: string[]) {
   const { data: earnings } = await supabase
     .from("crm_of_daily_earnings")
     .select("account_id, subscription_earnings, message_earnings, tip_earnings, total_earnings, chargeback_amount, chargeback_count, transaction_count")
@@ -168,11 +174,15 @@ async function fetchCreatorBreakdown(startDate: string, endDate: string) {
     .in("id", creatorIds);
 
   const creatorMap = new Map((creators || []).map((c) => [c.id, c]));
-  const accountMap = new Map((accounts || []).map((a) => [a.id, a]));
+  const filteredAccounts = filterCreatorIds?.length
+    ? (accounts || []).filter((a) => filterCreatorIds.includes(a.creator_id))
+    : (accounts || []);
+  const accountMap = new Map(filteredAccounts.map((a) => [a.id, a]));
 
-  // Aggregate per account
+  // Aggregate per account (only for allowed accounts)
+  const allowedAccountIds = new Set(filteredAccounts.map((a) => a.id));
   const agg = new Map<string, any>();
-  for (const row of earnings) {
+  for (const row of earnings.filter((e) => !filterCreatorIds?.length || allowedAccountIds.has(e.account_id))) {
     const key = row.account_id;
     const existing = agg.get(key) || {
       accountId: key,
@@ -286,7 +296,7 @@ export default function AnalyticsPage() {
     if (u) setUser(JSON.parse(u));
   }, []);
 
-  const isAdmin = user && ["admin", "manager"].includes(user.role);
+  const isAdmin = user && (["admin", "manager"].includes(user.role) || (user.revenueCreators?.length > 0));
 
   const dateRange = useMemo(() => {
     if (periodKey === "custom") return { start: customStart, end: customEnd };
@@ -299,28 +309,33 @@ export default function AnalyticsPage() {
     return getPreviousPeriod(dateRange.start, dateRange.end);
   }, [dateRange]);
 
+  const filterIds = user && !["admin", "manager"].includes(user.role) && user.revenueCreators?.length > 0
+    ? user.revenueCreators : undefined;
+
   // Fetch dashboard data
   useEffect(() => {
     if (!token || !dateRange.start || !dateRange.end) return;
-    fetchDashboard(dateRange.start, dateRange.end).then(setDashboard);
-  }, [token, dateRange.start, dateRange.end]);
+    fetchDashboard(dateRange.start, dateRange.end, filterIds).then(setDashboard);
+  }, [token, dateRange.start, dateRange.end, filterIds]);
 
   // Fetch previous period dashboard
   useEffect(() => {
     if (!token || !prevPeriod.start || !prevPeriod.end) return;
-    fetchDashboard(prevPeriod.start, prevPeriod.end).then(setPrevDashboard);
-  }, [token, prevPeriod.start, prevPeriod.end]);
+    fetchDashboard(prevPeriod.start, prevPeriod.end, filterIds).then(setPrevDashboard);
+  }, [token, prevPeriod.start, prevPeriod.end, filterIds]);
 
   // Fetch trend
   useEffect(() => {
     if (!token || !dateRange.start || !dateRange.end) return;
-    fetchRevenueTrend(dateRange.start, dateRange.end).then(setTrend);
-  }, [token, dateRange.start, dateRange.end]);
+    fetchRevenueTrend(dateRange.start, dateRange.end, filterIds).then(setTrend);
+  }, [token, dateRange.start, dateRange.end, filterIds]);
 
   // Fetch creator breakdown
   useEffect(() => {
     if (!token || !dateRange.start || !dateRange.end) return;
-    fetchCreatorBreakdown(dateRange.start, dateRange.end).then(setCreatorBreakdown);
+    const filterIds = user && !["admin", "manager"].includes(user.role) && user.revenueCreators?.length > 0
+    ? user.revenueCreators : undefined;
+    fetchCreatorBreakdown(dateRange.start, dateRange.end, filterIds).then(setCreatorBreakdown);
   }, [token, dateRange.start, dateRange.end]);
 
   // Fetch top fans

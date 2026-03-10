@@ -184,7 +184,7 @@ export default function IgStatsPage() {
 
   useEffect(() => {
     if (!user) return;
-    if (user.role !== "admin" && user.role !== "marketing_manager") return;
+    if (user.role !== "admin" && user.role !== "marketing_manager" && !(user.socialCreators?.length > 0)) return;
 
     let cancelled = false;
 
@@ -316,11 +316,17 @@ export default function IgStatsPage() {
         })
         .sort((a: any, b: any) => b.views - a.views);
 
+      // Filter by access axes — socialCreators for non-admin users
+      const socialCreatorIds = new Set(user.socialCreators ?? []);
+      const filteredIgRows = user.role === "admin"
+        ? igRowsData
+        : igRowsData.filter((row: any) => row.creatorId && socialCreatorIds.has(row.creatorId));
+
       if (!cancelled) {
-        setIgRows(igRowsData);
+        setIgRows(filteredIgRows);
         const creatorOptions = Array.from(
           new Map(
-            igRowsData
+            filteredIgRows
               .filter((row: any) => row.creatorId)
               .map((row: any) => [String(row.creatorId), row.creatorName]),
           ).entries(),
@@ -331,16 +337,18 @@ export default function IgStatsPage() {
         setIgCreatorOptions(creatorOptions);
         setCreatorByIgHandle(creatorByInstagram);
         setInactiveAccounts(
-          (inactiveData ?? []).map((a: any) => {
-            const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
-            const mappedCreator = creatorByInstagram.get(usernameKey);
-            const creatorId = a.creator_id ?? mappedCreator?.id ?? null;
-            return {
-              ...a,
-              creatorId,
-              creatorName: creatorNameById.get(creatorId) || mappedCreator?.name || "Unknown",
-            };
-          }),
+          (inactiveData ?? [])
+            .map((a: any) => {
+              const usernameKey = String(a.username ?? "").replace(/^@/, "").toLowerCase();
+              const mappedCreator = creatorByInstagram.get(usernameKey);
+              const creatorId = a.creator_id ?? mappedCreator?.id ?? null;
+              return {
+                ...a,
+                creatorId,
+                creatorName: creatorNameById.get(creatorId) || mappedCreator?.name || "Unknown",
+              };
+            })
+            .filter((a: any) => user.role === "admin" || (a.creatorId && socialCreatorIds.has(a.creatorId))),
         );
         setLoading(false);
       }

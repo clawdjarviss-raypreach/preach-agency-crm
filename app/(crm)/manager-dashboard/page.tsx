@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import DateRangePicker, { DateRange } from "../../../components/DateRangePicker";
 import { supabase } from "@/lib/supabase";
+import { BonusTracker } from "../../../components/bonus";
 
 const CREATOR_COLORS = [
   "#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6",
@@ -44,18 +45,6 @@ function getGreeting(): string {
   if (h < 12) return "Good Morning";
   if (h < 18) return "Good Afternoon";
   return "Good Evening";
-}
-
-function formatMoney(value: number | null | undefined) {
-  const safe = Number(value ?? 0);
-  return safe.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function getArpsColor(value: number | null | undefined) {
-  const v = Number(value ?? 0);
-  if (v > 15) return { color: "#22c55e", bg: "rgba(34,197,94,0.12)", border: "rgba(34,197,94,0.35)" };
-  if (v >= 8) return { color: "#f59e0b", bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.35)" };
-  return { color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.35)" };
 }
 
 function ChartTooltip({ active, payload, label }: any) {
@@ -132,8 +121,16 @@ export default function ManagerDashboardPage() {
       ]);
 
       const creatorNameById = new Map<string, string>((creators ?? []).map((c: any) => [c.id, c.name]));
+      const trackingCreatorIds = new Set(user?.trackingCreators ?? []);
+      const isFullAccess = user?.role === "admin";
+      const filteredOfAccounts = isFullAccess
+        ? (ofAccounts ?? [])
+        : trackingCreatorIds.size > 0
+          ? (ofAccounts ?? []).filter((row: any) => trackingCreatorIds.has(row.creator_id))
+          : (ofAccounts ?? []);
+
       const accountToCreator = new Map<string, string>();
-      for (const row of ofAccounts ?? []) {
+      for (const row of filteredOfAccounts) {
         const name = creatorNameById.get((row as any).creator_id) || "Unknown";
         accountToCreator.set((row as any).account_id, name);
       }
@@ -158,13 +155,15 @@ export default function ManagerDashboardPage() {
       }
 
       const accMap = new Map<string, { accountId: string; creatorName: string; newSubsInRange: number }>();
-      for (const row of ofAccounts ?? []) {
+      for (const row of filteredOfAccounts) {
         const accountId = (row as any).account_id;
         const creatorName = accountToCreator.get(accountId) || accountId;
         accMap.set(accountId, { accountId, creatorName, newSubsInRange: 0 });
       }
+      // Only count subs for accounts the user has access to
       for (const tx of subsTx ?? []) {
         const accountId = (tx as any).account_id;
+        if (!accountToCreator.has(accountId)) continue;
         const creatorName = accountToCreator.get(accountId) || accountId;
         if (!accMap.has(accountId)) accMap.set(accountId, { accountId, creatorName, newSubsInRange: 0 });
         accMap.get(accountId)!.newSubsInRange += 1;
@@ -183,7 +182,7 @@ export default function ManagerDashboardPage() {
         while (true) {
           const { data } = await supabase
             .from("crm_of_transactions")
-            .select("timestamp,type")
+            .select("account_id,timestamp,type")
             .eq("type", "new_sub")
             .gte("timestamp", `${trendStart}T00:00:00`)
             .lte("timestamp", `${toDateOnly(new Date())}T23:59:59`)
@@ -197,6 +196,7 @@ export default function ManagerDashboardPage() {
 
       const trendMap = new Map<string, number>();
       for (const tx of trendTx ?? []) {
+        if (!isFullAccess && !accountToCreator.has((tx as any).account_id)) continue;
         const d = new Date((tx as any).timestamp).toISOString().split("T")[0];
         trendMap.set(d, (trendMap.get(d) || 0) + 1);
       }
@@ -216,17 +216,20 @@ export default function ManagerDashboardPage() {
         .select("id,link_id,name,url,clicks,subscribers,conversion_rate,revenue,spenders,arps_7d,arps_30d,arps_all_time,last_synced_at,creator_id")
         .order("subscribers", { ascending: false, nullsFirst: false });
 
-      const u = localStorage.getItem("crm_user");
-      const currentUserRole = u ? JSON.parse(u)?.role : null;
-      const currentUserId = u ? JSON.parse(u)?.id : null;
       let filteredLinks = links ?? [];
-      if (currentUserRole !== "admin" && currentUserId) {
-        const { data: assignments } = await supabase
-          .from("crm_tracking_link_assignments")
-          .select("tracking_link_id")
-          .eq("user_id", currentUserId);
-        const assignedIds = new Set((assignments ?? []).map((a: any) => a.tracking_link_id));
-        filteredLinks = (links ?? []).filter((l: any) => assignedIds.has(l.id));
+      if (!isFullAccess) {
+        // Show tracking links for creators the user has tracking access to
+        if (trackingCreatorIds.size > 0) {
+          filteredLinks = (links ?? []).filter((l: any) => trackingCreatorIds.has(l.creator_id));
+        } else {
+          // Fallback: use individual tracking link assignments
+          const { data: assignments } = await supabase
+            .from("crm_tracking_link_assignments")
+            .select("tracking_link_id")
+            .eq("user_id", user?.id);
+          const assignedIds = new Set((assignments ?? []).map((a: any) => a.tracking_link_id));
+          filteredLinks = (links ?? []).filter((l: any) => assignedIds.has(l.id));
+        }
       }
 
       const linksRows = filteredLinks.map((l: any) => ({
@@ -319,7 +322,7 @@ export default function ManagerDashboardPage() {
   }
 
   if (!user) return null;
-  if (user.role !== "marketing_manager" && user.role !== "admin") {
+  if (user.role !== "marketing_manager" && user.role !== "admin" && !(user.trackingCreators?.length > 0)) {
     return (
       <div style={{ padding: 24, color: "var(--text)" }}>
         🔒 This dashboard is for marketing managers only.
@@ -329,6 +332,7 @@ export default function ManagerDashboardPage() {
 
   return (
     <div style={{ maxWidth: "1400px" }}>
+      {/* 1. Greeting + Date Range Picker */}
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "flex-start",
         marginBottom: "28px", flexWrap: "wrap", gap: "16px",
@@ -344,6 +348,24 @@ export default function ManagerDashboardPage() {
         <DateRangePicker value={dateRange} onChange={setDateRange} />
       </div>
 
+      {/* 2. BONUS TRACKER — TOP of page (new position) */}
+      <BonusTracker user={user} />
+
+      {/* 3. Section Divider */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 16,
+        margin: "32px 0 24px",
+      }}>
+        <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
+        <span style={{ fontSize: 13, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
+          📊 Acquisition Metrics
+        </span>
+        <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
+      </div>
+
+      {/* 4. New Subscribers card */}
       <div style={{ marginBottom: "24px" }}>
         <Card>
           <div style={{
@@ -358,6 +380,7 @@ export default function ManagerDashboardPage() {
         </Card>
       </div>
 
+      {/* 5. New Subs Per Creator table */}
       <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
         <div style={{
           fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
@@ -402,6 +425,7 @@ export default function ManagerDashboardPage() {
         </table>
       </Card>
 
+      {/* 6. Daily New Subscribers chart */}
       <Card style={{ marginBottom: "24px" }}>
         <div style={{
           fontSize: "13px", color: "#a0a0a0", fontWeight: "500", marginBottom: "16px",
@@ -426,6 +450,7 @@ export default function ManagerDashboardPage() {
         )}
       </Card>
 
+      {/* 7. Tracking Links table */}
       <Card style={{ marginBottom: "24px", overflowX: "auto" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "12px", flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>

@@ -731,6 +731,11 @@ export default function DashboardPage() {
     return <AdminRevenueDashboard user={user} token={token} />;
   }
 
+  // Users with revenue axis but no core dashboard role — show filtered revenue dashboard
+  if (user.revenueCreators?.length > 0 && !["admin", "manager"].includes(role)) {
+    return <AdminRevenueDashboard user={user} token={token} filterCreatorIds={user.revenueCreators} />;
+  }
+
   if (role === "supervisor") {
     return <SupervisorDashboard user={user} token={token} now={now} />;
   }

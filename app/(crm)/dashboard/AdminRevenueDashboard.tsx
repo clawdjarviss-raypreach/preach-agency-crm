@@ -137,7 +137,7 @@ type CreatorRow = {
   avgFanSpend: number;
 };
 
-export default function AdminRevenueDashboard({ user, filterCreatorNames }: { user: any; token: string; filterCreatorNames?: string[] }) {
+export default function AdminRevenueDashboard({ user, filterCreatorNames, filterCreatorIds }: { user: any; token: string; filterCreatorNames?: string[]; filterCreatorIds?: string[] }) {
   const [dateRange, setDateRange] = useState<DateRange>(() => getDaysAgoRange(0));
   const [drillDate, setDrillDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,6 +177,7 @@ export default function AdminRevenueDashboard({ user, filterCreatorNames }: { us
         const creator = (row as any).crm_creators;
         const creatorName = creator?.name ?? "Unassigned (CSV)";
         if (filterCreatorNames?.length && !filterCreatorNames.includes(creatorName)) continue;
+        if (filterCreatorIds?.length && !filterCreatorIds.includes((row as any).creator_id)) continue;
         accountMap.set((row as any).account_id, {
           creatorId: (row as any).creator_id,
           creatorName,

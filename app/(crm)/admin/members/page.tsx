@@ -20,6 +20,7 @@ interface MemberDoc {
   status: string;
   assigned_creators: string[];
   role: RoleDoc | null;
+  bonus_enabled: boolean;
 }
 
 interface CreatorDoc {
@@ -40,7 +41,6 @@ interface AccessAxes {
   socials: boolean;
   revenue: boolean;
   trackingLinks: boolean;
-  subs: boolean;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -260,6 +260,7 @@ export default function MembersPage() {
         status: m.status,
         assigned_creators: m.assigned_creators || [],
         role: m.role || null,
+        bonus_enabled: m.bonus_enabled ?? false,
       }));
       setAllMembers(transformed);
     }
@@ -351,6 +352,14 @@ export default function MembersPage() {
     return groups;
   }, [allTrackingLinks, creators, editCreatorIds, creatorAccess]);
 
+  async function toggleBonus(chatterId: string, enabled: boolean) {
+    await supabase
+      .from("crm_chatters")
+      .update({ bonus_enabled: enabled })
+      .eq("id", chatterId);
+    setAllMembers((prev) => prev.map((m) => m.id === chatterId ? { ...m, bonus_enabled: enabled } : m));
+  }
+
   const openEdit = (m: MemberDoc) => {
     setEditMember(m);
     setEditRoleId(m.role ? m.role.id : "");
@@ -396,7 +405,7 @@ export default function MembersPage() {
 
       // Update creator access axes
       for (const cid of editCreatorIds) {
-        const axes = creatorAccess[cid] || { socials: false, revenue: false, trackingLinks: false, subs: false };
+        const axes = creatorAccess[cid] || { socials: false, revenue: false, trackingLinks: false };
         const { error } = await supabase.from("crm_user_creator_access").upsert(
           { user_id: editMember.id, creator_id: cid, axes },
           { onConflict: "user_id,creator_id" }
@@ -504,14 +513,14 @@ export default function MembersPage() {
           <table style={{ width: "100%", minWidth: 800, borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                {["ID", "Name", "Assigned Creators", "Email", "Role", "Actions"].map((h) => (
+                {["ID", "Name", "Assigned Creators", "Email", "Role", "Bonus", "Actions"].map((h) => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {activeMembers.length === 0 && (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "var(--text-muted)", padding: 32 }}>No members found</td></tr>
+                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "var(--text-muted)", padding: 32 }}>No members found</td></tr>
               )}
               {activeMembers.map((m, idx) => (
                 <tr key={m.id} style={{ background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.02)" }}>
@@ -528,6 +537,26 @@ export default function MembersPage() {
                   <td style={tdStyle}><CreatorAvatars ids={m.assigned_creators || []} creators={creators || []} /></td>
                   <td style={{ ...tdStyle, fontSize: 13 }}>{m.email || "—"}</td>
                   <td style={tdStyle}><RoleBadge role={m.role} /></td>
+                  <td style={tdStyle}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div
+                        onClick={() => toggleBonus(m.id, !m.bonus_enabled)}
+                        style={{
+                          width: 40, height: 22, borderRadius: 11, cursor: "pointer",
+                          background: m.bonus_enabled ? "#22c55e" : "#4a4a4a",
+                          position: "relative", transition: "background 0.2s",
+                        }}
+                      >
+                        <div style={{
+                          width: 18, height: 18, borderRadius: 9, background: "#fff",
+                          position: "absolute", top: 2,
+                          left: m.bonus_enabled ? 20 : 2,
+                          transition: "left 0.2s",
+                        }} />
+                      </div>
+                      {m.bonus_enabled && <span style={{ fontSize: 12, color: "#22c55e" }}>🏆</span>}
+                    </div>
+                  </td>
                   <td style={tdStyle}>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button onClick={() => openEdit(m)} style={btnSmall}>✏️ Edit</button>
@@ -573,13 +602,13 @@ export default function MembersPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
                 {editCreatorIds.map((cid) => {
                   const creator = (creators || []).find((c) => c.id === cid);
-                  const axes = creatorAccess[cid] || { socials: false, revenue: false, trackingLinks: false, subs: false };
+                  const axes = creatorAccess[cid] || { socials: false, revenue: false, trackingLinks: false };
                   const update = (field: keyof AccessAxes) => setCreatorAccess((prev) => ({ ...prev, [cid]: { ...axes, [field]: !axes[field] } }));
                   return (
                     <div key={cid} style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg)" }}>
                       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{creator?.name || cid}</div>
                       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                        {(["socials", "revenue", "trackingLinks", "subs"] as const).map((axis) => (
+                        {(["socials", "revenue", "trackingLinks"] as const).map((axis) => (
                           <label key={axis} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
                             <ToggleSwitch checked={axes[axis]} onChange={() => update(axis)} />
                             <span style={{ textTransform: "capitalize" }}>{axis === "trackingLinks" ? "Tracking" : axis}</span>

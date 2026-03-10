@@ -9,6 +9,9 @@ type CrmUser = {
   id: string;
   role: string;
   assignedCreators?: string[];
+  socialCreators?: string[];
+  revenueCreators?: string[];
+  trackingCreators?: string[];
 };
 
 type Creator = {
@@ -500,9 +503,10 @@ export default function TrafficAnalyticsPage() {
         ]);
 
         const allCreators = (creatorsRes.data || []) as Creator[];
+        const socialCreatorIds = new Set(parsed.socialCreators || parsed.assignedCreators || []);
         const allowedCreators = parsed.role === "admin"
           ? allCreators
-          : allCreators.filter((creator) => (parsed.assignedCreators || []).includes(creator.id));
+          : allCreators.filter((creator) => socialCreatorIds.has(creator.id));
 
         setCreators(allowedCreators);
         if (allowedCreators.length > 0) {
@@ -816,7 +820,7 @@ export default function TrafficAnalyticsPage() {
 
   if (!user) return null;
 
-  if (user.role !== "admin" && user.role !== "marketing_manager") {
+  if (user.role !== "admin" && user.role !== "marketing_manager" && !((user.socialCreators?.length ?? 0) > 0)) {
     return <div style={{ color: "#fff", padding: 24 }}>🔒 This page is for marketing managers and admins.</div>;
   }
 
